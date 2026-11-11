@@ -11,7 +11,7 @@ Aster is a React dashboard prototype with a Vite development server and an Expre
 
 1. Create a project and database in Neon.
 2. Copy the pooled connection string from the Neon dashboard.
-3. Copy `.env.example` to `.env` and set `DATABASE_URL` to that connection string.
+3. Set `DATABASE_URL` to that connection string in `.env.local` or `.env`. `neon init` can link the existing Neon project and generate `.env.local` for you.
 
 Keep `.env` private; it is ignored by Git. Never commit or share the database connection string.
 
@@ -30,7 +30,7 @@ The production frontend can be built with `npm run build`; `npm start` serves th
 
 1. Create a Postgres database in Neon (or use the Neon integration in the Vercel Marketplace).
 2. Import this repository into Vercel. The checked-in `vercel.json` configures Vite and its `dist` output.
-3. Add the Neon pooled connection string as the `DATABASE_URL` environment variable in the Vercel project settings for Preview and Production.
+3. Add the Neon pooled connection string as the `DATABASE_URL` environment variable in the Vercel project settings for Preview and Production. The local `.env.local` file is not deployed.
 4. Redeploy after adding the environment variable.
 
 Vercel runs the API handlers in `api/` as serverless functions. Local development and Vercel both use the same Neon Postgres database.

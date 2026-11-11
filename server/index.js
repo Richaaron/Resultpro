@@ -1,5 +1,5 @@
 import express from "express";
-import "dotenv/config";
+import dotenv from "dotenv";
 import { createSchool, listSchools } from "./school-repository.js";
 import { normalizeSchoolInput } from "./school-input.js";
 import path from "node:path";
@@ -7,6 +7,8 @@ import { fileURLToPath } from "node:url";
 
 const filename = fileURLToPath(import.meta.url);
 const projectRoot = path.resolve(path.dirname(filename), "..");
+dotenv.config({ path: path.join(projectRoot, ".env.local") });
+dotenv.config({ path: path.join(projectRoot, ".env") });
 
 const app = express();
 const port = Number(process.env.PORT) || 4000;
