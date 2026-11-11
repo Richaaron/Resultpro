@@ -2,6 +2,7 @@ import express from "express";
 import dotenv from "dotenv";
 import { createSchool, listSchools } from "./school-repository.js";
 import { normalizeSchoolInput } from "./school-input.js";
+import { createCorsMiddleware } from "./cors.js";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -14,6 +15,10 @@ const app = express();
 const port = Number(process.env.PORT) || 4000;
 
 app.disable("x-powered-by");
+app.use(createCorsMiddleware({
+  production: process.env.NODE_ENV === "production",
+  configuredOrigins: process.env.FRONTEND_ORIGINS,
+}));
 app.use(express.json({ limit: "16kb" }));
 
 app.get("/api/health", (_request, response) => {

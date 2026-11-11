@@ -62,6 +62,9 @@ const accessOptions = [
   ["public", "Public school page", "Share your school profile, with private results behind sign-in."],
 ];
 
+const API_BASE_URL = (import.meta.env.VITE_API_URL || "").replace(/\/+$/, "");
+const apiUrl = (path) => `${API_BASE_URL}${path}`;
+
 function App() {
   const [role, setRole] = useState("admin");
   const [page, setPage] = useState("overview");
@@ -81,7 +84,7 @@ function App() {
 
   useEffect(() => {
     let active = true;
-    fetch("/api/schools")
+    fetch(apiUrl("/api/schools"))
       .then(async (response) => {
         const payload = await response.json();
         if (!response.ok) throw new Error(payload.error || "Could not load school profiles.");
@@ -119,7 +122,7 @@ function App() {
     setSaving(true);
     setError("");
     try {
-      const response = await fetch("/api/schools", {
+      const response = await fetch(apiUrl("/api/schools"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(form),
