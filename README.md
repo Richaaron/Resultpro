@@ -18,9 +18,19 @@ Open the Vite URL printed in the terminal (usually `http://localhost:5173`). Vit
 
 The production frontend can be built with `npm run build`; `npm start` serves the built frontend and API on port `4000`.
 
+## Deploy to Vercel
+
+1. Create a Postgres database using the Neon integration in the Vercel Marketplace.
+2. Import this repository into Vercel. The checked-in `vercel.json` configures Vite and its `dist` output.
+3. Add the database connection string as the `DATABASE_URL` environment variable in the Vercel project settings for Preview and Production.
+4. Redeploy after adding the environment variable.
+
+Vercel runs the API handlers in `api/` as serverless functions. School profiles use the hosted Postgres database there; local development continues to use SQLite. Do not point the deployed app at the local SQLite file, since Vercel function filesystems are ephemeral.
+
 ## API
 
 - `GET /api/health` — API health check
+- `GET /api/schools` — list school profiles
 - `POST /api/schools` — validate and save a school profile
 
 School profiles are stored in `data/aster.sqlite`, which is created automatically and excluded from version control.
