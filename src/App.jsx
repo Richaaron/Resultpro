@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 
 const navigation = [
   ["overview", "Overview", "▦"],
@@ -66,6 +66,8 @@ function App() {
   const [role, setRole] = useState("admin");
   const [page, setPage] = useState("overview");
   const [school, setSchool] = useState(null);
+  const [schools, setSchools] = useState([]);
+  const [loadingSchools, setLoadingSchools] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
   const [step, setStep] = useState(1);
   const [search, setSearch] = useState("");
@@ -77,7 +79,30 @@ function App() {
   const visibleNavigation = navigation.filter(([id]) => role === "admin" || (role === "teacher" && ["overview", "results", "classes"].includes(id)) || (role === "student" && ["overview", "results"].includes(id)));
   const filteredResults = useMemo(() => current.results.filter((row) => row.join(" ").toLowerCase().includes(search.toLowerCase())), [current, search]);
 
-  React.useEffect(() => {
+  useEffect(() => {
+    let active = true;
+    fetch("/api/schools")
+      .then(async (response) => {
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.error || "Could not load school profiles.");
+        return payload.schools;
+      })
+      .then((savedSchools) => {
+        if (active) {
+          setSchools(savedSchools);
+          setSchool(savedSchools[0] || null);
+        }
+      })
+      .catch((requestError) => {
+        if (active) setToast(requestError.message || "Could not load school profiles.");
+      })
+      .finally(() => {
+        if (active) setLoadingSchools(false);
+      });
+    return () => { active = false; };
+  }, []);
+
+  useEffect(() => {
     if (!toast) return undefined;
     const timer = window.setTimeout(() => setToast(""), 3000);
     return () => window.clearTimeout(timer);
@@ -102,6 +127,7 @@ function App() {
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error || "Could not create the school profile.");
       setSchool(payload.school);
+      setSchools((previous) => [payload.school, ...previous]);
       setModalOpen(false);
       setToast(`School profile created for ${payload.school.name}.`);
       setForm({ name: "", schoolType: "", country: "", email: "", accessMode: "invite" });
@@ -131,9 +157,9 @@ function App() {
     <div className="app-shell">
       <aside className="sidebar">
         <a className="brand" href="#" aria-label="Aster home"><span className="brand-mark">✳</span><span className="brand-name">aster<span>.</span></span></a>
-        <button className="school-switcher" type="button" onClick={showSetup}>
+        <button className="school-switcher" type="button" onClick={showSetup} disabled={loadingSchools}>
           <span className="school-avatar">{school?.name?.[0]?.toUpperCase() || "H"}</span>
-          <span className="school-switcher-copy"><strong>{school?.name || "Harborview Academy"}</strong><small>{school?.schoolType || "Senior school"}</small></span><span className="chevron">⌄</span>
+          <span className="school-switcher-copy"><strong>{school?.name || (loadingSchools ? "Loading schools…" : "Set up your school")}</strong><small>{school?.schoolType || (schools.length ? "Select a school profile" : "Create your school profile")}</small></span><span className="chevron">⌄</span>
         </button>
         <div className="nav-label">WORKSPACE</div>
         <nav className="main-nav" aria-label="Main navigation">

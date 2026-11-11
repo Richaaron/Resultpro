@@ -1,13 +1,5 @@
-import { neon } from "@neondatabase/serverless";
-import { randomUUID } from "node:crypto";
-import { createSchoolSlug, normalizeSchoolInput } from "../server/school-input.js";
-
-function getDatabase() {
-  if (!process.env.DATABASE_URL) {
-    throw new Error("DATABASE_URL is not configured.");
-  }
-  return neon(process.env.DATABASE_URL);
-}
+import { createSchool, listSchools } from "../server/school-repository.js";
+import { normalizeSchoolInput } from "../server/school-input.js";
 
 export default async function handler(request, response) {
   if (request.method !== "GET" && request.method !== "POST") {
@@ -16,62 +8,28 @@ export default async function handler(request, response) {
   }
 
   try {
-    const school = request.method === "POST"
-      ? normalizeSchoolInput(request.body)
-      : null;
-    if (request.method === "POST" && !school) {
+    if (request.method === "GET") {
+      const schools = await listSchools();
+      return response.status(200).json({ schools });
+    }
+
+    const school = normalizeSchoolInput(request.body);
+    if (!school) {
       return response.status(400).json({
         error: "Enter a valid school name, type, country, email, and access option.",
       });
     }
 
-    const sql = getDatabase();
-    await sql`
-      CREATE TABLE IF NOT EXISTS schools (
-        id UUID PRIMARY KEY,
-        name VARCHAR(120) NOT NULL,
-        school_type VARCHAR(80) NOT NULL,
-        country VARCHAR(80) NOT NULL,
-        email VARCHAR(254) NOT NULL UNIQUE,
-        access_mode VARCHAR(20) NOT NULL
-          CHECK (access_mode IN ('invite', 'school-code', 'public')),
-        slug VARCHAR(64) NOT NULL UNIQUE,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-      )
-    `;
-
-    if (request.method === "GET") {
-      const schools = await sql`
-        SELECT id, name, school_type AS "schoolType", country, email,
-               access_mode AS "accessMode", slug, created_at AS "createdAt"
-        FROM schools
-        ORDER BY created_at DESC
-      `;
-      return response.status(200).json({ schools });
-    }
-
-    const id = randomUUID();
-    const slug = createSchoolSlug(school.name, id);
-    await sql`
-      INSERT INTO schools (id, name, school_type, country, email, access_mode, slug)
-      VALUES (
-        ${id},
-        ${school.name},
-        ${school.schoolType},
-        ${school.country},
-        ${school.email},
-        ${school.accessMode},
-        ${slug}
-      )
-    `;
-
-    return response.status(201).json({
-      school: { id, ...school, slug, portalUrl: `/school/${slug}` },
-    });
+    return response.status(201).json({ school: await createSchool(school) });
   } catch (error) {
     if (error.code === "23505") {
       return response.status(409).json({
         error: "A school profile already exists for that email address.",
+      });
+    }
+    if (error.code === "DATABASE_URL_MISSING") {
+      return response.status(503).json({
+        error: "Database not configured. Set DATABASE_URL to your Neon connection string.",
       });
     }
     console.error("School API request failed:", error);
