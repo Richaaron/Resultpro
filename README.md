@@ -26,14 +26,14 @@ Open the Vite URL printed in the terminal (usually `http://localhost:5173`). Vit
 
 The production frontend can be built with `npm run build`; `npm start` serves the built frontend and API on port `4000`. `DATABASE_URL` must be available to the server.
 
-## Deploy the always-on API to Render
+## Deploy the API to Render
 
 1. In Render, choose **New → Blueprint** and connect this repository. Render reads `render.yaml` and creates the `aster-api` web service.
 2. Set `DATABASE_URL` to the Neon **pooled** connection string when Render prompts for it.
 3. Set `FRONTEND_ORIGINS` to the exact Vercel frontend origin, such as `https://your-app.vercel.app` (no trailing slash). Include additional trusted origins as a comma-separated list.
 4. Deploy the service and verify `https://<your-render-service>.onrender.com/api/health` returns `{"status":"ok"}`.
 
-The service uses the paid `starter` plan so it does not sleep when idle. Render's Free web services sleep after inactivity and are not suitable when an always-running service is required. Render and this Neon project are both configured for Oregon.
+The service uses Render's **Free** plan. Free web services sleep after inactivity and can take around a minute to wake when the next request arrives, so this is not an always-on backend. Upgrade the service to a paid plan in Render if you later need it to stay awake. Render and this Neon project are both configured for Oregon.
 
 ## Deploy the frontend to Vercel
 
