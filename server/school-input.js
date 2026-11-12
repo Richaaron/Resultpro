@@ -12,7 +12,7 @@ export function normalizeSchoolInput(body = {}) {
     "All-through school",
     "College / sixth form",
   ]);
-  const validAccessModes = new Set(["invite", "school-code", "public"]);
+  const validAccessModes = new Set(["invite"]);
   const validEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(school.email);
 
   if (

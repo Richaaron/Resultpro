@@ -1,4 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
+import AuthScreen from "./AuthScreen.jsx";
+import { authClient } from "./auth.js";
 
 const navigation = [
   ["overview", "Overview", "▦"],
@@ -57,16 +59,31 @@ const portalData = {
 
 const schoolTypes = ["Primary school", "Secondary school", "All-through school", "College / sixth form"];
 const accessOptions = [
-  ["invite", "Invite-only portals", "Invite parents, students, and staff by email or access code."],
-  ["school-code", "School code", "Let your community join with a unique school code."],
-  ["public", "Public school page", "Share your school profile, with private results behind sign-in."],
+  ["invite", "Invite-only portals", "Only verified people invited by a school administrator can join."],
 ];
 
 const API_BASE_URL = (import.meta.env.VITE_API_URL || "").replace(/\/+$/, "");
 const apiUrl = (path) => `${API_BASE_URL}${path}`;
 
+async function apiRequest(path, options = {}) {
+  if (!authClient) throw new Error("Authentication is not configured.");
+  const tokenResult = await authClient.token();
+  if (tokenResult.error || !tokenResult.data?.token) {
+    throw new Error(tokenResult.error?.message || "Your session expired. Please sign in again.");
+  }
+  const headers = new Headers(options.headers);
+  headers.set("Authorization", `Bearer ${tokenResult.data.token}`);
+  if (options.body && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
+  const response = await fetch(apiUrl(path), { ...options, headers });
+  const payload = await response.json();
+  if (!response.ok) throw new Error(payload.error || "The request could not be completed.");
+  return payload;
+}
+
 function App() {
-  const [role, setRole] = useState("admin");
+  const [session, setSession] = useState(null);
+  const [sessionLoading, setSessionLoading] = useState(true);
+  const [authNotice, setAuthNotice] = useState("");
   const [page, setPage] = useState("overview");
   const [school, setSchool] = useState(null);
   const [schools, setSchools] = useState([]);
@@ -77,33 +94,75 @@ function App() {
   const [toast, setToast] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteRole, setInviteRole] = useState("teacher");
+  const [inviting, setInviting] = useState(false);
+  const [invitationUrl, setInvitationUrl] = useState("");
   const [form, setForm] = useState({ name: "", schoolType: "", country: "", email: "", accessMode: "invite" });
+  const role = school?.role || "admin";
   const current = portalData[role];
   const visibleNavigation = navigation.filter(([id]) => role === "admin" || (role === "teacher" && ["overview", "results", "classes"].includes(id)) || (role === "student" && ["overview", "results"].includes(id)));
   const filteredResults = useMemo(() => current.results.filter((row) => row.join(" ").toLowerCase().includes(search.toLowerCase())), [current, search]);
 
   useEffect(() => {
     let active = true;
-    fetch(apiUrl("/api/schools"))
-      .then(async (response) => {
-        const payload = await response.json();
-        if (!response.ok) throw new Error(payload.error || "Could not load school profiles.");
-        return payload.schools;
+    if (!authClient) {
+      setSessionLoading(false);
+      setAuthNotice("Neon Auth is not configured. Set VITE_NEON_AUTH_URL to your Auth Base URL.");
+      return () => { active = false; };
+    }
+    authClient.getSession()
+      .then(({ data, error: sessionError }) => {
+        if (sessionError) throw new Error(sessionError.message || "Could not restore your session.");
+        if (active) setSession(data?.session || null);
       })
-      .then((savedSchools) => {
-        if (active) {
-          setSchools(savedSchools);
-          setSchool(savedSchools[0] || null);
+      .catch((sessionError) => {
+        if (active) setAuthNotice(sessionError.message || "Could not restore your session.");
+      })
+      .finally(() => {
+        if (active) setSessionLoading(false);
+      });
+    return () => { active = false; };
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    if (!session?.user?.emailVerified) {
+      setSchools([]);
+      setSchool(null);
+      setLoadingSchools(false);
+      return () => { active = false; };
+    }
+    setLoadingSchools(true);
+    async function loadWorkspace() {
+      const inviteToken = new URLSearchParams(window.location.hash.slice(1)).get("invite");
+      if (inviteToken) {
+        try {
+          await apiRequest("/api/invitations/accept", {
+            method: "POST",
+            body: JSON.stringify({ token: inviteToken }),
+          });
+          setToast("Invitation accepted. Your school access is ready.");
+        } catch (requestError) {
+          setToast(requestError.message);
+        } finally {
+          window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
         }
-      })
+      }
+      const payload = await apiRequest("/api/schools");
+      if (!active) return;
+      setSchools(payload.schools);
+      setSchool((previous) => payload.schools.find((item) => item.id === previous?.id) || payload.schools[0] || null);
+    }
+    loadWorkspace()
       .catch((requestError) => {
-        if (active) setToast(requestError.message || "Could not load school profiles.");
+        if (active) setToast(requestError.message || "Could not load your school profiles.");
       })
       .finally(() => {
         if (active) setLoadingSchools(false);
       });
     return () => { active = false; };
-  }, []);
+  }, [session]);
 
   useEffect(() => {
     if (!toast) return undefined;
@@ -122,13 +181,10 @@ function App() {
     setSaving(true);
     setError("");
     try {
-      const response = await fetch(apiUrl("/api/schools"), {
+      const payload = await apiRequest("/api/schools", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify(form),
       });
-      const payload = await response.json();
-      if (!response.ok) throw new Error(payload.error || "Could not create the school profile.");
       setSchool(payload.school);
       setSchools((previous) => [payload.school, ...previous]);
       setModalOpen(false);
@@ -138,6 +194,57 @@ function App() {
       setError(requestError.message || "The API could not be reached. Please try again.");
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function createInvitation(event) {
+    event.preventDefault();
+    if (!school) return;
+    setInviting(true);
+    setError("");
+    setInvitationUrl("");
+    try {
+      const payload = await apiRequest(`/api/schools/${school.id}/invitations`, {
+        method: "POST",
+        body: JSON.stringify({ email: inviteEmail, role: inviteRole }),
+      });
+      setInvitationUrl(`${window.location.origin}/#invite=${encodeURIComponent(payload.invitation.token)}`);
+      setInviteEmail("");
+      setToast(`Invitation link created for ${payload.invitation.email}.`);
+    } catch (requestError) {
+      setError(requestError.message || "Could not create the invitation.");
+    } finally {
+      setInviting(false);
+    }
+  }
+
+  async function copyInvitation() {
+    try {
+      await navigator.clipboard.writeText(invitationUrl);
+      setToast("Invitation link copied. Send it to the invited email address.");
+    } catch {
+      setToast("Copy the invitation link from the field and send it to the invited email address.");
+    }
+  }
+
+  async function restoreSession() {
+    const result = await authClient.getSession();
+    if (result.error) throw new Error(result.error.message || "Could not load your account.");
+    if (!result.data?.session?.user) throw new Error("Sign in to continue.");
+    setAuthNotice("");
+    setSession(result.data.session);
+  }
+
+  async function signOut() {
+    try {
+      const result = await authClient.signOut();
+      if (result.error) throw new Error(result.error.message || "Could not sign out.");
+      setSession(null);
+      setSchools([]);
+      setSchool(null);
+      setAuthNotice("");
+    } catch (requestError) {
+      setToast(requestError.message || "Could not sign out. Please try again.");
     }
   }
 
@@ -154,6 +261,19 @@ function App() {
 
   function updateForm(field, value) {
     setForm((previous) => ({ ...previous, [field]: value }));
+  }
+
+  const userName = session?.user?.name || session?.user?.email?.split("@")[0] || "School administrator";
+  const userInitials = userName.split(/\s+/).slice(0, 2).map((part) => part[0]).join("").toUpperCase();
+
+  if (sessionLoading) {
+    return <main className="auth-shell"><p className="auth-description">Restoring your secure session…</p></main>;
+  }
+  if (!session?.user || session.user.emailVerified !== true) {
+    return <AuthScreen authClient={authClient} notice={authNotice} initialEmail={session?.user?.email} verificationRequired={Boolean(session?.user && !session.user.emailVerified)} onAuthenticated={restoreSession} />;
+  }
+  if (loadingSchools) {
+    return <main className="auth-shell"><p className="auth-description">Loading your school workspace…</p></main>;
   }
 
   return (
@@ -180,27 +300,36 @@ function App() {
         </>}
         <div className="sidebar-bottom">
           <div className="help-card"><span className="help-spark">✳</span><strong>A little help goes a long way.</strong><span>Visit the Aster help desk</span><button type="button" onClick={() => setToast("Aster Help Desk — support@aster.school")}>Get help ↗</button></div>
-          <div className="user-profile"><span className="user-avatar">OA</span><span className="user-copy"><strong>Olumide A.</strong><small>School administrator</small></span></div>
+          <div className="user-profile"><span className="user-avatar">{userInitials}</span><span className="user-copy"><strong>{userName}</strong><small>{portalData[role].label}</small></span></div>
         </div>
       </aside>
 
       <main className="main-content">
-        <header className="topbar"><div className="breadcrumb"><span>Workspace</span><span className="breadcrumb-slash">/</span><strong>{page}</strong></div><div className="topbar-actions"><div className="role-control"><span>Preview as</span><select className="role-select" value={role} onChange={(event) => { setRole(event.target.value); setPage("overview"); }} aria-label="Preview portal as"><option value="admin">Admin</option><option value="teacher">Teacher</option><option value="student">Student</option></select></div><button className="icon-button" type="button" onClick={() => setToast("You’re all caught up on school notifications.")} aria-label="Notifications">♧</button><button className="topbar-avatar" type="button" aria-label="Olumide A. profile">OA</button></div></header>
+        <header className="topbar"><div className="breadcrumb"><span>Workspace</span><span className="breadcrumb-slash">/</span><strong>{page}</strong></div><div className="topbar-actions"><span className="role-select" aria-label="Your school role">{portalData[role].label}</span><button className="icon-button" type="button" onClick={() => setToast("You’re all caught up on school notifications.")} aria-label="Notifications">♧</button><button className="topbar-avatar" type="button" aria-label={`Sign out ${userName}`} onClick={signOut}>{userInitials}</button></div></header>
         <div className="page-content">
+          {!school ? <section className="panel onboarding-panel"><span className="auth-kicker">WELCOME TO ASTER</span><h1>Create your school workspace</h1><p className="page-subtitle">Your account is ready. Set up your school profile to begin; only people you invite can join its portal.</p><button className="button button-primary" type="button" onClick={showSetup}>＋ Create school profile</button></section> : <>
           <section className="welcome-row">
-            <div><div className="eyebrow"><span className="live-dot" /> MONDAY, 12 MAY 2025 <span className="eyebrow-divider">·</span> SECOND TERM</div><h1>{page === "overview" ? current.title : page === "results" ? "Results, at a glance" : page === "profile" ? "Your school, your story." : `${page[0].toUpperCase()}${page.slice(1)}`} <span className="wave">✳</span></h1><p className="page-subtitle">{page === "overview" ? current.subtitle : `Keep your ${page} organised for the term ahead.`}</p></div>
-            <div className="welcome-actions"><button className="button button-secondary" type="button" onClick={async () => { try { await navigator.clipboard.writeText(`${window.location.origin}/school/${school?.slug || "harborview"}`); setToast("Your school link has been copied."); } catch { setToast("Create a school profile to get a shareable school link."); } }}>↗ Share school link</button><button className="button button-primary" type="button" onClick={() => page === "profile" || page === "access" ? showSetup() : setToast(`${role === "teacher" ? "Enter marks" : role === "student" ? "View your results" : "Add a student"} — your workspace is ready.`)}>＋ {role === "teacher" ? "Enter marks" : role === "student" ? "View my results" : "Add a student"}</button></div>
+            <div><div className="eyebrow"><span className="live-dot" /> MONDAY, 12 MAY 2025 <span className="eyebrow-divider">·</span> SECOND TERM</div><h1>{page === "overview" ? role === "admin" ? `Good morning, ${userName}` : current.title : page === "results" ? "Results, at a glance" : page === "profile" ? "Your school, your story." : `${page[0].toUpperCase()}${page.slice(1)}`} <span className="wave">✳</span></h1><p className="page-subtitle">{page === "overview" ? current.subtitle : `Keep your ${page} organised for the term ahead.`}</p></div>
+            <div className="welcome-actions"><button className="button button-secondary" type="button" onClick={async () => { try { await navigator.clipboard.writeText(`${window.location.origin}/school/${school.slug}`); setToast("Your school link has been copied."); } catch { setToast("Could not copy the school link. Please try again."); } }}>↗ Share school link</button><button className="button button-primary" type="button" onClick={() => page === "profile" ? showSetup() : page === "access" ? document.getElementById("inviteEmail")?.focus() : setToast(`${role === "teacher" ? "Enter marks" : role === "student" ? "View your results" : "Add a student"} — student records are not connected yet.`)}>＋ {page === "access" ? "Invite a member" : role === "teacher" ? "Enter marks" : role === "student" ? "View my results" : "Add a student"}</button></div>
           </section>
 
-          <section className="term-banner"><div className="term-icon">▣</div><div className="term-copy"><strong>{role === "admin" ? "Second term is in full swing" : role === "teacher" ? "Your classes are making progress" : "Your second term, so far"}</strong><span>{role === "admin" ? "Results are due in 12 days. Your teachers have submitted 68% of their marks." : role === "teacher" ? "Three mark sets are due Friday. You’ve entered 82% of your marks." : "You’re doing well. Keep showing up, asking questions, and making progress."}</span></div><div className="progress-wrap"><div className="progress-label"><span>{role === "student" ? "Term progress" : role === "teacher" ? "My marks entered" : "Mark submission"}</span><strong>{role === "student" ? "On track" : role === "teacher" ? "82%" : "68%"}</strong></div><div className="progress-track"><span style={{ width: role === "student" ? "62%" : role === "teacher" ? "82%" : "68%" }} /></div></div><button className="text-link" type="button" onClick={() => setPage("results")}>View results →</button></section>
+          {role === "admin" && page === "access" && <section className="panel invite-panel"><div className="panel-heading"><div><h2>Invite your school community</h2><p>Only invited people can join. Links expire after 7 days and work for the invited email address only.</p></div></div><form className="invite-form" onSubmit={createInvitation}><label className="field-label" htmlFor="inviteEmail">Invitee email</label><input className="text-input" id="inviteEmail" type="email" required maxLength={254} value={inviteEmail} onChange={(event) => setInviteEmail(event.target.value)} placeholder="teacher@yourschool.edu" /><label className="field-label" htmlFor="inviteRole">Portal role</label><select className="text-input" id="inviteRole" value={inviteRole} onChange={(event) => setInviteRole(event.target.value)}><option value="teacher">Teacher</option><option value="student">Student</option></select>{error && <p className="form-error" role="alert">{error}</p>}<button className="button button-primary" type="submit" disabled={inviting}>{inviting ? "Creating link…" : "Create invitation link"}</button></form>{invitationUrl && <div className="invitation-link"><label className="field-label" htmlFor="invitationUrl">One-time invitation link</label><div><input className="text-input" id="invitationUrl" readOnly value={invitationUrl} /><button className="button button-secondary" type="button" onClick={copyInvitation}>Copy</button></div><p className="field-hint">Send this link directly to the invited email address. Aster does not email invitations yet.</p></div>}</section>}
 
-          <section className="stats-grid" aria-label="School summary">{current.stats.map(([label, value, trend], index) => <article className="stat-card" key={label}><div className="stat-top"><span className="stat-label">{label}</span><span className={`stat-icon ${["student-stat-icon", "teacher-stat-icon", "average-stat-icon", "review-stat-icon"][index]}`}>{["♧", "♙", "↗", "▤"][index]}</span></div><div className="stat-number">{value} <span className={`stat-trend ${index === 3 ? "attention" : "positive"}`}>{trend}</span></div><div className="stat-foot"><span>{index === 3 ? "4 classes, 3 teachers" : "vs. last term"}</span><span className="mini-chart students-chart"><i /><i /><i /><i /><i /><i /><i /><i /><i /></span></div></article>)}</section>
+          <section className={`term-banner ${page === "access" ? "hidden" : ""}`}><div className="term-icon">▣</div><div className="term-copy"><strong>{role === "admin" ? "Second term is in full swing" : role === "teacher" ? "Your classes are making progress" : "Your second term, so far"}</strong><span>{role === "admin" ? "Results are due in 12 days. Your teachers have submitted 68% of their marks." : role === "teacher" ? "Three mark sets are due Friday. You’ve entered 82% of your marks." : "You’re doing well. Keep showing up, asking questions, and making progress."}</span></div><div className="progress-wrap"><div className="progress-label"><span>{role === "student" ? "Term progress" : role === "teacher" ? "My marks entered" : "Mark submission"}</span><strong>{role === "student" ? "On track" : role === "teacher" ? "82%" : "68%"}</strong></div><div className="progress-track"><span style={{ width: role === "student" ? "62%" : role === "teacher" ? "82%" : "68%" }} /></div></div><button className="text-link" type="button" onClick={() => setPage("results")}>View results →</button></section>
 
-          <section className="main-grid"><article className="panel performance-panel"><div className="panel-heading"><div><h2>{role === "student" ? "My learning journey" : role === "teacher" ? "My marking progress" : "School performance"}</h2><p>A little progress, every term.</p></div><button className="select-button" type="button" onClick={() => setToast("Viewing performance for this academic year.")}>This academic year ⌄</button></div><div className="chart-summary"><strong>{current.average}</strong><span className="chart-change">↗ 4.6%</span><small>{role === "student" ? "my average" : "overall average"}</small></div><div className="chart-wrap" role="img" aria-label={`Performance trend, current average ${current.average}`}><div className="chart-y-labels"><span>100%</span><span>80%</span><span>60%</span><span>40%</span><span>20%</span></div><div className="chart-plot"><div className="chart-gridline line-100" /><div className="chart-gridline line-80" /><div className="chart-gridline line-60" /><div className="chart-gridline line-40" /><div className="chart-gridline line-20" /><svg className="performance-chart" viewBox="0 0 620 180" preserveAspectRatio="none" aria-hidden="true"><defs><linearGradient id="chartFill" x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stopColor="#98b89b" stopOpacity=".3" /><stop offset="100%" stopColor="#98b89b" stopOpacity="0" /></linearGradient></defs><path d="M0 126 C42 119 58 128 90 112 S145 112 176 98 S224 105 264 86 S320 96 352 72 S415 83 440 62 S500 72 530 46 S582 53 620 30 V180 H0Z" fill="url(#chartFill)" /><path d="M0 126 C42 119 58 128 90 112 S145 112 176 98 S224 105 264 86 S320 96 352 72 S415 83 440 62 S500 72 530 46 S582 53 620 30" fill="none" stroke="#477b59" strokeWidth="3" vectorEffect="non-scaling-stroke" strokeLinecap="round" /><circle cx="620" cy="30" r="5" fill="#477b59" stroke="#fff" strokeWidth="3" vectorEffect="non-scaling-stroke" /></svg><div className="chart-x-labels"><span>Term 1</span><span>Term 2</span><span>Term 3</span><span>Term 1</span></div></div></div><div className="chart-legend"><span><i className="legend-dot" />School average</span><span><i className="legend-dash" />Last year’s average</span><span className="legend-target">School target <strong>75%</strong></span></div></article>
-            <article className="panel activity-panel"><div className="panel-heading"><div><h2>{role === "student" ? "Coming up for you" : role === "teacher" ? "Your next steps" : "Needs your attention"}</h2><p>The important things, all in one place.</p></div><button className="more-button" type="button">•••</button></div><div className="attention-list">{current.attention.map(([title, detail], index) => <button className="attention-item" type="button" key={title} onClick={() => setPage("results")}><span className={`attention-icon ${["amber", "blue", "lilac"][index]}`}>{["⚠", "♧", "⌂"][index]}</span><span className="attention-copy"><strong>{title}</strong><small>{detail}</small></span><span className="attention-arrow">→</span></button>)}</div><button className="view-all-link" type="button" onClick={() => setPage("results")}>View all updates →</button></article></section>
+          <section className={`stats-grid ${page === "access" ? "hidden" : ""}`} aria-label="School summary">{current.stats.map(([label, value, trend], index) => <article className="stat-card" key={label}><div className="stat-top"><span className="stat-label">{label}</span><span className={`stat-icon ${["student-stat-icon", "teacher-stat-icon", "average-stat-icon", "review-stat-icon"][index]}`}>{["♧", "♙", "↗", "▤"][index]}</span></div><div className="stat-number">{value} <span className={`stat-trend ${index === 3 ? "attention" : "positive"}`}>{trend}</span></div><div className="stat-foot"><span>{index === 3 ? "4 classes, 3 teachers" : "vs. last term"}</span><span className="mini-chart students-chart"><i /><i /><i /><i /><i /><i /><i /><i /><i /></span></div></article>)}</section>
+          <section className={`main-grid ${page === "access" ? "hidden" : ""}`}>
+            <article className="panel performance-panel">
+              <div className="panel-heading"><div><h2>{role === "student" ? "My learning journey" : role === "teacher" ? "My marking progress" : "School performance"}</h2><p>A little progress, every term.</p></div></div>
+              <div className="chart-summary"><strong>{current.average}</strong><small>{role === "student" ? "my average" : "overall average"}</small></div>
+              <p className="sample-chart-copy">Performance charts will show verified school results once student records are connected.</p>
+            </article>
+            <article className="panel activity-panel"><div className="panel-heading"><div><h2>{role === "student" ? "Coming up for you" : role === "teacher" ? "Your next steps" : "Needs your attention"}</h2><p>The important things, all in one place.</p></div><button className="more-button" type="button">•••</button></div><div className="attention-list">{current.attention.map(([title, detail], index) => <button className="attention-item" type="button" key={title} onClick={() => setPage("results")}><span className={`attention-icon ${["amber", "blue", "lilac"][index]}`}>{["⚠", "♧", "⌂"][index]}</span><span className="attention-copy"><strong>{title}</strong><small>{detail}</small></span><span className="attention-arrow">→</span></button>)}</div><button className="view-all-link" type="button" onClick={() => setPage("results")}>View all updates →</button></article>
+          </section>
 
-          <section className="panel results-panel"><div className="panel-heading results-heading"><div><h2>{role === "student" ? "My recent results" : role === "teacher" ? "My recent marks" : "Recent results"}</h2><p>A snapshot of marks making their way to you.</p></div><div className="table-actions"><label className="search-box"><span>⌕</span><input type="search" placeholder="Search results" aria-label="Search results" value={search} onChange={(event) => setSearch(event.target.value)} /></label><button className="button button-secondary button-small" type="button" onClick={() => setToast("Showing results from the current term.")}>☷ Filter</button><button className="button button-secondary button-small export-button" type="button" onClick={exportResults}>⇩ Export</button></div></div><div className="table-scroll"><table><thead><tr>{[role === "student" ? "SUBJECT" : "STUDENT", role === "student" ? "ASSESSMENT" : "CLASS", role === "student" ? "TERM" : "SUBJECT", "TEACHER", "MARK", "STATUS"].map((heading) => <th key={heading}>{heading}</th>)}</tr></thead><tbody>{filteredResults.map((row, index) => <tr key={`${row[0]}-${index}`}><td>{role === "student" ? row[0] : <span className="student-cell"><span className={`table-avatar ${["rose", "blue-avatar", "green-avatar", "yellow-avatar"][index]}`}>{row[0].split(" ").map((part) => part[0]).join("").slice(0, 2)}</span><span><strong>{row[0]}</strong><small>{row[1]}</small></span></span>}</td><td>{role === "student" ? row[1] : row[2]}</td><td>{role === "student" ? row[2] : row[3]}</td><td>{row[4]}</td><td><strong className="mark">{row[5]}</strong><span className="mark-denom"> / 100</span></td><td><span className={`status-pill ${row[6] === "Approved" || row[6] === "Submitted" || row[6] === "Graded" ? "approved" : row[6] === "Needs review" ? "pending" : "draft"}`}><i />{row[6]}</span></td></tr>)}</tbody></table>{filteredResults.length === 0 && <div className="empty-search">No results match your search. Try another name, class, or subject.</div>}</div><div className="table-footer"><span>Showing <strong>{filteredResults.length}</strong> of {role === "student" ? "8" : role === "teacher" ? "576" : "1,248"} results</span><button className="table-footer-link" type="button" onClick={() => setPage("results")}>View all results →</button></div></section>
+          <section className={`panel results-panel ${page === "access" ? "hidden" : ""}`}><div className="panel-heading results-heading"><div><h2>{role === "student" ? "My recent results" : role === "teacher" ? "My recent marks" : "Recent results"}</h2><p>A snapshot of marks making their way to you.</p></div><div className="table-actions"><label className="search-box"><span>⌕</span><input type="search" placeholder="Search results" aria-label="Search results" value={search} onChange={(event) => setSearch(event.target.value)} /></label><button className="button button-secondary button-small" type="button" onClick={() => setToast("Showing results from the current term.")}>☷ Filter</button><button className="button button-secondary button-small export-button" type="button" onClick={exportResults}>⇩ Export</button></div></div><div className="table-scroll"><table><thead><tr>{[role === "student" ? "SUBJECT" : "STUDENT", role === "student" ? "ASSESSMENT" : "CLASS", role === "student" ? "TERM" : "SUBJECT", "TEACHER", "MARK", "STATUS"].map((heading) => <th key={heading}>{heading}</th>)}</tr></thead><tbody>{filteredResults.map((row, index) => <tr key={`${row[0]}-${index}`}><td>{role === "student" ? row[0] : <span className="student-cell"><span className={`table-avatar ${["rose", "blue-avatar", "green-avatar", "yellow-avatar"][index]}`}>{row[0].split(" ").map((part) => part[0]).join("").slice(0, 2)}</span><span><strong>{row[0]}</strong><small>{row[1]}</small></span></span>}</td><td>{role === "student" ? row[1] : row[2]}</td><td>{role === "student" ? row[2] : row[3]}</td><td>{row[4]}</td><td><strong className="mark">{row[5]}</strong><span className="mark-denom"> / 100</span></td><td><span className={`status-pill ${row[6] === "Approved" || row[6] === "Submitted" || row[6] === "Graded" ? "approved" : row[6] === "Needs review" ? "pending" : "draft"}`}><i />{row[6]}</span></td></tr>)}</tbody></table>{filteredResults.length === 0 && <div className="empty-search">No results match your search. Try another name, class, or subject.</div>}</div><div className="table-footer"><span>Showing <strong>{filteredResults.length}</strong> of {role === "student" ? "8" : role === "teacher" ? "576" : "1,248"} results</span><button className="table-footer-link" type="button" onClick={() => setPage("results")}>View all results →</button></div></section>
           <footer className="page-footer"><span>Made for the people who make school matter <span className="footer-heart">♥</span></span><span>ASTER SCHOOL OS <i /> 2025</span></footer>
+          </>}
         </div>
       </main>
 

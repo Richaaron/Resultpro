@@ -12,5 +12,7 @@ services:
         value: production
       - key: DATABASE_URL
         sync: false
+      - key: NEON_AUTH_BASE_URL
+        sync: false
       - key: FRONTEND_ORIGINS
         sync: false
