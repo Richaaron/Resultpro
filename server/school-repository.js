@@ -739,6 +739,96 @@ export async function getSchoolClassAttendance(schoolId, classId, date, teacherU
   };
 }
 
+export async function getSchoolClassAttendanceReport(schoolId, classId, from, to, teacherUserId = null) {
+  const sql = await getReadyDatabase();
+  const rows = await sql`
+    WITH selected_class AS MATERIALIZED (
+      SELECT c.id, c.grade, c.section, c.academic_year
+      FROM school_classes c
+      WHERE c.school_id = ${schoolId}
+        AND c.id = ${classId}
+        AND (
+          ${teacherUserId}::text IS NULL
+          OR EXISTS (
+            SELECT 1 FROM school_teaching_assignments ta
+            WHERE ta.school_id = c.school_id
+              AND ta.class_id = c.id
+              AND ta.teacher_user_id = ${teacherUserId}
+          )
+        )
+    ),
+    roster AS MATERIALIZED (
+      SELECT st.id, st.admission_number, st.first_name, st.last_name
+      FROM school_students st
+      JOIN selected_class c ON c.id = st.class_id
+      WHERE st.school_id = ${schoolId}
+        AND st.is_active
+      UNION
+      SELECT st.id, st.admission_number, st.first_name, st.last_name
+      FROM school_attendance a
+      JOIN school_students st
+        ON st.school_id = a.school_id AND st.id = a.student_id
+      JOIN selected_class c ON c.id = a.class_id
+      WHERE a.school_id = ${schoolId}
+        AND a.attendance_date BETWEEN ${from}::date AND ${to}::date
+    ),
+    student_totals AS (
+      SELECT a.student_id,
+             COUNT(*)::int AS "daysRecorded",
+             COUNT(*) FILTER (WHERE a.status = 'present')::int AS present,
+             COUNT(*) FILTER (WHERE a.status = 'absent')::int AS absent,
+             COUNT(*) FILTER (WHERE a.status = 'late')::int AS late,
+             COUNT(*) FILTER (WHERE a.status = 'excused')::int AS excused
+      FROM school_attendance a
+      JOIN selected_class c ON c.id = a.class_id
+      WHERE a.school_id = ${schoolId}
+        AND a.attendance_date BETWEEN ${from}::date AND ${to}::date
+      GROUP BY a.student_id
+    ),
+    attendance_days AS (
+      SELECT COUNT(DISTINCT a.attendance_date)::int AS total
+      FROM school_attendance a
+      JOIN selected_class c ON c.id = a.class_id
+      WHERE a.school_id = ${schoolId}
+        AND a.attendance_date BETWEEN ${from}::date AND ${to}::date
+    )
+    SELECT c.id AS "classId", c.grade, c.section,
+           c.academic_year AS "academicYear",
+           days.total AS "recordedDays",
+           st.id AS "studentId", st.admission_number AS "admissionNumber",
+           st.first_name AS "firstName", st.last_name AS "lastName",
+           COALESCE(totals."daysRecorded", 0)::int AS "daysRecorded",
+           COALESCE(totals.present, 0)::int AS present,
+           COALESCE(totals.absent, 0)::int AS absent,
+           COALESCE(totals.late, 0)::int AS late,
+           COALESCE(totals.excused, 0)::int AS excused
+    FROM selected_class c
+    CROSS JOIN attendance_days days
+    LEFT JOIN roster st ON TRUE
+    LEFT JOIN student_totals totals ON totals.student_id = st.id
+    ORDER BY st.last_name, st.first_name, st.admission_number
+  `;
+  if (!rows.length) return null;
+  const { classId: resultClassId, grade, section, academicYear, recordedDays } = rows[0];
+  return {
+    schoolClass: { id: resultClassId, grade, section, academicYear },
+    from,
+    to,
+    recordedDays,
+    rows: rows.filter((row) => row.studentId).map((row) => ({
+      studentId: row.studentId,
+      admissionNumber: row.admissionNumber,
+      firstName: row.firstName,
+      lastName: row.lastName,
+      daysRecorded: row.daysRecorded,
+      present: row.present,
+      absent: row.absent,
+      late: row.late,
+      excused: row.excused,
+    })),
+  };
+}
+
 export async function saveSchoolClassAttendance(schoolId, classId, date, userId, marks, teacherUserId = null) {
   const sql = await getReadyDatabase();
   const [result] = await sql`

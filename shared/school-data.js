@@ -17,6 +17,13 @@ export function isValidAttendanceDate(value) {
     .slice(0, 10) === value;
 }
 
+export function isValidAttendanceReportRange(from, to) {
+  if (!isValidAttendanceDate(from) || !isValidAttendanceDate(to) || from > to) return false;
+  const firstDay = new Date(`${from}T00:00:00.000Z`).getTime();
+  const lastDay = new Date(`${to}T00:00:00.000Z`).getTime();
+  return (lastDay - firstDay) / 86_400_000 < 366;
+}
+
 export function normalizeAttendanceInput(body = {}) {
   if (!body || typeof body !== "object" || Array.isArray(body)) return null;
   const classId = typeof body.classId === "string" ? body.classId : "";

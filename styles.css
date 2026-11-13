@@ -336,6 +336,16 @@ select.text-input { color: #58645a; }
 .attendance-status { width: 150px; height: 34px; font-size: 10px; }
 .attendance-footer { margin-top: 15px; }
 .attendance-footer .field-hint { margin: 0; }
+.attendance-report-panel { padding: 20px; }
+.attendance-report-filters { display: flex; flex-wrap: wrap; align-items: end; gap: 10px; margin: 16px 0; }
+.attendance-report-filters label { display: grid; min-width: 190px; gap: 5px; color: #637065; font-size: 9px; font-weight: 600; }
+.attendance-report-filters .text-input { height: 35px; font-size: 10px; }
+.attendance-report-filters .button { min-height: 35px; }
+.attendance-report-meta { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; margin: 15px 0 10px; color: #66756a; font-size: 10px; font-weight: 600; }
+.attendance-report-totals { justify-content: flex-start; margin: 0 0 12px; }
+.attendance-report-table { min-width: 720px; }
+.attendance-report-table th, .attendance-report-table td { text-align: center; }
+.attendance-report-table th:first-child, .attendance-report-table td:first-child { text-align: left; }
 .result-sheet-heading { align-items: center; }
 .result-sheet-actions { display: flex; gap: 7px; }
 .result-sheet-print-heading { display: none; }
@@ -435,7 +445,7 @@ select.text-input { color: #58645a; }
 @media (max-width: 390px) {
   .topbar-actions { gap: 4px; }.breadcrumb { gap: 6px; font-size: 10px; }.notification-button { width: 26px; }.topbar-avatar { width: 27px; height: 27px; }
   .welcome-actions .button { gap: 5px; }.welcome-actions .button svg { width: 12px; }.field-row { grid-template-columns: 1fr; gap: 0; }.page-footer > span:first-child { max-width: 155px; }
-  .curriculum-grid, .class-list, .class-create-form, .student-create-form, .assignment-form, .assessment-create-form { grid-template-columns: 1fr; }  .teacher-assignment-panel, .result-sheet-panel, .attendance-panel, .assessment-form-panel, .assessment-list-panel, .assessment-detail-panel { padding: 15px; }.teacher-assignment-panel > .panel-heading, .result-sheet-heading, .assessment-list-panel > .panel-heading { align-items: flex-start; flex-direction: column; }.result-sheet-filters { align-items: stretch; flex-direction: column; }.result-sheet-filters label { min-width: 0; }.result-sheet-summary { margin-left: 0; }.attendance-controls { align-items: stretch; flex-direction: column; }.attendance-controls label { min-width: 0; }.attendance-counts { margin-left: 0; }.attendance-footer { align-items: stretch; flex-direction: column; }.assessment-actions { align-items: stretch; flex-direction: column; }.assessment-actions .field-hint { margin-right: 0; }.assessment-review-actions > div { align-items: stretch; flex-direction: column; }.student-filters { align-items: stretch; flex-direction: column; }.student-filters .text-input { width: 100%; }.student-register-panel { padding-right: 11px; padding-left: 11px; }.student-register-panel .panel-heading { align-items: flex-start; flex-direction: column; }
+  .curriculum-grid, .class-list, .class-create-form, .student-create-form, .assignment-form, .assessment-create-form { grid-template-columns: 1fr; }    .teacher-assignment-panel, .result-sheet-panel, .attendance-panel, .attendance-report-panel, .assessment-form-panel, .assessment-list-panel, .assessment-detail-panel { padding: 15px; }.teacher-assignment-panel > .panel-heading, .result-sheet-heading, .assessment-list-panel > .panel-heading { align-items: flex-start; flex-direction: column; }.result-sheet-filters { align-items: stretch; flex-direction: column; }.result-sheet-filters label { min-width: 0; }.result-sheet-summary { margin-left: 0; }.attendance-controls { align-items: stretch; flex-direction: column; }.attendance-controls label { min-width: 0; }.attendance-counts { margin-left: 0; }.attendance-footer { align-items: stretch; flex-direction: column; }.attendance-report-filters { align-items: stretch; flex-direction: column; }.attendance-report-filters label { min-width: 0; }.attendance-report-filters .button { width: 100%; }.attendance-report-meta { align-items: flex-start; flex-direction: column; }.assessment-actions { align-items: stretch; flex-direction: column; }.assessment-actions .field-hint { margin-right: 0; }.assessment-review-actions > div { align-items: stretch; flex-direction: column; }.student-filters { align-items: stretch; flex-direction: column; }.student-filters .text-input { width: 100%; }.student-register-panel { padding-right: 11px; padding-left: 11px; }.student-register-panel .panel-heading { align-items: flex-start; flex-direction: column; }
 }
 @media print {
   body * { visibility: hidden !important; }
@@ -789,7 +799,7 @@ h1, .panel-heading h2, .stat-number { color: #f0f7f1; }
 .legend-dot { background: #73c989; }
 .legend-dash { border-color: #718b75; }
 .legend-target strong { color: #c0e0c3; }
-.results-panel, .result-sheet-panel, .attendance-panel, .assessment-form-panel, .assessment-list-panel,
+.results-panel, .result-sheet-panel, .attendance-panel, .attendance-report-panel, .assessment-form-panel, .assessment-list-panel,
 .assessment-detail-panel, .student-form-panel, .student-results-panel, .teacher-assignment-panel,
 .curriculum-panel, .invite-panel { background: linear-gradient(145deg, #111f17, #0f1b14); }
 .results-panel th, th { background: #17271d; color: #c1d0c4; }
@@ -801,7 +811,7 @@ tbody tr:hover { background: #16271c; }
 .result-sheet-table td, .assessment-table td, .assignment-table td { color: #d1dfd4; }
 .attendance-table td { color: #d1dfd4; }
 .attendance-table td > strong { color: #e8f4e9; }
-.attendance-toolbar { color: #c1d0c4; }
+.attendance-toolbar, .attendance-report-meta { color: #c1d0c4; }
 .attendance-counts span { border-color: #304636; color: #b7c8bb; }
 .attendance-counts strong { color: #e6f0e8; }
 .table-footer { border-top-color: #293d30; color: #afbeb1; }
@@ -823,6 +833,7 @@ select.text-input option { background: #101d16; color: #edf5ef; }
 .field-label, .class-create-form label, .student-create-form label, .assignment-form label,
 .assessment-create-form label, .assessment-review-actions label, .result-sheet-filters label,
 .attendance-controls label,
+.attendance-report-filters label,
 .grade-picker { color: #d4e1d7; }
 .class-create-form label small, .student-create-form label small, .assessment-create-form label small,
 .assessment-review-actions label small { color: #a9bcad; }

@@ -49,6 +49,7 @@ const localDateInputValue = () => {
   const date = new Date();
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 };
+const localMonthStartInputValue = () => `${localDateInputValue().slice(0, 7)}-01`;
 const accessOptions = [
   ["invite", "Invite-only portals", "Only verified people invited by a school administrator can join."],
 ];
@@ -146,6 +147,11 @@ function App() {
   const [savingAttendance, setSavingAttendance] = useState(false);
   const [attendanceError, setAttendanceError] = useState("");
   const [attendanceRefresh, setAttendanceRefresh] = useState(0);
+  const [attendanceReportFrom, setAttendanceReportFrom] = useState(localMonthStartInputValue);
+  const [attendanceReportTo, setAttendanceReportTo] = useState(localDateInputValue);
+  const [attendanceReportData, setAttendanceReportData] = useState(null);
+  const [loadingAttendanceReport, setLoadingAttendanceReport] = useState(false);
+  const [attendanceReportError, setAttendanceReportError] = useState("");
   const [classForm, setClassForm] = useState({
     grade: curriculumGrades.primary[0],
     section: "",
@@ -230,6 +236,18 @@ function App() {
     : "";
   const invitationsPending = loadingInvitations || (!invitationsForCurrentSchool && !invitationErrorForCurrentSchool);
   const selectedStudentResult = studentResultData?.sheets.find((sheet) => sheet.id === selectedStudentResultId) || null;
+  const attendanceReportForSelection = attendanceReportData?.schoolId === school?.id
+    && attendanceReportData.classId === attendanceClassId
+    && attendanceReportData.from === attendanceReportFrom
+    && attendanceReportData.to === attendanceReportTo
+    ? attendanceReportData
+    : null;
+  const attendanceReportTotals = attendanceReportForSelection?.rows.reduce((totals, row) => ({
+    present: totals.present + row.present,
+    absent: totals.absent + row.absent,
+    late: totals.late + row.late,
+    excused: totals.excused + row.excused,
+  }), { present: 0, absent: 0, late: 0, excused: 0 });
   const classReportGroups = useMemo(
     () => groupPublishedResultRowsByStudent(resultSheet?.rows),
     [resultSheet?.rows],
@@ -898,6 +916,33 @@ function App() {
     }
   }
 
+  async function generateAttendanceReport(event) {
+    event.preventDefault();
+    if (!school || !attendanceClassId || !attendanceReportFrom || !attendanceReportTo) return;
+    setLoadingAttendanceReport(true);
+    setAttendanceReportError("");
+    setAttendanceReportData(null);
+    const query = new URLSearchParams({
+      classId: attendanceClassId,
+      from: attendanceReportFrom,
+      to: attendanceReportTo,
+    });
+    try {
+      const { report } = await apiRequest(`/api/schools/${school.id}/attendance/report?${query}`);
+      setAttendanceReportData({
+        schoolId: school.id,
+        classId: attendanceClassId,
+        from: attendanceReportFrom,
+        to: attendanceReportTo,
+        ...report,
+      });
+    } catch (requestError) {
+      setAttendanceReportError(requestError.message || "Could not generate the attendance report.");
+    } finally {
+      setLoadingAttendanceReport(false);
+    }
+  }
+
   function setAttendanceStatus(studentId, status) {
     setAttendanceData((previous) => previous && ({
       ...previous,
@@ -1366,6 +1411,44 @@ function App() {
                         </tr>)}</tbody></table></div>
                         <div className="attendance-footer"><span className="field-hint">Mark every active student before saving. Saving again updates this class and date.</span><button className="button button-primary" type="submit" disabled={savingAttendance || attendanceData.rows.some((row) => !row.status)}>{savingAttendance ? "Saving…" : "Save attendance"}</button></div>
                       </form>}
+          </section>}
+
+          {page === "attendance" && <section className="panel attendance-report-panel">
+            <div className="panel-heading"><div><h2>Attendance summary</h2><p>Review saved attendance totals for each student in a class and date range.</p></div></div>
+            <form className="attendance-report-filters" onSubmit={generateAttendanceReport}>
+              <label><span>Class</span><select className="text-input" value={attendanceClassId} onChange={(event) => {
+                setAttendanceClassId(event.target.value);
+                setAttendanceReportData(null);
+              }} disabled={loadingClasses || !schoolClasses.length} required><option value="">Select a class</option>{schoolClasses.map((item) => <option key={item.id} value={item.id}>{item.grade} {item.section} · {item.academicYear}</option>)}</select></label>
+              <label><span>From</span><input className="text-input" type="date" value={attendanceReportFrom} max={attendanceReportTo} onChange={(event) => {
+                setAttendanceReportFrom(event.target.value);
+                setAttendanceReportData(null);
+              }} required /></label>
+              <label><span>To</span><input className="text-input" type="date" value={attendanceReportTo} min={attendanceReportFrom} onChange={(event) => {
+                setAttendanceReportTo(event.target.value);
+                setAttendanceReportData(null);
+              }} required /></label>
+              <button className="button button-secondary" type="submit" disabled={loadingAttendanceReport || !attendanceClassId}>{loadingAttendanceReport ? "Loading…" : "Generate report"}</button>
+            </form>
+            {attendanceReportError && <p className="form-error" role="alert">{attendanceReportError}</p>}
+            {loadingAttendanceReport ? <p className="empty-search">Generating attendance summary…</p>
+              : !attendanceReportForSelection ? <p className="empty-search">Choose a class and date range, then generate the attendance summary.</p>
+              : <>
+                <div className="attendance-report-meta">
+                  <span>{attendanceReportForSelection.schoolClass.grade} {attendanceReportForSelection.schoolClass.section} · {attendanceReportFrom} to {attendanceReportTo}</span>
+                  <span>{attendanceReportForSelection.recordedDays} school {attendanceReportForSelection.recordedDays === 1 ? "day" : "days"} recorded</span>
+                </div>
+                {attendanceReportTotals && <div className="attendance-counts attendance-report-totals" aria-label="Attendance totals for this period">
+                  {["present", "absent", "late", "excused"].map((status) => <span key={status}>{status[0].toUpperCase() + status.slice(1)} <strong>{attendanceReportTotals[status]}</strong></span>)}
+                </div>}
+                {attendanceReportForSelection.rows.length === 0
+                  ? <p className="empty-search">No students or saved attendance were found for this class.</p>
+                  : <div className="table-scroll"><table className="attendance-table attendance-report-table"><thead><tr><th>STUDENT</th><th>ADMISSION NO.</th><th>DAYS MARKED</th><th>PRESENT</th><th>ABSENT</th><th>LATE</th><th>EXCUSED</th></tr></thead><tbody>{attendanceReportForSelection.rows.map((row) => <tr key={row.studentId}>
+                    <td><strong>{row.firstName} {row.lastName}</strong></td>
+                    <td>{row.admissionNumber}</td>
+                    <td>{row.daysRecorded}</td><td>{row.present}</td><td>{row.absent}</td><td>{row.late}</td><td>{row.excused}</td>
+                  </tr>)}</tbody></table></div>}
+              </>}
           </section>}
 
           {page === "classes" && <section className="panel curriculum-panel">

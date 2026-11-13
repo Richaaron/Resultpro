@@ -11,6 +11,7 @@ import {
   deleteSchoolClass,
   getSchoolDashboard,
   getSchoolClassAttendance,
+  getSchoolClassAttendanceReport,
   getSchoolRole,
   listSchoolInvitations,
   getSchoolPublishedResultSheet,
@@ -46,6 +47,7 @@ import {
   normalizeAssessmentReviewInput,
   normalizeAttendanceInput,
   isValidAttendanceDate,
+  isValidAttendanceReportRange,
   normalizeStudentInput,
   normalizeTeachingAssignmentInput,
 } from "../shared/school-data.js";
@@ -210,6 +212,30 @@ app.get("/api/schools/:schoolId/attendance", requireAuth, async (request, respon
     const attendance = await getSchoolClassAttendance(schoolId, classId, date, teacherUserId);
     if (!attendance) return response.status(404).json({ error: "Class not found or not assigned to this teacher." });
     return response.json({ attendance });
+  } catch (error) {
+    return handleDatabaseError(error, response);
+  }
+});
+
+app.get("/api/schools/:schoolId/attendance/report", requireAuth, async (request, response) => {
+  const { schoolId } = request.params;
+  const classId = typeof request.query.classId === "string" ? request.query.classId : "";
+  const from = typeof request.query.from === "string" ? request.query.from : "";
+  const to = typeof request.query.to === "string" ? request.query.to : "";
+  if (!isUuid(schoolId) || !isUuid(classId) || !isValidAttendanceReportRange(from, to)) {
+    return response.status(400).json({ error: "Select a valid class and a date range of up to 366 days." });
+  }
+
+  try {
+    const membershipRole = await getSchoolRole(schoolId, request.auth.userId);
+    if (!membershipRole) return response.status(404).json({ error: "School not found." });
+    if (!["admin", "teacher"].includes(membershipRole)) {
+      return response.status(403).json({ error: "Attendance reports are available to school administrators and teachers." });
+    }
+    const teacherUserId = membershipRole === "teacher" ? request.auth.userId : null;
+    const report = await getSchoolClassAttendanceReport(schoolId, classId, from, to, teacherUserId);
+    if (!report) return response.status(404).json({ error: "Class not found or not assigned to this teacher." });
+    return response.json({ report });
   } catch (error) {
     return handleDatabaseError(error, response);
   }

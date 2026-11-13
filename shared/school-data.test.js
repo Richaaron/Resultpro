@@ -8,6 +8,7 @@ import {
   normalizeAssessmentReviewInput,
   normalizeAttendanceInput,
   isValidAttendanceDate,
+  isValidAttendanceReportRange,
   calculatePointsPercentage,
   summarizePublishedResultRows,
   groupPublishedResultRowsByStudent,
@@ -114,6 +115,9 @@ test("validates complete daily attendance mark payloads", () => {
   }), null);
   assert.equal(isValidAttendanceDate("2026-02-30"), false);
   assert.equal(isValidAttendanceDate("2026-11-13"), true);
+  assert.equal(isValidAttendanceReportRange("2026-11-01", "2026-11-30"), true);
+  assert.equal(isValidAttendanceReportRange("2026-11-30", "2026-11-01"), false);
+  assert.equal(isValidAttendanceReportRange("2026-01-01", "2027-01-02"), false);
 });
 
 test("validates assessment details and score bounds", () => {
