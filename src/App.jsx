@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import AuthScreen from "./AuthScreen.jsx";
-import { authClient } from "./auth.js";
+import { authClient, pendingSchoolNameKey } from "./auth.js";
 import { curriculumByGrade, curriculumGrades } from "../shared/curriculum.js";
 
 const navigation = [
@@ -16,45 +16,18 @@ const navigation = [
 const portalData = {
   admin: {
     label: "Admin",
-    title: "Good morning, Olumide",
-    subtitle: "Here’s what’s happening across your school today.",
-    stats: [["Total students", "1,248", "↗ 8.2%"], ["Teaching staff", "64", "↗ 3 new"], ["School average", "72.4%", "↗ 4.6%"], ["Results to review", "12", "Needs your eye"]],
-    average: "72.4%",
-    attention: [["12 results need reviewing", "4 classes · submitted by 3 teachers"], ["8 teachers haven’t started", "Mark submissions are due Friday"], ["6 student profiles incomplete", "Missing a parent or guardian contact"]],
-    results: [
-      ["Amara Okafor", "AST-2024-018", "Year 10A", "Mathematics", "Mrs. F. Adebayo", "92", "Approved"],
-      ["Tunde Bakare", "AST-2024-023", "Year 10A", "English Language", "Mr. E. Okwueze", "84", "Needs review"],
-      ["Zara Adeyemi", "AST-2023-041", "Year 11B", "Biology", "Dr. C. Okoro", "76", "Approved"],
-      ["Chidi Eme", "AST-2025-009", "Year 9C", "Physics", "Mr. O. Balogun", "—", "Not submitted"],
-    ],
+    title: "Your school at a glance.",
+    subtitle: "A current snapshot of saved school records and results.",
   },
   teacher: {
     label: "Teacher",
-    title: "Good morning, Folake",
-    subtitle: "Your classes are looking good. Here’s where to start today.",
-    stats: [["My students", "126", "Across 4 classes"], ["My classes", "4", "This term"], ["Marks entered", "82%", "↗ 12 marks"], ["To submit", "3", "Due Friday"]],
-    average: "82%",
-    attention: [["Year 10A marks are due", "Mathematics · 28 of 32 entered"], ["3 assessments coming up", "Year 10A and Year 11B this week"], ["2 marks returned for review", "Add a note and resubmit when ready"]],
-    results: [
-      ["Amara Okafor", "AST-2024-018", "Year 10A", "Mathematics · Quiz 3", "My marks", "92", "Submitted"],
-      ["Tunde Bakare", "AST-2024-023", "Year 10A", "Mathematics · Quiz 3", "My marks", "84", "Needs review"],
-      ["Zara Adeyemi", "AST-2023-041", "Year 11B", "Biology · Lab 2", "My marks", "76", "Submitted"],
-      ["Chidi Eme", "AST-2025-009", "Year 9C", "Physics · Quiz 1", "My marks", "—", "Not submitted"],
-    ],
+    title: "Your teaching workspace.",
+    subtitle: "A current view of your assigned classes and saved assessments.",
   },
   student: {
     label: "Student",
     title: "Your learning, in focus.",
-    subtitle: "A little progress adds up. Here’s your school snapshot.",
-    stats: [["My average", "78.6%", "↗ 3.2%"], ["My subjects", "8", "This term"], ["Class position", "6th", "Out of 32"], ["Next assessment", "Maths", "In 2 days"]],
-    average: "78.6%",
-    attention: [["Algebra assessment on Thursday", "Year 10 Mathematics · Room 204"], ["Your Biology result is in", "You scored 76% on Cell biology"], ["Science club meets this week", "Wednesday after school · Lab 2"]],
-    results: [
-      ["Mathematics", "Quiz 3 · Algebra", "Term 2", "Mathematics", "Mrs. F. Adebayo", "92", "Graded"],
-      ["English Language", "Essay 2 · Reading", "Term 2", "English", "Mr. E. Okwueze", "84", "Graded"],
-      ["Biology", "Lab 2 · Cell biology", "Term 2", "Biology", "Dr. C. Okoro", "76", "Graded"],
-      ["Physics", "Quiz 1 · Forces", "Term 2", "Physics", "Mr. O. Balogun", "—", "Coming soon"],
-    ],
+    subtitle: "A current view of the results your school has published for you.",
   },
 };
 
@@ -76,6 +49,7 @@ const accessOptions = [
 
 const API_BASE_URL = (import.meta.env.VITE_API_URL || "").replace(/\/+$/, "");
 const apiUrl = (path) => `${API_BASE_URL}${path}`;
+const schoolSlugFromPath = () => window.location.pathname.match(/^\/school\/([a-z0-9-]+)\/?$/i)?.[1] || "";
 
 async function apiRequest(path, options = {}) {
   if (!authClient) throw new Error("Authentication is not configured.");
@@ -95,22 +69,23 @@ async function apiRequest(path, options = {}) {
 
 function App() {
   const [session, setSession] = useState(null);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sessionLoading, setSessionLoading] = useState(true);
   const [authNotice, setAuthNotice] = useState("");
   const [page, setPage] = useState("overview");
   const [school, setSchool] = useState(null);
+  const [schoolRouteError, setSchoolRouteError] = useState(false);
   const [schools, setSchools] = useState([]);
   const [loadingSchools, setLoadingSchools] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
   const [step, setStep] = useState(1);
-  const [search, setSearch] = useState("");
   const [toast, setToast] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [inviteEmail, setInviteEmail] = useState("");
-  const [inviteRole, setInviteRole] = useState("teacher");
   const [inviting, setInviting] = useState(false);
   const [invitationUrl, setInvitationUrl] = useState("");
+  const [invitationLabel, setInvitationLabel] = useState("");
   const [selectedGrade, setSelectedGrade] = useState(curriculumGrades.primary[0]);
   const [savedSubjects, setSavedSubjects] = useState({});
   const [draftSubjects, setDraftSubjects] = useState({});
@@ -163,6 +138,14 @@ function App() {
   const [resultSheetError, setResultSheetError] = useState("");
   const [resultSheetClassId, setResultSheetClassId] = useState("");
   const [resultSheetTerm, setResultSheetTerm] = useState("Term 1");
+  const [studentResultData, setStudentResultData] = useState(null);
+  const [selectedStudentResultId, setSelectedStudentResultId] = useState("");
+  const [loadingStudentResults, setLoadingStudentResults] = useState(false);
+  const [studentResultError, setStudentResultError] = useState("");
+  const [linkingStudentId, setLinkingStudentId] = useState("");
+  const [teacherName, setTeacherName] = useState("");
+  const [teacherRegistration, setTeacherRegistration] = useState(null);
+  const [teacherRegistrationError, setTeacherRegistrationError] = useState("");
   const [assessmentDetailLoading, setAssessmentDetailLoading] = useState(false);
   const [assessmentDetail, setAssessmentDetail] = useState(null);
   const [assessmentMarks, setAssessmentMarks] = useState([]);
@@ -177,11 +160,43 @@ function App() {
   });
   const [assessmentBusy, setAssessmentBusy] = useState(false);
   const [reviewNote, setReviewNote] = useState("");
+  const [dashboardData, setDashboardData] = useState(null);
+  const [dashboardLoading, setDashboardLoading] = useState(false);
+  const [dashboardError, setDashboardError] = useState(null);
+  const [dashboardRefresh, setDashboardRefresh] = useState(0);
   const [form, setForm] = useState({ name: "", schoolType: "", country: "", email: "", accessMode: "invite" });
   const role = school?.role || "admin";
   const current = portalData[role];
   const visibleNavigation = navigation.filter(([id]) => role === "admin" || (role === "teacher" && ["overview", "results", "classes"].includes(id)) || (role === "student" && ["overview", "results"].includes(id)));
-  const filteredResults = useMemo(() => current.results.filter((row) => row.join(" ").toLowerCase().includes(search.toLowerCase())), [current, search]);
+  const dashboardForCurrentSchool = dashboardData?.schoolId === school?.id ? dashboardData : null;
+  const dashboardErrorForCurrentSchool = dashboardError && dashboardError.schoolId === school?.id
+    ? dashboardError.message
+    : "";
+  const dashboardPending = dashboardLoading || (!dashboardForCurrentSchool && !dashboardErrorForCurrentSchool);
+  const dashboardSummary = dashboardForCurrentSchool?.summary;
+  const dashboardAverage = dashboardSummary?.averagePercentage == null
+    ? "—"
+    : `${Number(dashboardSummary.averagePercentage).toFixed(1)}%`;
+  const dashboardStats = role === "admin"
+    ? [
+      ["Active students", dashboardSummary?.studentCount ?? 0, "Active student records"],
+      ["Teachers", dashboardSummary?.teacherCount ?? 0, "Registered school teachers"],
+      ["Classes", dashboardSummary?.classCount ?? 0, "Classes in this school"],
+      ["Awaiting review", dashboardSummary?.submittedCount ?? 0, "Submitted assessments"],
+    ]
+    : role === "teacher"
+      ? [
+        ["My students", dashboardSummary?.studentCount ?? 0, "In your assigned classes"],
+        ["My classes", dashboardSummary?.classCount ?? 0, "Classes with your assignments"],
+        ["To complete", dashboardSummary?.toCompleteCount ?? 0, "Draft or returned assessments"],
+        ["Submitted", dashboardSummary?.submittedCount ?? 0, "Awaiting administrator review"],
+      ]
+      : [
+        ["Subjects", dashboardSummary?.latestSubjectCount ?? 0, "In your latest published report"],
+        ["Published reports", dashboardSummary?.publishedSheetCount ?? 0, "Available to your account"],
+        ["Assessments", dashboardSummary?.latestAssessmentCount ?? 0, "In your latest published report"],
+        ["Latest average", dashboardAverage, "Based on your latest published report"],
+      ];
   const gradeSavedSubjects = savedSubjects[selectedGrade] || [];
   const gradeDraftSubjects = draftSubjects[selectedGrade] || [];
   const selectedAssignmentClass = schoolClasses.find((item) => item.id === assignmentClassId);
@@ -228,6 +243,7 @@ function App() {
     if (!session?.user?.emailVerified) {
       setSchools([]);
       setSchool(null);
+      setSchoolRouteError(false);
       setLoadingSchools(false);
       return () => { active = false; };
     }
@@ -250,7 +266,32 @@ function App() {
       const payload = await apiRequest("/api/schools");
       if (!active) return;
       setSchools(payload.schools);
-      setSchool((previous) => payload.schools.find((item) => item.id === previous?.id) || payload.schools[0] || null);
+      const requestedSlug = schoolSlugFromPath();
+      const requestedSchool = requestedSlug
+        ? payload.schools.find((item) => item.slug === requestedSlug)
+        : null;
+      if (requestedSlug) {
+        setSchool(requestedSchool || null);
+      } else {
+        setSchool((previous) => payload.schools.find((item) => item.id === previous?.id) || payload.schools[0] || null);
+      }
+      setSchoolRouteError(Boolean(requestedSlug && !requestedSchool));
+      try {
+        if (payload.schools.length) {
+          window.sessionStorage.removeItem(pendingSchoolNameKey);
+        } else {
+          const pendingSchoolName = window.sessionStorage.getItem(pendingSchoolNameKey)?.trim();
+          if (pendingSchoolName) {
+            setForm((previous) => ({ ...previous, name: pendingSchoolName }));
+            setStep(1);
+            setModalOpen(true);
+          }
+        }
+      } catch {
+        setToast(payload.schools.length
+          ? "Your dashboard is ready, but the saved signup name could not be cleared."
+          : "Your saved school name could not be restored. Choose Create school profile to enter it.");
+      }
     }
     loadWorkspace()
       .catch((requestError) => {
@@ -261,6 +302,49 @@ function App() {
       });
     return () => { active = false; };
   }, [session]);
+
+  useEffect(() => {
+    function restoreSchoolFromPath() {
+      const requestedSlug = schoolSlugFromPath();
+      const requestedSchool = requestedSlug
+        ? schools.find((item) => item.slug === requestedSlug)
+        : schools[0] || null;
+      setSchool(requestedSchool || null);
+      setSchoolRouteError(Boolean(requestedSlug && !requestedSchool));
+      setPage("overview");
+      setSidebarOpen(false);
+    }
+
+    window.addEventListener("popstate", restoreSchoolFromPath);
+    return () => window.removeEventListener("popstate", restoreSchoolFromPath);
+  }, [schools]);
+
+  useEffect(() => {
+    let active = true;
+    if (!school?.id || page !== "overview") {
+      setDashboardLoading(false);
+      return () => { active = false; };
+    }
+
+    setDashboardLoading(true);
+    setDashboardError(null);
+    apiRequest(`/api/schools/${school.id}/dashboard`)
+      .then(({ dashboard }) => {
+        if (active) setDashboardData({ ...dashboard, schoolId: school.id });
+      })
+      .catch((requestError) => {
+        if (!active) return;
+        setDashboardData(null);
+        setDashboardError({
+          schoolId: school.id,
+          message: requestError.message || "Could not load the school overview.",
+        });
+      })
+      .finally(() => {
+        if (active) setDashboardLoading(false);
+      });
+    return () => { active = false; };
+  }, [school?.id, role, page, assessmentRefresh, studentRefresh, classRefresh, assignmentRefresh, dashboardRefresh]);
 
   useEffect(() => {
     let active = true;
@@ -353,6 +437,38 @@ function App() {
       });
     return () => { active = false; };
   }, [school?.id, page, role, resultSheetClassId, resultSheetTerm, assessmentRefresh]);
+
+  useEffect(() => {
+    let active = true;
+    if (!school?.id || page !== "results" || role !== "student") {
+      setStudentResultData(null);
+      setSelectedStudentResultId("");
+      setLoadingStudentResults(false);
+      return () => { active = false; };
+    }
+
+    setLoadingStudentResults(true);
+    setStudentResultError("");
+    apiRequest(`/api/schools/${school.id}/my-results`)
+      .then((data) => {
+        if (!active) return;
+        setStudentResultData(data);
+        setSelectedStudentResultId((previous) => (
+          data.sheets.some((sheet) => sheet.id === previous)
+            ? previous
+            : data.sheets[0]?.id || ""
+        ));
+      })
+      .catch((requestError) => {
+        if (!active) return;
+        setStudentResultData(null);
+        setStudentResultError(requestError.message || "Could not load your published results.");
+      })
+      .finally(() => {
+        if (active) setLoadingStudentResults(false);
+      });
+    return () => { active = false; };
+  }, [school?.id, page, role]);
 
   useEffect(() => {
     let active = true;
@@ -504,6 +620,17 @@ function App() {
     setModalOpen(true);
   }
 
+  function switchSchool(schoolId) {
+    const nextSchool = schools.find((item) => item.id === schoolId);
+    if (!nextSchool || nextSchool.id === school?.id) return;
+    window.history.pushState(null, "", nextSchool.portalUrl || `/school/${nextSchool.slug}`);
+    setSchool(nextSchool);
+    setSchoolRouteError(false);
+    setPage("overview");
+    setSidebarOpen(false);
+    setToast(`Switched to ${nextSchool.name}.`);
+  }
+
   async function createSchool(event) {
     event.preventDefault();
     setSaving(true);
@@ -515,6 +642,8 @@ function App() {
       });
       setSchool(payload.school);
       setSchools((previous) => [payload.school, ...previous]);
+      window.history.replaceState(null, "", payload.school.portalUrl);
+      setSchoolRouteError(false);
       setModalOpen(false);
       setToast(`School profile created for ${payload.school.name}.`);
       setForm({ name: "", schoolType: "", country: "", email: "", accessMode: "invite" });
@@ -525,24 +654,85 @@ function App() {
     }
   }
 
-  async function createInvitation(event) {
+  async function registerTeacher(event) {
     event.preventDefault();
     if (!school) return;
     setInviting(true);
+    setTeacherRegistrationError("");
+    setTeacherRegistration(null);
+    try {
+      const payload = await apiRequest(`/api/schools/${school.id}/invitations`, {
+        method: "POST",
+        body: JSON.stringify({ email: inviteEmail, role: "teacher", teacherName }),
+      });
+      setTeacherRegistration({
+        ...payload.invitation,
+        activationUrl: `${window.location.origin}${school.portalUrl || `/school/${school.slug}`}#invite=${encodeURIComponent(payload.invitation.token)}`,
+      });
+      setTeacherName("");
+      setInviteEmail("");
+      setToast(`Teacher registration created for ${payload.invitation.teacherName}.`);
+    } catch (requestError) {
+      setTeacherRegistrationError(requestError.message || "Could not register this teacher.");
+    } finally {
+      setInviting(false);
+    }
+  }
+
+  async function copyTeacherActivationLink() {
+    try {
+      await navigator.clipboard.writeText(teacherRegistration.activationUrl);
+      setToast("Teacher activation link copied. Send it to the teacher’s registered email.");
+    } catch {
+      setToast("Copy the activation link and send it to the teacher’s registered email.");
+    }
+  }
+
+  async function inviteStudent(student) {
+    if (!school || student.portalEmail) return;
+    const email = window.prompt(
+      `Enter the verified student or authorised guardian email for ${student.firstName} ${student.lastName}.`,
+      student.guardianEmail || "",
+    );
+    if (email === null) return;
+    if (!email.trim()) {
+      setStudentError("Enter an email address to create student portal access.");
+      return;
+    }
+
+    setLinkingStudentId(student.id);
+    setStudentError("");
     setError("");
     setInvitationUrl("");
     try {
       const payload = await apiRequest(`/api/schools/${school.id}/invitations`, {
         method: "POST",
-        body: JSON.stringify({ email: inviteEmail, role: inviteRole }),
+        body: JSON.stringify({ email, role: "student", studentId: student.id }),
       });
-      setInvitationUrl(`${window.location.origin}/#invite=${encodeURIComponent(payload.invitation.token)}`);
-      setInviteEmail("");
-      setToast(`Invitation link created for ${payload.invitation.email}.`);
+      setInvitationUrl(`${window.location.origin}${school.portalUrl || `/school/${school.slug}`}#invite=${encodeURIComponent(payload.invitation.token)}`);
+      setInvitationLabel(`Student portal access for ${student.firstName} ${student.lastName} · ${payload.invitation.email}`);
+      setPage("access");
+      setToast(`Student portal invitation created for ${payload.invitation.email}.`);
     } catch (requestError) {
-      setError(requestError.message || "Could not create the invitation.");
+      setStudentError(requestError.message || "Could not create student portal access.");
     } finally {
-      setInviting(false);
+      setLinkingStudentId("");
+    }
+  }
+
+  async function publishResultSheet() {
+    if (!school || !resultSheetClassId || resultSheet?.published) return;
+    if (!window.confirm(`Publish and freeze ${resultSheet.schoolClass.grade} ${resultSheet.schoolClass.section} · ${resultSheetTerm}?`)) return;
+    setResultSheetError("");
+    try {
+      await apiRequest(`/api/schools/${school.id}/result-sheet/publish`, {
+        method: "POST",
+        body: JSON.stringify({ classId: resultSheetClassId, term: resultSheetTerm }),
+      });
+      setAssessmentRefresh((previous) => previous + 1);
+      setToast("Result sheet published. This term's results are now frozen.");
+    } catch (requestError) {
+      setResultSheetError(requestError.message || "Could not publish the result sheet.");
     }
   }
 
@@ -586,6 +776,7 @@ function App() {
         body: JSON.stringify(classForm),
       });
       setSchoolClasses((previous) => [...previous, schoolClass].sort((a, b) => a.grade.localeCompare(b.grade) || a.section.localeCompare(b.section)));
+      setClassRefresh((previous) => previous + 1);
       setClassForm((previous) => ({ ...previous, section: "" }));
       setToast(`${schoolClass.grade} ${schoolClass.section} created.`);
     } catch (requestError) {
@@ -601,6 +792,7 @@ function App() {
     try {
       await apiRequest(`/api/schools/${school.id}/classes/${schoolClass.id}`, { method: "DELETE" });
       setSchoolClasses((previous) => previous.filter((item) => item.id !== schoolClass.id));
+      setClassRefresh((previous) => previous + 1);
       setToast(`${schoolClass.grade} ${schoolClass.section} deleted.`);
     } catch (requestError) {
       setClassError(requestError.message || "Could not delete the class.");
@@ -782,10 +974,15 @@ function App() {
     }
   }
 
-  async function restoreSession() {
+  async function restoreSession({ schoolName = "" } = {}) {
     const result = await authClient.getSession();
     if (result.error) throw new Error(result.error.message || "Could not load your account.");
     if (!result.data?.session?.user) throw new Error("Sign in to continue.");
+    if (schoolName) {
+      setForm((previous) => ({ ...previous, name: schoolName }));
+      setStep(1);
+      setModalOpen(true);
+    }
     setAuthNotice("");
     setSession(result.data.session);
   }
@@ -797,21 +994,11 @@ function App() {
       setSession(null);
       setSchools([]);
       setSchool(null);
+      setSchoolRouteError(false);
       setAuthNotice("");
     } catch (requestError) {
       setToast(requestError.message || "Could not sign out. Please try again.");
     }
-  }
-
-  function exportResults() {
-    const rows = [["Student", "Student ID", "Class", "Subject", "Teacher", "Mark", "Status"], ...filteredResults];
-    const csv = rows.map((row) => row.map((cell) => `"${String(cell).replaceAll('"', '""')}"`).join(",")).join("\r\n");
-    const link = document.createElement("a");
-    link.href = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
-    link.download = "aster-results.csv";
-    link.click();
-    URL.revokeObjectURL(link.href);
-    setToast("Your results have been exported.");
   }
 
   function exportResultSheet() {
@@ -870,27 +1057,49 @@ function App() {
   if (loadingSchools) {
     return <main className="auth-shell"><p className="auth-description">Loading your school workspace…</p></main>;
   }
+  if (schoolRouteError) {
+    return (
+      <main className="auth-shell">
+        <section className="auth-card">
+          <h1>School workspace unavailable</h1>
+          <p className="auth-description">This link is for a school workspace your verified account does not belong to. Ask that school’s administrator to invite you, or return to your own school.</p>
+          <a className="button button-primary" href="/">Go to my school</a>
+        </section>
+      </main>
+    );
+  }
 
   return (
     <div className="app-shell">
-      <aside className="sidebar">
+      {sidebarOpen && <button className="sidebar-backdrop" type="button" aria-label="Close navigation menu" onClick={() => setSidebarOpen(false)} />}
+      <aside className={`sidebar ${sidebarOpen ? "open" : ""}`}>
         <a className="brand" href="#" aria-label="Aster home"><span className="brand-mark">✳</span><span className="brand-name">aster<span>.</span></span></a>
-        <button className="school-switcher" type="button" onClick={showSetup} disabled={loadingSchools}>
-          <span className="school-avatar">{school?.name?.[0]?.toUpperCase() || "H"}</span>
-          <span className="school-switcher-copy"><strong>{school?.name || (loadingSchools ? "Loading schools…" : "Set up your school")}</strong><small>{school?.schoolType || (schools.length ? "Select a school profile" : "Create your school profile")}</small></span><span className="chevron">⌄</span>
-        </button>
+        {schools.length ? <>
+          <label className="school-switcher">
+            <span className="school-avatar">{school?.name?.[0]?.toUpperCase() || "S"}</span>
+            <span className="school-switcher-copy"><strong>{school?.name || "Select a school"}</strong><small>{school?.schoolType || "Your school workspaces"}</small></span>
+            <span className="chevron" aria-hidden="true">⌄</span>
+            <select className="school-switcher-select" aria-label="Switch school workspace" value={school?.id || ""} onChange={(event) => switchSchool(event.target.value)}>
+              {schools.map((item) => <option key={item.id} value={item.id}>{item.name} · {portalData[item.role]?.label || item.role}</option>)}
+            </select>
+          </label>
+          <button className="school-create-link" type="button" onClick={showSetup}>＋ Add another school</button>
+        </> : <button className="school-switcher" type="button" onClick={showSetup} disabled={loadingSchools}>
+          <span className="school-avatar">＋</span>
+          <span className="school-switcher-copy"><strong>{loadingSchools ? "Loading schools…" : "Set up your school"}</strong><small>Create your school profile</small></span><span className="chevron">⌄</span>
+        </button>}
         <div className="nav-label">WORKSPACE</div>
         <nav className="main-nav" aria-label="Main navigation">
           {visibleNavigation.slice(0, role === "admin" ? 5 : visibleNavigation.length).map(([id, label, icon], index) => (
-            <button key={id} className={`nav-item ${page === id ? "active" : ""}`} type="button" onClick={() => setPage(id)}>
-              <span className="nav-symbol">{icon}</span><span>{label}</span>{id === "results" && role === "admin" && <span className="nav-badge">4</span>}
+            <button key={id} className={`nav-item ${page === id ? "active" : ""}`} type="button" onClick={() => { setPage(id); setSidebarOpen(false); }}>
+              <span className="nav-symbol">{icon}</span><span>{label}</span>
             </button>
           ))}
         </nav>
         {role === "admin" && <>
           <div className="nav-label nav-label-lower">SCHOOL</div>
           <nav className="main-nav" aria-label="School settings">
-            {visibleNavigation.slice(5).map(([id, label, icon]) => <button key={id} className={`nav-item ${page === id ? "active" : ""}`} type="button" onClick={() => setPage(id)}><span className="nav-symbol">{icon}</span><span>{label}</span></button>)}
+            {visibleNavigation.slice(5).map(([id, label, icon]) => <button key={id} className={`nav-item ${page === id ? "active" : ""}`} type="button" onClick={() => { setPage(id); setSidebarOpen(false); }}><span className="nav-symbol">{icon}</span><span>{label}</span></button>)}
           </nav>
         </>}
         <div className="sidebar-bottom">
@@ -900,15 +1109,13 @@ function App() {
       </aside>
 
       <main className="main-content">
-        <header className="topbar"><div className="breadcrumb"><span>Workspace</span><span className="breadcrumb-slash">/</span><strong>{page}</strong></div><div className="topbar-actions"><span className="role-select" aria-label="Your school role">{portalData[role].label}</span><button className="icon-button" type="button" onClick={() => setToast("You’re all caught up on school notifications.")} aria-label="Notifications">♧</button><button className="topbar-avatar" type="button" aria-label={`Sign out ${userName}`} onClick={signOut}>{userInitials}</button></div></header>
+        <header className="topbar"><button className="mobile-menu" type="button" aria-label={sidebarOpen ? "Close navigation menu" : "Open navigation menu"} aria-expanded={sidebarOpen} onClick={() => setSidebarOpen((open) => !open)}><span aria-hidden="true">{sidebarOpen ? "×" : "☰"}</span></button><div className="breadcrumb"><span>Workspace</span><span className="breadcrumb-slash">/</span><strong>{page}</strong></div><div className="topbar-actions"><span className="role-select" aria-label="Your school role">{portalData[role].label}</span><button className="icon-button" type="button" onClick={() => setToast("You’re all caught up on school notifications.")} aria-label="Notifications">♧</button><button className="topbar-avatar" type="button" aria-label={`Sign out ${userName}`} onClick={signOut}>{userInitials}</button></div></header>
         <div className={`page-content ${page === "classes" ? "curriculum-page" : page === "students" ? "students-page" : page === "teachers" ? "teachers-page" : page === "results" ? "results-page" : ""}`}>
           {!school ? <section className="panel onboarding-panel"><span className="auth-kicker">WELCOME TO ASTER</span><h1>Create your school workspace</h1><p className="page-subtitle">Your account is ready. Set up your school profile to begin; only people you invite can join its portal.</p><button className="button button-primary" type="button" onClick={showSetup}>＋ Create school profile</button></section> : <>
           <section className="welcome-row">
-            <div><div className="eyebrow"><span className="live-dot" /> {currentDateLabel} <span className="eyebrow-divider">·</span> SCHOOL WORKSPACE</div><h1>{page === "overview" ? role === "admin" ? `Good morning, ${userName}` : current.title : page === "results" ? role === "student" ? "Results, at a glance" : "Result sheet & assessments" : page === "profile" ? "Your school, your story." : page === "classes" ? "Classes & subjects" : page === "students" ? "Student register" : `${page[0].toUpperCase()}${page.slice(1)}`} <span className="wave">✳</span></h1><p className="page-subtitle">{page === "overview" ? current.subtitle : page === "results" && role !== "student" ? role === "admin" ? "Calculate term percentages from approved marks, create assessments, and review submissions." : "View calculated results and enter marks for your assigned classes." : page === "classes" ? "Configure subjects and organise your classes." : page === "students" ? "Enrol students and keep their school records up to date." : `Keep your ${page} organised for the term ahead.`}</p></div>
-            {page !== "classes" && page !== "students" && page !== "teachers" && page !== "results" && <div className="welcome-actions"><button className="button button-secondary" type="button" onClick={async () => { try { await navigator.clipboard.writeText(`${window.location.origin}/school/${school.slug}`); setToast("Your school link has been copied."); } catch { setToast("Could not copy the school link. Please try again."); } }}>↗ Share school link</button><button className="button button-primary" type="button" onClick={() => page === "profile" ? showSetup() : page === "access" ? document.getElementById("inviteEmail")?.focus() : setToast(`${role === "teacher" ? "Enter marks" : role === "student" ? "View your results" : "Add a student"} — student records are not connected yet.`)}>＋ {page === "access" ? "Invite a member" : role === "teacher" ? "Enter marks" : role === "student" ? "View my results" : "Add a student"}</button></div>}
+            <div><div className="eyebrow"><span className="live-dot" /> {currentDateLabel} <span className="eyebrow-divider">·</span> SCHOOL WORKSPACE</div><h1>{page === "overview" ? role === "admin" ? `Good morning, ${userName}` : current.title : page === "results" ? role === "student" ? "Results, at a glance" : "Result sheet & assessments" : page === "profile" ? "Your school, your story." : page === "classes" ? "Classes & subjects" : page === "students" ? "Student register" : `${page[0].toUpperCase()}${page.slice(1)}`} <span className="wave">✳</span></h1><p className="page-subtitle">{page === "overview" ? current.subtitle : page === "results" && role === "student" ? "View only the term results your school has published for your linked student record." : page === "results" && role !== "student" ? role === "admin" ? "Calculate term percentages from approved marks, publish frozen result sheets, and review submissions." : "View calculated results and enter marks for your assigned classes." : page === "classes" ? "Configure subjects and organise your classes." : page === "students" ? "Enrol students and keep their school records up to date." : `Keep your ${page} organised for the term ahead.`}</p></div>
+            {page !== "classes" && page !== "students" && page !== "teachers" && page !== "results" && <div className="welcome-actions"><button className="button button-secondary" type="button" onClick={async () => { try { await navigator.clipboard.writeText(`${window.location.origin}${school.portalUrl || `/school/${school.slug}`}`); setToast("Your school workspace link has been copied. Only invited school members can access it."); } catch { setToast("Could not copy the school link. Please try again."); } }}>↗ Copy school workspace link</button><button className="button button-primary" type="button" onClick={() => page === "profile" ? showSetup() : page === "access" ? document.getElementById("inviteEmail")?.focus() : setPage(role === "admin" ? "students" : "results")}>＋ {page === "access" ? "Invite a member" : role === "teacher" ? "Enter marks" : role === "student" ? "View my results" : "Add a student"}</button></div>}
           </section>
-
-          {(page === "overview" || (page === "results" && role === "student")) && <div className="sample-data-notice" role="note">Preview only: dashboard figures and result rows are sample data, not saved student results.</div>}
 
           {page === "classes" && <section className="panel curriculum-panel">
             <div className="panel-heading curriculum-heading">
@@ -949,23 +1156,48 @@ function App() {
                   <div className="class-subject-list">{schoolClass.subjects.map((subject) => <span key={subject}>{subject}</span>)}</div>
                 </article>)}
               </div>}
-              <p className="field-hint">Classes with student records cannot be deleted. Move every student record, including archived students, before removing a class.</p>
+              <p className="field-hint">Classes with student records or published result sheets cannot be deleted.</p>
             </div>
+          </section>}
+
+          {page === "results" && role === "student" && <section className="panel student-results-panel">
+            <div className="panel-heading"><div><h2>Published term results</h2><p>Your school releases results after administrator approval. Only your linked student record is shown here.</p></div></div>
+            {studentResultError && <p className="form-error" role="alert">{studentResultError}</p>}
+            {loadingStudentResults ? <p className="empty-search">Loading your published results…</p>
+              : !studentResultData ? <p className="empty-search">Your results could not be loaded. Please try again.</p>
+                : !studentResultData.linked ? <p className="empty-search">Your school administrator needs to link your verified portal email to your student record before results can appear.</p>
+                  : studentResultData.sheets.length === 0 ? <p className="empty-search">No term results have been published for your student record yet.</p>
+                    : <>
+                      <div className="result-sheet-filters">
+                        <label><span>Published result sheet</span><select className="text-input" value={selectedStudentResultId} onChange={(event) => setSelectedStudentResultId(event.target.value)}><option value="">Select a result sheet</option>{studentResultData.sheets.map((sheet) => <option key={sheet.id} value={sheet.id}>{sheet.grade} {sheet.section} · {sheet.academicYear} · {sheet.term}</option>)}</select></label>
+                        {studentResultData.sheets.find((sheet) => sheet.id === selectedStudentResultId)?.publishedAt && <span className="result-sheet-summary">Published {new Date(studentResultData.sheets.find((sheet) => sheet.id === selectedStudentResultId).publishedAt).toLocaleDateString("en-NG")}</span>}
+                      </div>
+                      {studentResultData.sheets.find((sheet) => sheet.id === selectedStudentResultId)?.rows.length
+                        ? <div className="table-scroll"><table className="result-sheet-table"><thead><tr><th>SUBJECT</th><th>APPROVED MARKS</th><th>ASSESSMENTS</th><th>TERM PERCENTAGE</th></tr></thead><tbody>{studentResultData.sheets.find((sheet) => sheet.id === selectedStudentResultId).rows.map((row) => <tr key={row.subject}>
+                          <td><strong>{row.subject}</strong></td>
+                          <td>{row.percentage == null ? "—" : `${Number(row.earnedPoints).toLocaleString("en-NG", { maximumFractionDigits: 2 })} / ${Number(row.possiblePoints).toLocaleString("en-NG", { maximumFractionDigits: 2 })}`}</td>
+                          <td>{row.assessmentCount}</td>
+                          <td><strong className={row.percentage == null ? "ungraded-mark" : "result-percentage"}>{row.percentage == null ? "Not graded" : `${Number(row.percentage).toFixed(2)}%`}</strong></td>
+                        </tr>)}</tbody></table></div>
+                        : <p className="empty-search">Select one of your published result sheets to view its subjects.</p>}
+                    </>}
           </section>}
 
           {page === "results" && role !== "student" && <section className="assessment-workspace">
             <section className="panel result-sheet-panel">
               <div className="panel-heading result-sheet-heading">
                 <div><h2>Term result sheet</h2><p>Only administrator-approved assessments are included. No letter grades or class positions are inferred.</p></div>
-                <div className="result-sheet-actions"><button className="button button-secondary button-small" type="button" onClick={printResultSheet} disabled={loadingResultSheet || !resultSheet?.rows.length}>Print</button><button className="button button-secondary button-small" type="button" onClick={exportResultSheet} disabled={loadingResultSheet || !resultSheet?.rows.length}>Export CSV</button></div>
+                <div className="result-sheet-actions">{role === "admin" && <button className="button button-primary button-small" type="button" onClick={publishResultSheet} disabled={loadingResultSheet || !resultSheet?.rows.some((row) => row.percentage != null) || Boolean(resultSheet?.published)}>{resultSheet?.published ? "Published" : "Publish results"}</button>}<button className="button button-secondary button-small" type="button" onClick={printResultSheet} disabled={loadingResultSheet || !resultSheet?.rows.length}>Print</button><button className="button button-secondary button-small" type="button" onClick={exportResultSheet} disabled={loadingResultSheet || !resultSheet?.rows.length}>Export CSV</button></div>
               </div>
-              {resultSheet?.schoolClass && <div className="result-sheet-print-heading"><strong>{school.name}</strong><span>{resultSheet.schoolClass.grade} {resultSheet.schoolClass.section} · {resultSheet.schoolClass.academicYear} · {resultSheet.term}</span><small>Calculated from administrator-approved assessments only</small></div>}
+              {resultSheet?.schoolClass && <div className="result-sheet-print-heading"><strong>{school.name}</strong><span>{resultSheet.schoolClass.grade} {resultSheet.schoolClass.section} · {resultSheet.schoolClass.academicYear} · {resultSheet.term}</span><small>{resultSheet.published ? "Published result snapshot" : "Calculated from administrator-approved assessments only"}</small></div>}
               <div className="result-sheet-filters">
                 <label><span>Class</span><select className="text-input" value={resultSheetClassId} onChange={(event) => setResultSheetClassId(event.target.value)} disabled={loadingClasses || !schoolClasses.length}><option value="">Select a class</option>{schoolClasses.map((item) => <option key={item.id} value={item.id}>{item.grade} {item.section} · {item.academicYear}</option>)}</select></label>
                 <label><span>Term</span><select className="text-input" value={resultSheetTerm} onChange={(event) => setResultSheetTerm(event.target.value)}><option>Term 1</option><option>Term 2</option><option>Term 3</option></select></label>
                 {resultSheet?.schoolClass && <span className="result-sheet-summary">{resultSheet.rows.filter((row) => row.percentage !== null).length} graded subject entries</span>}
               </div>
-              <p className="result-calculation-note">Percentage = total points earned across approved assessments ÷ total possible points × 100. Subjects without approved assessments remain ungraded; percentages can change as more assessments are approved.</p>
+              {resultSheet?.published
+                ? <p className="result-publication-note">Published {new Date(resultSheet.published.publishedAt).toLocaleString("en-NG")} by {resultSheet.published.publishedBy || "a school administrator"}. This snapshot is frozen and released to each linked student account.</p>
+                : <p className="result-calculation-note">Percentage = total points earned across approved assessments ÷ total possible points × 100. Subjects without approved assessments remain ungraded; percentages can change as more assessments are approved.</p>}
               {resultSheetError && <p className="form-error" role="alert">{resultSheetError}</p>}
               {loadingResultSheet ? <p className="empty-search">Calculating the result sheet…</p>
                 : !resultSheetClassId ? <p className="empty-search">{loadingClasses ? "Loading classes…" : "Create a class and assign a teacher to its subjects to view a result sheet."}</p>
@@ -984,6 +1216,7 @@ function App() {
 
             {role === "admin" && <section className="panel assessment-form-panel">
               <div className="panel-heading"><div><h2>Create an assessment</h2><p>Assessments can be created for subjects with an assigned teacher.</p></div></div>
+              {resultSheet?.published && assessmentForm.classId === resultSheetClassId && assessmentForm.term === resultSheetTerm && <p className="result-publication-note">This class and term are published. No further assessments can be added.</p>}
               {loadingAssignments || loadingClasses ? <p className="empty-search">Loading assigned classes…</p> : assessmentAssignableClasses.length === 0 ? <p className="empty-search">{schoolClasses.length === 0 ? "Create a class and save its subjects first." : "Assign a teacher to a class subject first."} <button className="inline-action" type="button" onClick={() => setPage(schoolClasses.length === 0 ? "classes" : "teachers")}>Go to {schoolClasses.length === 0 ? "Classes & subjects" : "Teachers"} →</button></p> : <form className="assessment-create-form" onSubmit={createAssessment}>
                 <label><span>Class</span><select className="text-input" required value={assessmentForm.classId} onChange={(event) => {
                   const classId = event.target.value;
@@ -995,7 +1228,7 @@ function App() {
                 <label><span>Term</span><select className="text-input" value={assessmentForm.term} onChange={(event) => setAssessmentForm((previous) => ({ ...previous, term: event.target.value }))}><option>Term 1</option><option>Term 2</option><option>Term 3</option></select></label>
                 <label><span>Maximum mark</span><input className="text-input" type="number" required min="1" max="1000" step="0.01" value={assessmentForm.maxScore} onChange={(event) => setAssessmentForm((previous) => ({ ...previous, maxScore: event.target.value }))} /></label>
                 <label><span>Due date <small>Optional</small></span><input className="text-input" type="date" value={assessmentForm.dueDate} onChange={(event) => setAssessmentForm((previous) => ({ ...previous, dueDate: event.target.value }))} /></label>
-                <button className="button button-primary" type="submit" disabled={assessmentBusy || !assessmentForm.subject}>{assessmentBusy ? "Creating…" : "Create assessment"}</button>
+                <button className="button button-primary" type="submit" disabled={assessmentBusy || !assessmentForm.subject || Boolean(resultSheet?.published && assessmentForm.classId === resultSheetClassId && assessmentForm.term === resultSheetTerm)}>{assessmentBusy ? "Creating…" : "Create assessment"}</button>
               </form>}
             </section>}
 
@@ -1033,13 +1266,37 @@ function App() {
           </section>}
 
           {page === "teachers" && role === "admin" && <section className="teacher-workspace">
+            <section className="panel teacher-registration-panel">
+              <div className="panel-heading"><div><h2>Register a teacher</h2><p>Add the teacher’s name and email. Aster creates a staff code and a seven-day activation link; the teacher sets their own password when they activate the account.</p></div></div>
+              <form className="invite-form" onSubmit={registerTeacher}>
+                <label className="field-label" htmlFor="teacherName">Teacher’s full name</label>
+                <input className="text-input" id="teacherName" autoComplete="name" required minLength={2} maxLength={120} value={teacherName} onChange={(event) => setTeacherName(event.target.value)} placeholder="e.g. Ada Okafor" />
+                <label className="field-label" htmlFor="inviteEmail">Teacher email</label>
+                <input className="text-input" id="inviteEmail" type="email" autoComplete="email" required maxLength={254} value={inviteEmail} onChange={(event) => setInviteEmail(event.target.value)} placeholder="teacher@yourschool.edu" />
+                {teacherRegistrationError && <p className="form-error" role="alert">{teacherRegistrationError}</p>}
+                <button className="button button-primary" type="submit" disabled={inviting}>{inviting ? "Registering…" : "Register teacher"}</button>
+              </form>
+              {teacherRegistration && <div className="invitation-link teacher-activation">
+                <p className="auth-kicker">TEACHER ACCOUNT READY TO ACTIVATE</p>
+                <p><strong>{teacherRegistration.teacherName}</strong> · {teacherRegistration.email}</p>
+                <label className="field-label" htmlFor="teacherCode">Generated teacher code</label>
+                <input className="text-input" id="teacherCode" readOnly value={teacherRegistration.teacherCode} />
+                <label className="field-label" htmlFor="teacherActivationUrl">One-time activation link</label>
+                <div><input className="text-input" id="teacherActivationUrl" readOnly value={teacherRegistration.activationUrl} /><button className="button button-secondary" type="button" onClick={copyTeacherActivationLink}>Copy link</button></div>
+                <p className="field-hint">Share this link only with the registered teacher. It expires in seven days. The teacher verifies their email and creates their own password. Aster does not send invitation emails automatically yet.</p>
+              </div>}
+            </section>
+            {teacherRoster.length > 0 && <section className="panel teacher-roster-panel">
+              <div className="panel-heading"><div><h2>Active teacher accounts</h2><p>Teachers appear here after accepting their activation link.</p></div></div>
+              <div className="table-scroll"><table><thead><tr><th>TEACHER</th><th>STAFF CODE</th><th>EMAIL</th></tr></thead><tbody>{teacherRoster.map((teacher) => <tr key={teacher.userId}><td>{teacher.teacherName || "Teacher"}</td><td><strong>{teacher.teacherCode || "—"}</strong></td><td>{teacher.email}</td></tr>)}</tbody></table></div>
+            </section>}
             <section className="panel teacher-assignment-panel">
               <div className="panel-heading">
                 <div><h2>Teacher assignments</h2><p>Assign one teacher to each class and subject. Reassigning replaces the current teacher.</p></div>
-                <button className="button button-secondary button-small" type="button" onClick={() => setPage("access")}>Invite a teacher</button>
+                <button className="button button-secondary button-small" type="button" onClick={() => document.getElementById("teacherName")?.focus()}>Register a teacher</button>
               </div>
               {assignmentError && <p className="form-error" role="alert">{assignmentError}</p>}
-              {loadingAssignments ? <p className="empty-search">Loading teacher assignments…</p> : teacherRoster.length === 0 ? <p className="empty-search">No teachers have accepted a school invitation yet. Invite a teacher from <button className="inline-action" type="button" onClick={() => setPage("access")}>Portal access →</button> and ask them to sign in before assigning classes.</p> : <>
+              {loadingAssignments ? <p className="empty-search">Loading teacher assignments…</p> : teacherRoster.length === 0 ? <p className="empty-search">No teachers have activated their accounts yet. Register a teacher above and share their activation link before assigning classes.</p> : <>
                 <form className="assignment-form" onSubmit={assignTeacher}>
                   <label><span>Class</span><select className="text-input" required value={assignmentClassId} onChange={(event) => {
                     const classId = event.target.value;
@@ -1048,7 +1305,7 @@ function App() {
                     setAssignmentSubject(nextClass?.subjects?.[0] || "");
                   }}><option value="">Select a class</option>{schoolClasses.map((item) => <option key={item.id} value={item.id}>{item.grade} {item.section} · {item.academicYear}</option>)}</select></label>
                   <label><span>Subject</span><select className="text-input" required value={assignmentSubject} onChange={(event) => setAssignmentSubject(event.target.value)} disabled={!selectedAssignmentClass?.subjects?.length}><option value="">Select a subject</option>{(selectedAssignmentClass?.subjects || []).map((subject) => <option key={subject}>{subject}</option>)}</select></label>
-                  <label><span>Teacher</span><select className="text-input" required value={assignmentTeacherId} onChange={(event) => setAssignmentTeacherId(event.target.value)}><option value="">Select a teacher</option>{teacherRoster.map((teacher) => <option key={teacher.userId} value={teacher.userId}>{teacher.email}</option>)}</select></label>
+                  <label><span>Teacher</span><select className="text-input" required value={assignmentTeacherId} onChange={(event) => setAssignmentTeacherId(event.target.value)}><option value="">Select a teacher</option>{teacherRoster.map((teacher) => <option key={teacher.userId} value={teacher.userId}>{teacher.teacherName || teacher.email} · {teacher.teacherCode || teacher.email}</option>)}</select></label>
                   <button className="button button-primary" type="submit" disabled={savingAssignment || !schoolClasses.length || !selectedAssignmentClass?.subjects?.length}>{savingAssignment ? "Saving…" : "Save assignment"}</button>
                 </form>
                 {schoolClasses.length === 0 && <p className="empty-search">Create classes and save their subjects before assigning teachers. <button className="inline-action" type="button" onClick={() => setPage("classes")}>Go to Classes & subjects →</button></p>}
@@ -1087,8 +1344,8 @@ function App() {
                   <select className="text-input" value={studentClassFilter} aria-label="Filter by class" onChange={(event) => { setStudentClassFilter(event.target.value); setStudentPage(1); }}><option value="">All classes</option>{schoolClasses.map((schoolClass) => <option key={schoolClass.id} value={schoolClass.id}>{schoolClass.grade} {schoolClass.section}</option>)}</select>
                 </div>
               </div>
-              <div className="table-scroll"><table><thead><tr><th>STUDENT</th><th>ADMISSION NO.</th><th>CLASS</th><th>GUARDIAN CONTACT</th><th>STATUS</th><th>ACTIONS</th></tr></thead><tbody>
-                {studentRows.map((student) => <tr key={student.id}><td><strong>{student.firstName} {student.lastName}</strong></td><td>{student.admissionNumber}</td><td>{student.grade} {student.section}</td><td>{student.guardianEmail || student.guardianPhone || "—"}</td><td><span className={`status-pill ${student.isActive ? "approved" : "draft"}`}><i />{student.isActive ? "Active" : "Archived"}</span></td><td><div className="student-row-actions"><button className="quiet-action" type="button" onClick={() => editStudent(student)}>Edit</button><button className="quiet-action" type="button" onClick={() => toggleStudentStatus(student)}>{student.isActive ? "Archive" : "Reactivate"}</button></div></td></tr>)}
+              <div className="table-scroll"><table><thead><tr><th>STUDENT</th><th>ADMISSION NO.</th><th>CLASS</th><th>GUARDIAN CONTACT</th><th>STATUS</th><th>PORTAL</th><th>ACTIONS</th></tr></thead><tbody>
+                {studentRows.map((student) => <tr key={student.id}><td><strong>{student.firstName} {student.lastName}</strong></td><td>{student.admissionNumber}</td><td>{student.grade} {student.section}</td><td>{student.guardianEmail || student.guardianPhone || "—"}</td><td><span className={`status-pill ${student.isActive ? "approved" : "draft"}`}><i />{student.isActive ? "Active" : "Archived"}</span></td><td>{student.isPortalLinked ? <span className="student-portal-linked" title={student.portalEmail || "Portal account linked"}>Linked{student.portalEmail ? ` · ${student.portalEmail}` : ""}</span> : <button className="quiet-action" type="button" onClick={() => inviteStudent(student)} disabled={linkingStudentId === student.id}>{linkingStudentId === student.id ? "Creating…" : "Invite"}</button>}</td><td><div className="student-row-actions"><button className="quiet-action" type="button" onClick={() => editStudent(student)}>Edit</button><button className="quiet-action" type="button" onClick={() => toggleStudentStatus(student)}>{student.isActive ? "Archive" : "Reactivate"}</button></div></td></tr>)}
               </tbody></table>
                 {loadingStudents && <div className="empty-search">Loading student records…</div>}
                 {!loadingStudents && studentRows.length === 0 && <div className="empty-search">No students found. Add your first student above or adjust the filters.</div>}
@@ -1097,21 +1354,43 @@ function App() {
             </section>
           </section>}
 
-          {role === "admin" && page === "access" && <section className="panel invite-panel"><div className="panel-heading"><div><h2>Invite your school community</h2><p>Only invited people can join. Links expire after 7 days and work for the invited email address only.</p></div></div><form className="invite-form" onSubmit={createInvitation}><label className="field-label" htmlFor="inviteEmail">Invitee email</label><input className="text-input" id="inviteEmail" type="email" required maxLength={254} value={inviteEmail} onChange={(event) => setInviteEmail(event.target.value)} placeholder="teacher@yourschool.edu" /><label className="field-label" htmlFor="inviteRole">Portal role</label><select className="text-input" id="inviteRole" value={inviteRole} onChange={(event) => setInviteRole(event.target.value)}><option value="teacher">Teacher</option><option value="student">Student</option></select>{error && <p className="form-error" role="alert">{error}</p>}<button className="button button-primary" type="submit" disabled={inviting}>{inviting ? "Creating link…" : "Create invitation link"}</button></form>{invitationUrl && <div className="invitation-link"><label className="field-label" htmlFor="invitationUrl">One-time invitation link</label><div><input className="text-input" id="invitationUrl" readOnly value={invitationUrl} /><button className="button button-secondary" type="button" onClick={copyInvitation}>Copy</button></div><p className="field-hint">Send this link directly to the invited email address. Aster does not email invitations yet.</p></div>}</section>}
+          {role === "admin" && page === "access" && <section className="panel invite-panel"><div className="panel-heading"><div><h2>Portal access</h2><p>Register teachers from the Teachers page to generate their staff code and activation link. Student invitations are tied to the selected student record.</p></div><button className="button button-secondary button-small" type="button" onClick={() => setPage("teachers")}>Go to Teachers</button></div>{invitationUrl && <div className="invitation-link"><label className="field-label" htmlFor="invitationUrl">{invitationLabel || "One-time invitation link"}</label><div><input className="text-input" id="invitationUrl" readOnly value={invitationUrl} /><button className="button button-secondary" type="button" onClick={copyInvitation}>Copy</button></div><p className="field-hint">Send this link directly to the invited email address. Aster does not email invitations yet.</p></div>}</section>}
 
-          <section className={`term-banner ${page === "access" || page === "classes" ? "hidden" : ""}`}><div className="term-icon">▣</div><div className="term-copy"><strong>{role === "admin" ? "Second term is in full swing" : role === "teacher" ? "Your classes are making progress" : "Your second term, so far"}</strong><span>{role === "admin" ? "Results are due in 12 days. Your teachers have submitted 68% of their marks." : role === "teacher" ? "Three mark sets are due Friday. You’ve entered 82% of your marks." : "You’re doing well. Keep showing up, asking questions, and making progress."}</span></div><div className="progress-wrap"><div className="progress-label"><span>{role === "student" ? "Term progress" : role === "teacher" ? "My marks entered" : "Mark submission"}</span><strong>{role === "student" ? "On track" : role === "teacher" ? "82%" : "68%"}</strong></div><div className="progress-track"><span style={{ width: role === "student" ? "62%" : role === "teacher" ? "82%" : "68%" }} /></div></div><button className="text-link" type="button" onClick={() => setPage("results")}>View results →</button></section>
-
-          <section className={`stats-grid ${page === "access" ? "hidden" : ""}`} aria-label="School summary">{current.stats.map(([label, value, trend], index) => <article className="stat-card" key={label}><div className="stat-top"><span className="stat-label">{label}</span><span className={`stat-icon ${["student-stat-icon", "teacher-stat-icon", "average-stat-icon", "review-stat-icon"][index]}`}>{["♧", "♙", "↗", "▤"][index]}</span></div><div className="stat-number">{value} <span className={`stat-trend ${index === 3 ? "attention" : "positive"}`}>{trend}</span></div><div className="stat-foot"><span>{index === 3 ? "4 classes, 3 teachers" : "vs. last term"}</span><span className="mini-chart students-chart"><i /><i /><i /><i /><i /><i /><i /><i /><i /></span></div></article>)}</section>
-          <section className={`main-grid ${page === "access" ? "hidden" : ""}`}>
-            <article className="panel performance-panel">
-              <div className="panel-heading"><div><h2>{role === "student" ? "My learning journey" : role === "teacher" ? "My marking progress" : "School performance"}</h2><p>A little progress, every term.</p></div></div>
-              <div className="chart-summary"><strong>{current.average}</strong><small>{role === "student" ? "my average" : "overall average"}</small></div>
-              <p className="sample-chart-copy">Performance charts will show verified school results once student records are connected.</p>
-            </article>
-            <article className="panel activity-panel"><div className="panel-heading"><div><h2>{role === "student" ? "Coming up for you" : role === "teacher" ? "Your next steps" : "Needs your attention"}</h2><p>The important things, all in one place.</p></div><button className="more-button" type="button">•••</button></div><div className="attention-list">{current.attention.map(([title, detail], index) => <button className="attention-item" type="button" key={title} onClick={() => setPage("results")}><span className={`attention-icon ${["amber", "blue", "lilac"][index]}`}>{["⚠", "♧", "⌂"][index]}</span><span className="attention-copy"><strong>{title}</strong><small>{detail}</small></span><span className="attention-arrow">→</span></button>)}</div><button className="view-all-link" type="button" onClick={() => setPage("results")}>View all updates →</button></article>
-          </section>
-
-          <section className={`panel results-panel ${page === "access" ? "hidden" : ""}`}><div className="panel-heading results-heading"><div><h2>{role === "student" ? "My recent results" : role === "teacher" ? "My recent marks" : "Recent results"}</h2><p>A snapshot of marks making their way to you.</p></div><div className="table-actions"><label className="search-box"><span>⌕</span><input type="search" placeholder="Search results" aria-label="Search results" value={search} onChange={(event) => setSearch(event.target.value)} /></label><button className="button button-secondary button-small" type="button" onClick={() => setToast("Showing results from the current term.")}>☷ Filter</button><button className="button button-secondary button-small export-button" type="button" onClick={exportResults}>⇩ Export</button></div></div><div className="table-scroll"><table><thead><tr>{[role === "student" ? "SUBJECT" : "STUDENT", role === "student" ? "ASSESSMENT" : "CLASS", role === "student" ? "TERM" : "SUBJECT", "TEACHER", "MARK", "STATUS"].map((heading) => <th key={heading}>{heading}</th>)}</tr></thead><tbody>{filteredResults.map((row, index) => <tr key={`${row[0]}-${index}`}><td>{role === "student" ? row[0] : <span className="student-cell"><span className={`table-avatar ${["rose", "blue-avatar", "green-avatar", "yellow-avatar"][index]}`}>{row[0].split(" ").map((part) => part[0]).join("").slice(0, 2)}</span><span><strong>{row[0]}</strong><small>{row[1]}</small></span></span>}</td><td>{role === "student" ? row[1] : row[2]}</td><td>{role === "student" ? row[2] : row[3]}</td><td>{row[4]}</td><td><strong className="mark">{row[5]}</strong><span className="mark-denom"> / 100</span></td><td><span className={`status-pill ${row[6] === "Approved" || row[6] === "Submitted" || row[6] === "Graded" ? "approved" : row[6] === "Needs review" ? "pending" : "draft"}`}><i />{row[6]}</span></td></tr>)}</tbody></table>{filteredResults.length === 0 && <div className="empty-search">No results match your search. Try another name, class, or subject.</div>}</div><div className="table-footer"><span>Showing <strong>{filteredResults.length}</strong> of {role === "student" ? "8" : role === "teacher" ? "576" : "1,248"} results</span><button className="table-footer-link" type="button" onClick={() => setPage("results")}>View all results →</button></div></section>
+          {page === "overview" && dashboardPending && <section className="panel dashboard-message" role="status">Loading your school overview…</section>}
+          {page === "overview" && dashboardErrorForCurrentSchool && <section className="panel dashboard-message dashboard-error" role="alert"><span>{dashboardErrorForCurrentSchool}</span><button className="button button-secondary button-small" type="button" onClick={() => setDashboardRefresh((previous) => previous + 1)}>Retry</button></section>}
+          {page === "overview" && !dashboardPending && !dashboardErrorForCurrentSchool && dashboardForCurrentSchool && <>
+            <section className="stats-grid" aria-label="School summary">
+              {dashboardStats.map(([label, value, detail], index) => <article className="stat-card" key={label}>
+                <div className="stat-top"><span className="stat-label">{label}</span><span className={`stat-icon ${["student-stat-icon", "teacher-stat-icon", "average-stat-icon", "review-stat-icon"][index]}`}>{["♧", "♙", "↗", "▤"][index]}</span></div>
+                <div className="stat-number">{value}</div><div className="stat-foot"><span>{detail}</span></div>
+              </article>)}
+            </section>
+            <section className="main-grid">
+              <article className="panel performance-panel">
+                <div className="panel-heading"><div><h2>{role === "student" ? "My latest published results" : "Published results average"}</h2><p>{role === "student" ? "Only your most recently published report is included." : role === "teacher" ? "Based on published results for your assigned classes and subjects." : "Based on saved result snapshots for this school."}</p></div></div>
+                <div className="chart-summary"><strong>{dashboardAverage}</strong><small>{role === "student" ? "latest report average" : "average percentage"}</small></div>
+                {dashboardAverage === "—" && <p className="sample-chart-copy">No published result percentages are available yet.</p>}
+              </article>
+              <article className="panel activity-panel">
+                <div className="panel-heading"><div><h2>{role === "student" ? "Published report activity" : "Recent assessment activity"}</h2><p>{role === "admin" ? "Latest assessments across your school." : role === "teacher" ? "Latest assessments for your assignments." : "Your latest published result sheets."}</p></div></div>
+                <div className="attention-list">
+                  {dashboardForCurrentSchool.activity.map((item) => {
+                    const status = role === "student" ? "Published" : `${item.status[0].toUpperCase()}${item.status.slice(1)}`;
+                    const detail = role === "student"
+                      ? `${item.academicYear} · ${item.subjectCount} subjects${item.averagePercentage == null ? "" : ` · ${Number(item.averagePercentage).toFixed(1)}% average`}`
+                      : `${item.detail} · ${item.markedCount} of ${item.studentCount} marks entered`;
+                    return <button className="attention-item" type="button" key={item.id} onClick={() => setPage("results")}>
+                      <span className={`attention-icon ${status === "Approved" || status === "Published" ? "blue" : "amber"}`}>{status === "Approved" || status === "Published" ? "✓" : "▤"}</span>
+                      <span className="attention-copy"><strong>{item.title}</strong><small>{detail}</small></span>
+                      <span className={`status-pill ${status === "Approved" || status === "Published" ? "approved" : status === "Submitted" ? "pending" : "draft"}`}><i />{status}</span>
+                    </button>;
+                  })}
+                  {dashboardForCurrentSchool.activity.length === 0 && <p className="empty-search">{role === "student" ? "Your school has not published a result sheet for you yet." : "There is no assessment activity to show yet."}</p>}
+                </div>
+                <button className="view-all-link" type="button" onClick={() => setPage("results")}>{role === "student" ? "View my results" : "Open results & assessments"} →</button>
+              </article>
+            </section>
+          </>}
           <footer className="page-footer"><span>Made for the people who make school matter <span className="footer-heart">♥</span></span><span>ASTER SCHOOL OS <i /> 2025</span></footer>
           </>}
         </div>

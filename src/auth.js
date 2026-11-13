@@ -10,3 +10,5 @@ export const authClient = authUrl
       }),
     })
   : null;
+
+export const pendingSchoolNameKey = "aster.pending-school-name";

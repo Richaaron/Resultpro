@@ -30,6 +30,21 @@ export function normalizeSchoolInput(body = {}) {
   return school;
 }
 
+export function normalizeTeacherRegistrationInput(body = {}) {
+  const input = body && typeof body === "object" ? body : {};
+  const teacherName = typeof input.teacherName === "string" ? input.teacherName.trim() : "";
+  const email = typeof input.email === "string" ? input.email.trim().toLowerCase() : "";
+  if (
+    teacherName.length < 2 ||
+    teacherName.length > 120 ||
+    !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ||
+    email.length > 254
+  ) {
+    return null;
+  }
+  return { teacherName, email };
+}
+
 export function createSchoolSlug(name, id) {
   const base = name
     .toLowerCase()
@@ -39,5 +54,5 @@ export function createSchoolSlug(name, id) {
     .replace(/^-|-$/g, "")
     .slice(0, 48) || "school";
 
-  return `${base}-${id.slice(0, 6)}`;
+  return `${base}-${id.replaceAll("-", "").slice(0, 12)}`;
 }

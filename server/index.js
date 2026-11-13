@@ -9,7 +9,9 @@ import {
   createSchoolClass,
   createSchoolStudent,
   deleteSchoolClass,
+  getSchoolDashboard,
   getSchoolRole,
+  getSchoolPublishedResultSheet,
   listSchoolTeachers,
   listSchoolClasses,
   listSchools,
@@ -17,9 +19,11 @@ import {
   listSchoolSubjects,
   listSchoolAssessments,
   listSchoolResultSheet,
+  listStudentPublishedResultSheets,
   listTeachingAssignments,
   getSchoolAssessment,
   removeTeachingAssignment,
+  publishSchoolResultSheet,
   replaceSchoolSubjects,
   reviewSchoolAssessment,
   saveSchoolAssessmentMarks,
@@ -28,7 +32,7 @@ import {
   submitSchoolAssessment,
   updateSchoolStudent,
 } from "./school-repository.js";
-import { normalizeSchoolInput } from "./school-input.js";
+import { normalizeSchoolInput, normalizeTeacherRegistrationInput } from "./school-input.js";
 import { normalizeSubjectSelection } from "../shared/curriculum.js";
 import {
   normalizeClassInput,
@@ -80,6 +84,20 @@ app.post("/api/schools", requireAuth, async (request, response) => {
   try {
     const school = await createSchool(normalized, request.auth.userId);
     return response.status(201).json({ school });
+  } catch (error) {
+    return handleDatabaseError(error, response);
+  }
+});
+
+app.get("/api/schools/:schoolId/dashboard", requireAuth, async (request, response) => {
+  const { schoolId } = request.params;
+  if (!isUuid(schoolId)) return response.status(400).json({ error: "Enter a valid school." });
+
+  try {
+    const membershipRole = await getSchoolRole(schoolId, request.auth.userId);
+    if (!membershipRole) return response.status(404).json({ error: "School not found." });
+    const dashboard = await getSchoolDashboard(schoolId, request.auth.userId, membershipRole);
+    return response.json({ dashboard });
   } catch (error) {
     return handleDatabaseError(error, response);
   }
@@ -224,7 +242,7 @@ app.get("/api/schools/:schoolId/result-sheet", requireAuth, async (request, resp
     const membershipRole = await getSchoolRole(schoolId, request.auth.userId);
     if (!membershipRole) return response.status(404).json({ error: "School not found." });
     if (membershipRole === "student") {
-      return response.status(403).json({ error: "Result sheets are not available to student accounts yet." });
+      return response.status(403).json({ error: "Student accounts can only view their own published result sheets." });
     }
 
     const teacherUserId = membershipRole === "teacher" ? request.auth.userId : null;
@@ -232,8 +250,70 @@ app.get("/api/schools/:schoolId/result-sheet", requireAuth, async (request, resp
     const schoolClass = classes.find((item) => item.id === classId);
     if (!schoolClass) return response.status(404).json({ error: "Class not found or not assigned to this teacher." });
 
+    const published = await getSchoolPublishedResultSheet(schoolId, classId, term, teacherUserId);
+    if (published) {
+      return response.json({
+        schoolClass,
+        term,
+        rows: published.rows,
+        published: published.publication,
+      });
+    }
+
     const rows = await listSchoolResultSheet(schoolId, classId, term, teacherUserId);
-    return response.json({ schoolClass, term, rows });
+    return response.json({ schoolClass, term, rows, published: null });
+  } catch (error) {
+    return handleDatabaseError(error, response);
+  }
+});
+
+app.post("/api/schools/:schoolId/result-sheet/publish", requireAuth, async (request, response) => {
+  const { schoolId } = request.params;
+  const { classId, term } = request.body ?? {};
+  if (!isUuid(schoolId) || !isUuid(classId) || !["Term 1", "Term 2", "Term 3"].includes(term)) {
+    return response.status(400).json({ error: "Select a valid class and school term." });
+  }
+
+  try {
+    const membershipRole = await getSchoolRole(schoolId, request.auth.userId);
+    if (!membershipRole) return response.status(404).json({ error: "School not found." });
+    if (membershipRole !== "admin") {
+      return response.status(403).json({ error: "Only a school administrator can publish results." });
+    }
+    const result = await publishSchoolResultSheet(schoolId, classId, term, request.auth.userId);
+    if (result.error === "published") {
+      return response.status(409).json({ error: "This class and term already have a published result sheet." });
+    }
+    if (result.error === "students") {
+      return response.status(400).json({ error: "Enrol at least one active student before publishing." });
+    }
+    if (result.error === "no_assessments") {
+      return response.status(400).json({ error: "Create and approve at least one assessment for this term before publishing." });
+    }
+    if (result.error === "unapproved") {
+      return response.status(409).json({ error: "Resolve every draft, submitted, or returned assessment before publishing results." });
+    }
+    if (result.error === "class") {
+      return response.status(404).json({ error: "Class not found." });
+    }
+    return response.status(201).json({ published: true });
+  } catch (error) {
+    return handleDatabaseError(error, response);
+  }
+});
+
+app.get("/api/schools/:schoolId/my-results", requireAuth, async (request, response) => {
+  const { schoolId } = request.params;
+  if (!isUuid(schoolId)) return response.status(400).json({ error: "Enter a valid school." });
+
+  try {
+    const membershipRole = await getSchoolRole(schoolId, request.auth.userId);
+    if (!membershipRole) return response.status(404).json({ error: "School not found." });
+    if (membershipRole !== "student") {
+      return response.status(403).json({ error: "Only student accounts can view student results." });
+    }
+    const results = await listStudentPublishedResultSheets(schoolId, request.auth.userId);
+    return response.json(results);
   } catch (error) {
     return handleDatabaseError(error, response);
   }
@@ -278,6 +358,9 @@ app.post("/api/schools/:schoolId/assessments", requireAuth, async (request, resp
     }
     if (result.error === "students") {
       return response.status(400).json({ error: "Enrol at least one active student in this class before creating an assessment." });
+    }
+    if (result.error === "published") {
+      return response.status(409).json({ error: "This class and term are published. Create no further assessments for a published term." });
     }
     if (result.error === "duplicate") {
       return response.status(409).json({ error: "An assessment with this title already exists for that class, subject, and term." });
@@ -424,6 +507,12 @@ app.delete("/api/schools/:schoolId/classes/:classId", requireAuth, async (reques
     if (!deleted) return response.status(404).json({ error: "Class not found." });
     return response.status(204).end();
   } catch (error) {
+    if (error.code === "CLASS_HAS_RESULTS") {
+      return response.status(409).json({ error: error.message });
+    }
+    if (error.code === "CLASS_HAS_STUDENTS") {
+      return response.status(409).json({ error: error.message });
+    }
     return handleDatabaseError(error, response);
   }
 });
@@ -520,10 +609,22 @@ app.patch("/api/schools/:schoolId/students/:studentId/status", requireAuth, asyn
 
 app.post("/api/schools/:schoolId/invitations", requireAuth, async (request, response) => {
   const { schoolId } = request.params;
-  const email = typeof request.body?.email === "string" ? request.body.email.trim().toLowerCase() : "";
   const role = request.body?.role;
-  if (!isUuid(schoolId) || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254 || !["teacher", "student"].includes(role)) {
-    return response.status(400).json({ error: "Enter a valid email address and choose Teacher or Student." });
+  const studentId = request.body?.studentId;
+  const teacher = role === "teacher" ? normalizeTeacherRegistrationInput(request.body) : null;
+  const email = role === "teacher"
+    ? teacher?.email
+    : typeof request.body?.email === "string" ? request.body.email.trim().toLowerCase() : "";
+  if (!isUuid(schoolId) || !email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254
+    || !["teacher", "student"].includes(role)
+    || (role === "teacher" && !teacher)
+    || (studentId !== undefined && (!isUuid(studentId) || role !== "student"))
+    || (role === "student" && !studentId)) {
+    return response.status(400).json({
+      error: role === "teacher"
+        ? "Enter the teacher’s full name and a valid email address."
+        : "Enter a valid email address; student invitations must target a student record.",
+    });
   }
 
   try {
@@ -536,7 +637,16 @@ app.post("/api/schools/:schoolId/invitations", requireAuth, async (request, resp
       email,
       role,
       userId: request.auth.userId,
+      studentId,
+      teacherName: teacher?.teacherName,
     });
+    if (!invitation) {
+      return response.status(409).json({
+        error: role === "teacher"
+          ? "This email already belongs to a teacher or has a pending invitation in this school."
+          : "That student record is unavailable or already linked to a portal account.",
+      });
+    }
     return response.status(201).json({ invitation });
   } catch (error) {
     return handleDatabaseError(error, response);

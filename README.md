@@ -37,6 +37,14 @@ The production frontend can be built with `npm run build`; `npm start` serves th
 4. Set `FRONTEND_ORIGINS` to the exact Vercel frontend origin, such as `https://your-app.vercel.app` (no trailing slash). Include additional trusted origins as a comma-separated list.
 5. Deploy the service and verify `https://<your-render-service>.onrender.com/api/health` returns `{"status":"ok"}`.
 
+## School account setup
+
+Choose **Create an account**, enter the administrator name, school name, email, and password, then verify the email. After signing in, complete the school type, country, school email, and portal-access details. The first verified account to create the school profile becomes its administrator and can then use the school dashboard. The signup school name is kept in the browser session to prefill setup; invitation signups skip this field.
+
+Every school profile receives its own workspace URL, such as `/school/harborview-academy-abc123`. Creating a school opens that URL, and administrators can copy it from the workspace. It is a school-specific entry point, not a public-results link: visitors must sign in with a verified account that belongs to that school. The selected school ID is used for all workspace data requests, and server-side membership checks prevent one school's teachers or admins from reading another school's records.
+
+If your account belongs to more than one school, use the workspace selector in the sidebar to switch between those memberships. Each selection opens that school's own workspace URL; the selector never grants access to schools that are not already listed for your account.
+
 The service uses Render's **Free** plan. Free web services sleep after inactivity and can take around a minute to wake when the next request arrives, so this is not an always-on backend. Upgrade the service to a paid plan in Render if you later need it to stay awake. Render and this Neon project are both configured for Oregon.
 
 ## Deploy the frontend to Vercel
@@ -53,17 +61,20 @@ The browser calls the Render API directly. The API only allows origins listed in
 - `GET /api/health` — API health check
 - `GET /api/schools` — list only schools the signed-in user belongs to
 - `POST /api/schools` — create a school and make the verified account its first administrator
+- `GET /api/schools/:schoolId/dashboard` — return role-scoped school metrics and recent activity
 - `GET /api/schools/:schoolId/subjects` — list saved grade subjects for a school member
 - `PUT /api/schools/:schoolId/subjects` — replace a grade's subjects (school administrators only)
 - `GET /api/schools/:schoolId/classes` — list school classes for a member
 - `POST /api/schools/:schoolId/classes` — create a class using saved grade subjects (school administrators only)
-- `DELETE /api/schools/:schoolId/classes/:classId` — delete an empty class (school administrators only)
+- `DELETE /api/schools/:schoolId/classes/:classId` — delete an empty class without published results (school administrators only)
 - `GET /api/schools/:schoolId/teaching-assignments` — list all assignments and accepted teachers for admins; teachers only see their own assignments
 - `PUT /api/schools/:schoolId/classes/:classId/teaching-assignments` — assign or reassign a teacher to a class subject (school administrators only)
 - `DELETE /api/schools/:schoolId/teaching-assignments/:assignmentId` — remove an assignment (school administrators only)
 - `GET /api/schools/:schoolId/assessments` — list school assessments for admins or the signed-in teacher's assignments
 - `POST /api/schools/:schoolId/assessments` — create an assessment for an assigned class subject (school administrators only)
-- `GET /api/schools/:schoolId/result-sheet?classId=:classId&term=Term%201` — calculate the class result sheet from approved marks for the selected term
+- `GET /api/schools/:schoolId/result-sheet?classId=:classId&term=Term%201` — calculate the live class result sheet, or return its published snapshot
+- `POST /api/schools/:schoolId/result-sheet/publish` — freeze an approved class/term result sheet (school administrators only); every assessment for that term must be approved
+- `GET /api/schools/:schoolId/my-results` — list only the authenticated student's published result sheets; no student ID is accepted from the client
 - `GET /api/schools/:schoolId/assessments/:assessmentId/marks` — view the assessment's saved roster and marks
 - `PUT /api/schools/:schoolId/assessments/:assessmentId/marks` — save draft marks for rostered students (assigned teacher only)
 - `POST /api/schools/:schoolId/assessments/:assessmentId/submit` — submit complete marks for administrator review (assigned teacher only)
@@ -72,10 +83,10 @@ The browser calls the Render API directly. The API only allows origins listed in
 - `POST /api/schools/:schoolId/students` — enrol a student (school administrators only)
 - `PUT /api/schools/:schoolId/students/:studentId` — update a student record (school administrators only)
 - `PATCH /api/schools/:schoolId/students/:studentId/status` — archive or reactivate a student (school administrators only)
-- `POST /api/schools/:schoolId/invitations` — create a seven-day, email-restricted teacher or student invitation
+- `POST /api/schools/:schoolId/invitations` — admins register a teacher by name and email to generate a staff code and seven-day activation link, or create a student invitation tied to a specific student record
 - `POST /api/invitations/accept` — accept an invitation for the signed-in, verified email address
 
-School membership is checked on the server for every school API request; CORS is not an authorization boundary. Admins create invitation links in **Portal access** and send them to invitees themselves. A link can only be accepted by an account with the matching verified email and expires after seven days.
+School membership is checked on the server for every school API request; CORS is not an authorization boundary. School administrators register teachers by name and verified email on the **Teachers** page. The API generates a unique school staff code and a seven-day activation link; admins must share the link with the named teacher themselves because invitation email delivery is not configured. Teachers create their own password during account activation; the generated staff code identifies the teacher but is not a login credential. The account must use the invited email address. A teacher becomes an active school member after verifying that email and accepting the link. Student invitations are created from the corresponding student register row; accepting one atomically connects the verified account to exactly one student record in that school.
 
 ## Curriculum subjects
 
@@ -86,6 +97,6 @@ School administrators can choose and save subjects by Primary 1–6, JSS 1–3, 
 
 ## Data readiness
 
-Login, email verification, school profiles, school memberships, invite-only access, subject selections, classes, student records, teacher-to-class/subject assignments, assessments, marks, and assessment reviews are persisted in Neon. Administrators can enrol, search, update, archive, and reactivate student records; class deletion is blocked when student records still reference it. Teacher assignments are visible to the assigned teacher, and teacher class listings, assessments, and result sheets are limited to their assigned classes and subjects. Each assessment snapshots its active class roster when it is created. Teachers can save incomplete mark drafts, but must enter marks for every student on that snapshot before submission. Administrators can approve submitted marks or return them with a required note. The term result sheet includes approved assessments only and calculates each student-subject percentage as total approved points earned divided by total possible approved points; subjects with no approved marks remain ungraded.
+Login, email verification, school profiles, school memberships, invite-only access, subject selections, classes, student records, student-account links, teacher-to-class/subject assignments, assessments, marks, assessment reviews, and published result snapshots are persisted in Neon. Administrators can enrol, search, update, archive, and reactivate student records; class deletion is blocked when student records or published results still reference it. Teacher assignments are visible to the assigned teacher, and teacher class listings, assessments, and result sheets are limited to their assigned classes and subjects. Each assessment snapshots its active class roster when it is created. Teachers can save incomplete mark drafts, but must enter marks for every student on that snapshot before submission. Administrators can approve submitted marks or return them with a required note. The term result sheet includes approved assessments only and calculates each student-subject percentage as total approved points earned divided by total possible approved points; subjects with no approved marks remain ungraded. Publishing requires every assessment in the selected class and term to be approved, saves an immutable snapshot, and prevents adding further assessments to that term. Linked student accounts can view only their own published snapshots; unlinked student accounts see no student records or results.
 
-The overview figures and student portal results table still contain sample data. Letter grades, class positions, configurable grade bands, report-card publishing, student account-to-record linking, and parent access are not implemented yet. Approved assessment marks are not term report cards; the result sheet shows calculated percentages only and does not apply a grading policy. Do not use the sample figures or results for school decisions. Before using real student information, deploy and test the updated API, confirm privacy requirements and backups, and verify school permissions in the production environment.
+The overview now loads school-scoped counts, published-result averages, and recent assessment or publication activity from saved records. Administrators see school-wide data, teachers see their assigned classes and subjects, and students see only their linked published reports. Letter grades, class positions, configurable grade bands, and separate parent accounts are not implemented. Approved assessment marks are not term report cards; the published result sheet shows calculated percentages only and does not apply a grading policy. Before using real student information, deploy and test the updated API, confirm privacy requirements and backups, and verify school permissions in the production environment.

@@ -50,6 +50,17 @@ async function getReadyDatabase() {
           ALTER TABLE school_members ADD COLUMN IF NOT EXISTS email VARCHAR(254)
         `,
         database.sql`
+          ALTER TABLE school_members ADD COLUMN IF NOT EXISTS display_name VARCHAR(120)
+        `,
+        database.sql`
+          ALTER TABLE school_members ADD COLUMN IF NOT EXISTS teacher_code VARCHAR(24)
+        `,
+        database.sql`
+          CREATE UNIQUE INDEX IF NOT EXISTS school_members_teacher_code_idx
+          ON school_members (school_id, teacher_code)
+          WHERE teacher_code IS NOT NULL
+        `,
+        database.sql`
           CREATE TABLE IF NOT EXISTS school_invitations (
             id UUID PRIMARY KEY,
             school_id UUID NOT NULL REFERENCES schools(id) ON DELETE CASCADE,
@@ -59,8 +70,23 @@ async function getReadyDatabase() {
             created_by TEXT NOT NULL,
             expires_at TIMESTAMPTZ NOT NULL,
             accepted_at TIMESTAMPTZ,
+            student_id UUID,
             created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
           )
+        `,
+        database.sql`
+          ALTER TABLE school_invitations ADD COLUMN IF NOT EXISTS student_id UUID
+        `,
+        database.sql`
+          ALTER TABLE school_invitations ADD COLUMN IF NOT EXISTS teacher_name VARCHAR(120)
+        `,
+        database.sql`
+          ALTER TABLE school_invitations ADD COLUMN IF NOT EXISTS teacher_code VARCHAR(24)
+        `,
+        database.sql`
+          CREATE UNIQUE INDEX IF NOT EXISTS school_invitations_teacher_code_idx
+          ON school_invitations (school_id, teacher_code)
+          WHERE teacher_code IS NOT NULL
         `,
         database.sql`
           CREATE TABLE IF NOT EXISTS school_subjects (
@@ -125,6 +151,7 @@ async function getReadyDatabase() {
             last_name VARCHAR(80) NOT NULL,
             guardian_email VARCHAR(254),
             guardian_phone VARCHAR(24),
+            user_id TEXT,
             is_active BOOLEAN NOT NULL DEFAULT TRUE,
             created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
             UNIQUE (school_id, admission_number),
@@ -140,6 +167,30 @@ async function getReadyDatabase() {
         database.sql`
           CREATE UNIQUE INDEX IF NOT EXISTS school_students_school_id_id_idx
           ON school_students (school_id, id)
+        `,
+        database.sql`
+          ALTER TABLE school_students ADD COLUMN IF NOT EXISTS user_id TEXT
+        `,
+        database.sql`
+          CREATE UNIQUE INDEX IF NOT EXISTS school_students_user_id_idx
+          ON school_students (school_id, user_id)
+          WHERE user_id IS NOT NULL
+        `,
+        database.sql`
+          DO $$
+          BEGIN
+            IF NOT EXISTS (
+              SELECT 1 FROM pg_constraint
+              WHERE conname = 'school_invitations_student_fk'
+                AND conrelid = 'school_invitations'::regclass
+            ) THEN
+              ALTER TABLE school_invitations
+                ADD CONSTRAINT school_invitations_student_fk
+                FOREIGN KEY (school_id, student_id)
+                REFERENCES school_students(school_id, id) ON DELETE CASCADE;
+            END IF;
+          END;
+          $$
         `,
         database.sql`
           CREATE TABLE IF NOT EXISTS school_assessments (
@@ -198,6 +249,52 @@ async function getReadyDatabase() {
         database.sql`
           CREATE INDEX IF NOT EXISTS school_assessment_marks_school_student_idx
           ON school_assessment_marks (school_id, student_id, assessment_id)
+        `,
+        database.sql`
+          CREATE TABLE IF NOT EXISTS school_result_publications (
+            id UUID PRIMARY KEY,
+            school_id UUID NOT NULL REFERENCES schools(id) ON DELETE CASCADE,
+            class_id UUID NOT NULL,
+            term VARCHAR(12) NOT NULL CHECK (term IN ('Term 1', 'Term 2', 'Term 3')),
+            academic_year VARCHAR(9) NOT NULL,
+            published_by TEXT NOT NULL,
+            published_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            UNIQUE (school_id, class_id, term),
+            UNIQUE (school_id, id),
+            CONSTRAINT school_result_publications_class_fk
+              FOREIGN KEY (school_id, class_id)
+              REFERENCES school_classes(school_id, id) ON DELETE RESTRICT,
+            CONSTRAINT school_result_publications_publisher_fk
+              FOREIGN KEY (school_id, published_by)
+              REFERENCES school_members(school_id, user_id) ON DELETE RESTRICT
+          )
+        `,
+        database.sql`
+          CREATE TABLE IF NOT EXISTS school_published_results (
+            school_id UUID NOT NULL,
+            publication_id UUID NOT NULL,
+            student_id UUID NOT NULL,
+            admission_number VARCHAR(32) NOT NULL,
+            first_name VARCHAR(80) NOT NULL,
+            last_name VARCHAR(80) NOT NULL,
+            subject_name VARCHAR(100) NOT NULL,
+            teacher_email VARCHAR(254),
+            earned_points NUMERIC(10, 2),
+            possible_points NUMERIC(10, 2),
+            percentage NUMERIC(5, 2),
+            assessment_count INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (publication_id, student_id, subject_name),
+            CONSTRAINT school_published_results_publication_fk
+              FOREIGN KEY (school_id, publication_id)
+              REFERENCES school_result_publications(school_id, id) ON DELETE CASCADE,
+            CONSTRAINT school_published_results_student_fk
+              FOREIGN KEY (school_id, student_id)
+              REFERENCES school_students(school_id, id) ON DELETE RESTRICT
+          )
+        `,
+        database.sql`
+          CREATE INDEX IF NOT EXISTS school_published_results_student_idx
+          ON school_published_results (school_id, student_id, publication_id)
         `,
       ]).then(() => {
         initializedDatabaseUrl = database.databaseUrl;
@@ -261,6 +358,255 @@ export async function getSchoolRole(schoolId, userId) {
     WHERE school_id = ${schoolId} AND user_id = ${userId}
   `;
   return membership?.role ?? null;
+}
+
+export async function getSchoolDashboard(schoolId, userId, role) {
+  const sql = await getReadyDatabase();
+  const [summary] = await sql`
+    SELECT
+      (
+        SELECT COUNT(*)::int
+        FROM school_students st
+        WHERE st.school_id = ${schoolId}
+          AND st.is_active
+          AND ${role} <> 'student'
+          AND (
+            ${role} <> 'teacher'
+            OR EXISTS (
+              SELECT 1 FROM school_teaching_assignments ta
+              WHERE ta.school_id = st.school_id
+                AND ta.class_id = st.class_id
+                AND ta.teacher_user_id = ${userId}
+            )
+          )
+      ) AS "studentCount",
+      (
+        SELECT COUNT(*)::int
+        FROM school_members m
+        WHERE m.school_id = ${schoolId}
+          AND m.role = 'teacher'
+          AND ${role} = 'admin'
+      ) AS "teacherCount",
+      (
+        SELECT COUNT(*)::int
+        FROM school_classes c
+        WHERE c.school_id = ${schoolId}
+          AND (
+            ${role} = 'admin'
+            OR (
+              ${role} = 'teacher'
+              AND EXISTS (
+                SELECT 1 FROM school_teaching_assignments ta
+                WHERE ta.school_id = c.school_id
+                  AND ta.class_id = c.id
+                  AND ta.teacher_user_id = ${userId}
+              )
+            )
+            OR (
+              ${role} = 'student'
+              AND EXISTS (
+                SELECT 1 FROM school_students st
+                WHERE st.school_id = c.school_id
+                  AND st.class_id = c.id
+                  AND st.user_id = ${userId}
+              )
+            )
+          )
+      ) AS "classCount",
+      (
+        SELECT COUNT(*)::int
+        FROM school_assessments a
+        WHERE a.school_id = ${schoolId}
+          AND a.status = 'submitted'
+          AND ${role} <> 'student'
+          AND (
+            ${role} = 'admin'
+            OR EXISTS (
+              SELECT 1 FROM school_teaching_assignments ta
+              WHERE ta.school_id = a.school_id
+                AND ta.class_id = a.class_id
+                AND ta.subject_name = a.subject_name
+                AND ta.teacher_user_id = ${userId}
+            )
+          )
+      ) AS "submittedCount",
+      (
+        SELECT COUNT(*)::int
+        FROM school_assessments a
+        WHERE a.school_id = ${schoolId}
+          AND a.status IN ('draft', 'returned')
+          AND ${role} = 'teacher'
+          AND EXISTS (
+            SELECT 1 FROM school_teaching_assignments ta
+            WHERE ta.school_id = a.school_id
+              AND ta.class_id = a.class_id
+              AND ta.subject_name = a.subject_name
+              AND ta.teacher_user_id = ${userId}
+          )
+      ) AS "toCompleteCount",
+      (
+        SELECT COUNT(DISTINCT p.id)::int
+        FROM school_result_publications p
+        WHERE p.school_id = ${schoolId}
+          AND (
+            ${role} = 'admin'
+            OR (
+              ${role} = 'teacher'
+              AND EXISTS (
+                SELECT 1 FROM school_teaching_assignments ta
+                WHERE ta.school_id = p.school_id
+                  AND ta.class_id = p.class_id
+                  AND ta.teacher_user_id = ${userId}
+              )
+            )
+            OR (
+              ${role} = 'student'
+              AND EXISTS (
+                SELECT 1
+                FROM school_students st
+                JOIN school_published_results r
+                  ON r.school_id = st.school_id
+                  AND r.student_id = st.id
+                  AND r.publication_id = p.id
+                WHERE st.school_id = p.school_id
+                  AND st.user_id = ${userId}
+              )
+            )
+          )
+      ) AS "publishedSheetCount",
+      (
+        SELECT COUNT(DISTINCT r.subject_name)::int
+        FROM school_published_results r
+        JOIN school_result_publications p
+          ON p.school_id = r.school_id AND p.id = r.publication_id
+        WHERE r.school_id = ${schoolId}
+          AND r.student_id = (
+            SELECT st.id FROM school_students st
+            WHERE st.school_id = ${schoolId} AND st.user_id = ${userId}
+          )
+          AND p.id = (
+            SELECT p2.id
+            FROM school_result_publications p2
+            JOIN school_published_results r2
+              ON r2.school_id = p2.school_id AND r2.publication_id = p2.id
+            WHERE p2.school_id = ${schoolId}
+              AND r2.student_id = r.student_id
+            ORDER BY p2.published_at DESC, p2.id
+            LIMIT 1
+          )
+      ) AS "latestSubjectCount",
+      (
+        SELECT COALESCE(SUM(r.assessment_count), 0)::int
+        FROM school_published_results r
+        JOIN school_result_publications p
+          ON p.school_id = r.school_id AND p.id = r.publication_id
+        WHERE r.school_id = ${schoolId}
+          AND r.student_id = (
+            SELECT st.id FROM school_students st
+            WHERE st.school_id = ${schoolId} AND st.user_id = ${userId}
+          )
+          AND p.id = (
+            SELECT p2.id
+            FROM school_result_publications p2
+            JOIN school_published_results r2
+              ON r2.school_id = p2.school_id AND r2.publication_id = p2.id
+            WHERE p2.school_id = ${schoolId}
+              AND r2.student_id = r.student_id
+            ORDER BY p2.published_at DESC, p2.id
+            LIMIT 1
+          )
+      ) AS "latestAssessmentCount",
+      (
+        SELECT AVG(r.percentage)::float8
+        FROM school_published_results r
+        JOIN school_result_publications p
+          ON p.school_id = r.school_id AND p.id = r.publication_id
+        WHERE r.school_id = ${schoolId}
+          AND (
+            ${role} = 'admin'
+            OR (
+              ${role} = 'teacher'
+              AND EXISTS (
+                SELECT 1 FROM school_teaching_assignments ta
+                WHERE ta.school_id = r.school_id
+                  AND ta.class_id = p.class_id
+                  AND ta.subject_name = r.subject_name
+                  AND ta.teacher_user_id = ${userId}
+              )
+            )
+            OR (
+              ${role} = 'student'
+              AND r.student_id = (
+                SELECT st.id FROM school_students st
+                WHERE st.school_id = ${schoolId} AND st.user_id = ${userId}
+              )
+              AND p.id = (
+                SELECT p2.id
+                FROM school_result_publications p2
+                JOIN school_published_results r2
+                  ON r2.school_id = p2.school_id AND r2.publication_id = p2.id
+                WHERE p2.school_id = ${schoolId}
+                  AND r2.student_id = r.student_id
+                ORDER BY p2.published_at DESC, p2.id
+                LIMIT 1
+              )
+            )
+          )
+      ) AS "averagePercentage"
+  `;
+
+  const activity = role === "student"
+    ? await sql`
+      SELECT
+        p.id,
+        CONCAT(c.grade, ' ', c.section, ' · ', p.term) AS title,
+        p.academic_year AS "academicYear",
+        COUNT(DISTINCT r.subject_name)::int AS "subjectCount",
+        AVG(r.percentage)::float8 AS "averagePercentage",
+        p.published_at AS "createdAt"
+      FROM school_published_results r
+      JOIN school_result_publications p
+        ON p.school_id = r.school_id AND p.id = r.publication_id
+      JOIN school_classes c
+        ON c.school_id = p.school_id AND c.id = p.class_id
+      WHERE r.school_id = ${schoolId}
+        AND r.student_id = (
+          SELECT st.id FROM school_students st
+          WHERE st.school_id = ${schoolId} AND st.user_id = ${userId}
+        )
+      GROUP BY p.id, c.id
+      ORDER BY p.published_at DESC
+      LIMIT 4
+    `
+    : await sql`
+      SELECT a.id, a.title,
+             CONCAT(c.grade, ' ', c.section, ' · ', a.subject_name, ' · ', a.term) AS detail,
+             a.status, a.created_at AS "createdAt",
+             COUNT(DISTINCT m.student_id) FILTER (WHERE m.score IS NOT NULL)::int AS "markedCount",
+             COUNT(DISTINCT m.student_id)::int AS "studentCount"
+      FROM school_assessments a
+      JOIN school_classes c
+        ON c.school_id = a.school_id AND c.id = a.class_id
+      LEFT JOIN school_assessment_marks m
+        ON m.school_id = a.school_id AND m.assessment_id = a.id
+      WHERE a.school_id = ${schoolId}
+        AND ${role} <> 'student'
+        AND (
+          ${role} = 'admin'
+          OR EXISTS (
+            SELECT 1 FROM school_teaching_assignments ta
+            WHERE ta.school_id = a.school_id
+              AND ta.class_id = a.class_id
+              AND ta.subject_name = a.subject_name
+              AND ta.teacher_user_id = ${userId}
+          )
+        )
+      GROUP BY a.id, c.id
+      ORDER BY a.created_at DESC
+      LIMIT 4
+    `;
+
+  return { summary, activity };
 }
 
 export async function listSchoolSubjects(schoolId) {
@@ -395,13 +741,262 @@ export async function listSchoolResultSheet(schoolId, classId, term, teacherUser
   }));
 }
 
+export async function getSchoolPublishedResultSheet(schoolId, classId, term, teacherUserId = null) {
+  const sql = await getReadyDatabase();
+  const [publication] = await sql`
+    SELECT p.id, p.class_id AS "classId", c.grade, c.section,
+           p.academic_year AS "academicYear", p.term,
+           p.published_at AS "publishedAt", m.email AS "publishedBy"
+    FROM school_result_publications p
+    JOIN school_classes c
+      ON c.school_id = p.school_id AND c.id = p.class_id
+    JOIN school_members m
+      ON m.school_id = p.school_id AND m.user_id = p.published_by
+    WHERE p.school_id = ${schoolId}
+      AND p.class_id = ${classId}
+      AND p.term = ${term}
+      AND (
+        ${teacherUserId}::text IS NULL
+        OR EXISTS (
+          SELECT 1 FROM school_teaching_assignments ta
+          WHERE ta.school_id = p.school_id
+            AND ta.class_id = p.class_id
+            AND ta.teacher_user_id = ${teacherUserId}
+        )
+      )
+  `;
+  if (!publication) return null;
+
+  const rows = await sql`
+    SELECT student_id AS "studentId", admission_number AS "admissionNumber",
+           first_name AS "firstName", last_name AS "lastName",
+           subject_name AS subject, teacher_email AS "teacherEmail",
+           earned_points::float8 AS "earnedPoints",
+           possible_points::float8 AS "possiblePoints",
+           percentage::float8 AS percentage, assessment_count AS "assessmentCount"
+    FROM school_published_results
+    WHERE school_id = ${schoolId} AND publication_id = ${publication.id}
+      AND (
+        ${teacherUserId}::text IS NULL
+        OR EXISTS (
+          SELECT 1 FROM school_teaching_assignments ta
+          WHERE ta.school_id = ${schoolId}
+            AND ta.class_id = ${classId}
+            AND ta.subject_name = school_published_results.subject_name
+            AND ta.teacher_user_id = ${teacherUserId}
+        )
+      )
+    ORDER BY subject_name, last_name, first_name, admission_number
+  `;
+  return { publication, rows };
+}
+
+export async function publishSchoolResultSheet(schoolId, classId, term, publisherUserId) {
+  const sql = await getReadyDatabase();
+  const publicationId = randomUUID();
+  const [created] = await sql`
+    WITH selected_class AS MATERIALIZED (
+      SELECT c.id, c.school_id, c.grade, c.section, c.academic_year
+      FROM school_classes c
+      WHERE c.school_id = ${schoolId} AND c.id = ${classId}
+      FOR UPDATE
+    ),
+    roster AS MATERIALIZED (
+      SELECT st.id, st.admission_number, st.first_name, st.last_name
+      FROM school_students st
+      JOIN selected_class c ON c.id = st.class_id
+      WHERE st.school_id = ${schoolId} AND st.is_active
+      UNION
+      SELECT st.id, st.admission_number, st.first_name, st.last_name
+      FROM school_assessment_marks historical_mark
+      JOIN school_assessments historical_assessment
+        ON historical_assessment.school_id = historical_mark.school_id
+        AND historical_assessment.id = historical_mark.assessment_id
+      JOIN school_students st
+        ON st.school_id = historical_mark.school_id AND st.id = historical_mark.student_id
+      WHERE historical_mark.school_id = ${schoolId}
+        AND historical_assessment.class_id = ${classId}
+        AND historical_assessment.term = ${term}
+        AND historical_assessment.status = 'approved'
+    ),
+    subjects AS MATERIALIZED (
+      SELECT cs.subject_name, teacher.email AS teacher_email
+      FROM selected_class c
+      JOIN school_class_subjects cs ON cs.class_id = c.id
+      LEFT JOIN school_teaching_assignments ta
+        ON ta.school_id = c.school_id
+        AND ta.class_id = c.id
+        AND ta.subject_name = cs.subject_name
+      LEFT JOIN school_members teacher
+        ON teacher.school_id = ta.school_id AND teacher.user_id = ta.teacher_user_id
+    ),
+    approved_totals AS MATERIALIZED (
+      SELECT m.student_id, a.subject_name,
+             SUM(m.score) AS earned_points,
+             SUM(a.max_score) AS possible_points,
+             COUNT(*)::int AS assessment_count
+      FROM school_assessments a
+      JOIN school_assessment_marks m
+        ON m.school_id = a.school_id AND m.assessment_id = a.id
+      WHERE a.school_id = ${schoolId}
+        AND a.class_id = ${classId}
+        AND a.term = ${term}
+        AND a.status = 'approved'
+        AND m.score IS NOT NULL
+      GROUP BY m.student_id, a.subject_name
+    ),
+    snapshot_rows AS MATERIALIZED (
+      SELECT r.id AS student_id, r.admission_number, r.first_name, r.last_name,
+             s.subject_name, s.teacher_email,
+             totals.earned_points, totals.possible_points,
+             CASE WHEN totals.possible_points > 0
+               THEN ROUND(totals.earned_points / totals.possible_points * 100, 2)
+               ELSE NULL
+             END AS percentage,
+             COALESCE(totals.assessment_count, 0)::int AS assessment_count
+      FROM selected_class c
+      CROSS JOIN roster r
+      CROSS JOIN subjects s
+      LEFT JOIN approved_totals totals
+        ON totals.student_id = r.id AND totals.subject_name = s.subject_name
+    ),
+    created_publication AS (
+      INSERT INTO school_result_publications
+        (id, school_id, class_id, term, academic_year, published_by)
+      SELECT ${publicationId}, c.school_id, c.id, ${term}, c.academic_year, ${publisherUserId}
+      FROM selected_class c
+      WHERE EXISTS (SELECT 1 FROM snapshot_rows)
+        AND EXISTS (
+          SELECT 1 FROM school_students st
+          WHERE st.school_id = c.school_id AND st.class_id = c.id AND st.is_active
+        )
+        AND EXISTS (
+          SELECT 1 FROM school_assessments a
+          WHERE a.school_id = c.school_id AND a.class_id = c.id AND a.term = ${term}
+        )
+        AND NOT EXISTS (
+          SELECT 1 FROM school_assessments a
+          WHERE a.school_id = c.school_id
+            AND a.class_id = c.id
+            AND a.term = ${term}
+            AND a.status <> 'approved'
+        )
+      ON CONFLICT (school_id, class_id, term) DO NOTHING
+      RETURNING id, school_id
+    ),
+    saved_results AS (
+      INSERT INTO school_published_results
+        (school_id, publication_id, student_id, admission_number, first_name,
+         last_name, subject_name, teacher_email, earned_points, possible_points,
+         percentage, assessment_count)
+      SELECT publication.school_id, publication.id, snapshot.student_id,
+             snapshot.admission_number, snapshot.first_name, snapshot.last_name,
+             snapshot.subject_name, snapshot.teacher_email, snapshot.earned_points,
+             snapshot.possible_points, snapshot.percentage, snapshot.assessment_count
+      FROM snapshot_rows snapshot
+      CROSS JOIN created_publication publication
+      ON CONFLICT (publication_id, student_id, subject_name) DO NOTHING
+      RETURNING publication_id
+    )
+    SELECT id FROM created_publication
+  `;
+  if (created) return { published: true, publicationId: created.id };
+
+  const [state] = await sql`
+    SELECT EXISTS (
+      SELECT 1 FROM school_result_publications
+      WHERE school_id = ${schoolId} AND class_id = ${classId} AND term = ${term}
+    ) AS published,
+    EXISTS (
+      SELECT 1 FROM school_classes
+      WHERE school_id = ${schoolId} AND id = ${classId}
+    ) AS has_class,
+    EXISTS (
+      SELECT 1 FROM school_assessments
+      WHERE school_id = ${schoolId} AND class_id = ${classId} AND term = ${term}
+    ) AS has_assessments,
+    EXISTS (
+      SELECT 1 FROM school_assessments
+      WHERE school_id = ${schoolId} AND class_id = ${classId} AND term = ${term}
+        AND status <> 'approved'
+    ) AS has_unapproved,
+    EXISTS (
+      SELECT 1 FROM school_students
+      WHERE school_id = ${schoolId} AND class_id = ${classId} AND is_active
+    ) AS has_active_students
+  `;
+  if (state.published) return { error: "published" };
+  if (!state.has_class) return { error: "class" };
+  if (!state.has_active_students) return { error: "students" };
+  if (!state.has_assessments) return { error: "no_assessments" };
+  if (state.has_unapproved) return { error: "unapproved" };
+  return { error: "class" };
+}
+
+export async function listStudentPublishedResultSheets(schoolId, userId) {
+  const sql = await getReadyDatabase();
+  const [student] = await sql`
+    SELECT id
+    FROM school_students
+    WHERE school_id = ${schoolId} AND user_id = ${userId}
+  `;
+  if (!student) return { linked: false, sheets: [] };
+
+  const rows = await sql`
+    SELECT p.id AS "publicationId", p.term, p.academic_year AS "academicYear",
+           p.published_at AS "publishedAt", c.grade, c.section,
+           r.admission_number AS "admissionNumber", r.first_name AS "firstName",
+           r.last_name AS "lastName", r.subject_name AS subject,
+           r.teacher_email AS "teacherEmail", r.earned_points::float8 AS "earnedPoints",
+           r.possible_points::float8 AS "possiblePoints",
+           r.percentage::float8 AS percentage,
+           r.assessment_count AS "assessmentCount"
+    FROM school_published_results r
+    JOIN school_result_publications p
+      ON p.school_id = r.school_id AND p.id = r.publication_id
+    JOIN school_classes c
+      ON c.school_id = p.school_id AND c.id = p.class_id
+    WHERE r.school_id = ${schoolId} AND r.student_id = ${student.id}
+    ORDER BY p.published_at DESC, p.term, r.subject_name
+  `;
+  const sheetsById = new Map();
+  for (const row of rows) {
+    let sheet = sheetsById.get(row.publicationId);
+    if (!sheet) {
+      sheet = {
+        id: row.publicationId,
+        term: row.term,
+        academicYear: row.academicYear,
+        publishedAt: row.publishedAt,
+        grade: row.grade,
+        section: row.section,
+        rows: [],
+      };
+      sheetsById.set(row.publicationId, sheet);
+    }
+    sheet.rows.push({
+      admissionNumber: row.admissionNumber,
+      firstName: row.firstName,
+      lastName: row.lastName,
+      subject: row.subject,
+      teacherEmail: row.teacherEmail,
+      earnedPoints: row.earnedPoints,
+      possiblePoints: row.possiblePoints,
+      percentage: row.percentage,
+      assessmentCount: row.assessmentCount,
+    });
+  }
+  return { linked: true, sheets: [...sheetsById.values()] };
+}
+
 export async function listSchoolTeachers(schoolId) {
   const sql = await getReadyDatabase();
   return sql`
-    SELECT user_id AS "userId", email, created_at AS "joinedAt"
+    SELECT user_id AS "userId", email, display_name AS "teacherName",
+           teacher_code AS "teacherCode", created_at AS "joinedAt"
     FROM school_members
     WHERE school_id = ${schoolId} AND role = 'teacher' AND email IS NOT NULL
-    ORDER BY email
+    ORDER BY display_name, email
   `;
 }
 
@@ -487,39 +1082,43 @@ export async function listSchoolAssessments(schoolId, teacherUserId = null) {
 
 export async function createSchoolAssessment(schoolId, creatorUserId, assessment) {
   const sql = await getReadyDatabase();
-  const [assignment] = await sql`
-    SELECT (
-      SELECT COUNT(*)::int FROM school_students st
-      WHERE st.school_id = c.school_id AND st.class_id = c.id AND st.is_active
-    ) AS "studentCount"
-    FROM school_classes c
-    JOIN school_class_subjects cs
-      ON cs.class_id = c.id AND cs.subject_name = ${assessment.subject}
-    JOIN school_teaching_assignments ta
-      ON ta.school_id = c.school_id
-      AND ta.class_id = c.id
-      AND ta.subject_name = cs.subject_name
-    WHERE c.school_id = ${schoolId} AND c.id = ${assessment.classId}
-  `;
-  if (!assignment) return { error: "assignment" };
-  if (assignment.studentCount === 0) return { error: "students" };
-
   const assessmentId = randomUUID();
   const [createdRows] = await sql.transaction([
     sql`
+      WITH locked_class AS MATERIALIZED (
+        SELECT c.id, c.school_id
+        FROM school_classes c
+        WHERE c.school_id = ${schoolId} AND c.id = ${assessment.classId}
+        FOR UPDATE
+      ),
+      eligible AS MATERIALIZED (
+        SELECT c.id, c.school_id,
+               (
+                 SELECT COUNT(*)::int FROM school_students st
+                 WHERE st.school_id = c.school_id
+                   AND st.class_id = c.id AND st.is_active
+               ) AS student_count
+        FROM locked_class c
+        JOIN school_class_subjects cs
+          ON cs.class_id = c.id AND cs.subject_name = ${assessment.subject}
+        JOIN school_teaching_assignments ta
+          ON ta.school_id = c.school_id
+          AND ta.class_id = c.id
+          AND ta.subject_name = cs.subject_name
+        WHERE NOT EXISTS (
+          SELECT 1 FROM school_result_publications p
+          WHERE p.school_id = c.school_id
+            AND p.class_id = c.id
+            AND p.term = ${assessment.term}
+        )
+      )
       INSERT INTO school_assessments
         (id, school_id, class_id, subject_name, title, term, max_score, due_date, created_by)
-      VALUES (
-        ${assessmentId},
-        ${schoolId},
-        ${assessment.classId},
-        ${assessment.subject},
-        ${assessment.title},
-        ${assessment.term},
-        ${assessment.maxScore},
-        ${assessment.dueDate},
-        ${creatorUserId}
-      )
+      SELECT ${assessmentId}, eligible.school_id, eligible.id,
+             ${assessment.subject}, ${assessment.title}, ${assessment.term},
+             ${assessment.maxScore}, ${assessment.dueDate}, ${creatorUserId}
+      FROM eligible
+      WHERE eligible.student_count > 0
       ON CONFLICT (school_id, class_id, subject_name, title, term) DO NOTHING
       RETURNING id, class_id AS "classId", subject_name AS subject,
                 title, term, max_score::float8 AS "maxScore",
@@ -540,7 +1139,39 @@ export async function createSchoolAssessment(schoolId, creatorUserId, assessment
     `,
   ]);
   const [created] = createdRows;
-  return created ? { assessment: created } : { error: "duplicate" };
+  if (created) return { assessment: created };
+
+  const [state] = await sql`
+    SELECT EXISTS (
+      SELECT 1 FROM school_result_publications
+      WHERE school_id = ${schoolId} AND class_id = ${assessment.classId}
+        AND term = ${assessment.term}
+    ) AS published,
+    EXISTS (
+      SELECT 1 FROM school_classes c
+      JOIN school_class_subjects cs
+        ON cs.class_id = c.id AND cs.subject_name = ${assessment.subject}
+      JOIN school_teaching_assignments ta
+        ON ta.school_id = c.school_id AND ta.class_id = c.id
+        AND ta.subject_name = cs.subject_name
+      WHERE c.school_id = ${schoolId} AND c.id = ${assessment.classId}
+    ) AS assigned,
+    EXISTS (
+      SELECT 1 FROM school_students
+      WHERE school_id = ${schoolId} AND class_id = ${assessment.classId} AND is_active
+    ) AS has_active_students,
+    EXISTS (
+      SELECT 1 FROM school_assessments
+      WHERE school_id = ${schoolId} AND class_id = ${assessment.classId}
+        AND subject_name = ${assessment.subject}
+        AND title = ${assessment.title} AND term = ${assessment.term}
+    ) AS duplicate
+  `;
+  if (state.published) return { error: "published" };
+  if (!state.assigned) return { error: "assignment" };
+  if (!state.has_active_students) return { error: "students" };
+  if (state.duplicate) return { error: "duplicate" };
+  return { error: "class" };
 }
 
 export async function getSchoolAssessment(schoolId, assessmentId, teacherUserId = null) {
@@ -720,6 +1351,10 @@ export async function deleteSchoolClass(schoolId, classId) {
         SELECT 1 FROM school_students st
         WHERE st.school_id = c.school_id AND st.class_id = c.id
       )
+      AND NOT EXISTS (
+        SELECT 1 FROM school_result_publications p
+        WHERE p.school_id = c.school_id AND p.class_id = c.id
+      )
     RETURNING c.id
   `;
   if (deleted) return true;
@@ -727,11 +1362,17 @@ export async function deleteSchoolClass(schoolId, classId) {
   const [existing] = await sql`
     SELECT EXISTS (
       SELECT 1 FROM school_classes WHERE school_id = ${schoolId} AND id = ${classId}
-    ) AS "exists"
+    ) AS "exists",
+    EXISTS (
+      SELECT 1 FROM school_result_publications
+      WHERE school_id = ${schoolId} AND class_id = ${classId}
+    ) AS has_results
   `;
   if (existing?.exists) {
-    const error = new Error("This class still has student records and cannot be deleted.");
-    error.code = "CLASS_HAS_STUDENTS";
+    const error = new Error(existing.has_results
+      ? "This class has published results and cannot be deleted."
+      : "This class still has student records and cannot be deleted.");
+    error.code = existing.has_results ? "CLASS_HAS_RESULTS" : "CLASS_HAS_STUDENTS";
     throw error;
   }
   return false;
@@ -744,9 +1385,15 @@ export async function listSchoolStudents(schoolId, { classId, search, limit, off
            st.first_name AS "firstName", st.last_name AS "lastName",
            st.guardian_email AS "guardianEmail", st.guardian_phone AS "guardianPhone",
            st.is_active AS "isActive", st.class_id AS "classId",
+           (st.user_id IS NOT NULL) AS "isPortalLinked",
+           linked.email AS "portalEmail",
            c.grade, c.section, c.academic_year AS "academicYear"
     FROM school_students st
     JOIN school_classes c ON c.school_id = st.school_id AND c.id = st.class_id
+    LEFT JOIN school_members linked
+      ON linked.school_id = st.school_id
+      AND linked.user_id = st.user_id
+      AND linked.role = 'student'
     WHERE st.school_id = ${schoolId}
       AND (${classId}::uuid IS NULL OR st.class_id = ${classId})
       AND (
@@ -827,24 +1474,81 @@ export async function setSchoolStudentActive(schoolId, studentId, isActive) {
   return updated ?? null;
 }
 
-export async function createInvitation({ schoolId, email, role, userId }) {
+export async function createInvitation({ schoolId, email, role, userId, studentId = null, teacherName = null }) {
   const sql = await getReadyDatabase();
   const token = randomBytes(32).toString("base64url");
   const tokenHash = createHash("sha256").update(token).digest("hex");
-  const [invitation] = await sql`
-    INSERT INTO school_invitations
-      (id, school_id, email, role, token_hash, created_by, expires_at)
-    VALUES (
-      ${randomUUID()},
-      ${schoolId},
-      ${email},
-      ${role},
-      ${tokenHash},
-      ${userId},
-      NOW() + INTERVAL '7 days'
-    )
-    RETURNING email, role, expires_at AS "expiresAt"
-  `;
+  let invitation;
+  if (studentId) {
+    [invitation] = await sql`
+      WITH target AS MATERIALIZED (
+        SELECT st.id
+        FROM school_students st
+        WHERE st.school_id = ${schoolId}
+          AND st.id = ${studentId}
+          AND st.user_id IS NULL
+        FOR UPDATE
+      )
+      INSERT INTO school_invitations
+        (id, school_id, email, role, token_hash, created_by, expires_at, student_id)
+      SELECT ${randomUUID()}, ${schoolId}, ${email}, 'student', ${tokenHash},
+             ${userId}, NOW() + INTERVAL '7 days', target.id
+      FROM target
+      RETURNING email, role, expires_at AS "expiresAt"
+    `
+  } else if (role === "teacher") {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const teacherCode = `TCH-${randomBytes(8).toString("hex").toUpperCase()}`;
+      [invitation] = await sql`
+        INSERT INTO school_invitations
+          (id, school_id, email, role, token_hash, created_by, expires_at,
+           teacher_name, teacher_code)
+        SELECT ${randomUUID()}, ${schoolId}, ${email}, 'teacher', ${tokenHash},
+               ${userId}, NOW() + INTERVAL '7 days', ${teacherName}, ${teacherCode}
+        WHERE NOT EXISTS (
+          SELECT 1 FROM school_members m
+          WHERE m.school_id = ${schoolId} AND m.email = ${email}
+        )
+        AND NOT EXISTS (
+          SELECT 1 FROM school_invitations i
+          WHERE i.school_id = ${schoolId}
+            AND i.email = ${email}
+            AND i.role = 'teacher'
+            AND i.accepted_at IS NULL
+            AND i.expires_at > NOW()
+        )
+        RETURNING email, role, teacher_name AS "teacherName",
+                  teacher_code AS "teacherCode", expires_at AS "expiresAt"
+      `;
+      if (invitation) break;
+      const [codeInUse] = await sql`
+        SELECT EXISTS (
+          SELECT 1 FROM school_members
+          WHERE school_id = ${schoolId} AND teacher_code = ${teacherCode}
+          UNION ALL
+          SELECT 1 FROM school_invitations
+          WHERE school_id = ${schoolId} AND teacher_code = ${teacherCode}
+        ) AS used
+      `;
+      if (!codeInUse?.used) break;
+    }
+  } else {
+    [invitation] = await sql`
+      INSERT INTO school_invitations
+        (id, school_id, email, role, token_hash, created_by, expires_at)
+      VALUES (
+        ${randomUUID()},
+        ${schoolId},
+        ${email},
+        ${role},
+        ${tokenHash},
+        ${userId},
+        NOW() + INTERVAL '7 days'
+      )
+      RETURNING email, role, expires_at AS "expiresAt"
+    `;
+  }
+  if (!invitation) return null;
   return { ...invitation, token };
 }
 
@@ -852,25 +1556,90 @@ export async function acceptInvitation({ token, email, userId }) {
   const sql = await getReadyDatabase();
   const tokenHash = createHash("sha256").update(token).digest("hex");
   const [membership] = await sql`
-    WITH claimed AS (
-      UPDATE school_invitations
+    WITH candidate AS MATERIALIZED (
+      SELECT i.id, i.school_id, i.role, i.email, i.student_id,
+             i.teacher_name, i.teacher_code
+      FROM school_invitations i
+      WHERE i.token_hash = ${tokenHash}
+        AND i.email = ${email}
+        AND i.accepted_at IS NULL
+        AND i.expires_at > NOW()
+        AND NOT EXISTS (
+          SELECT 1 FROM school_members existing
+          WHERE existing.school_id = i.school_id
+            AND existing.user_id = ${userId}
+            AND existing.role <> i.role
+        )
+        AND (
+          i.student_id IS NULL
+          OR (
+            EXISTS (
+              SELECT 1 FROM school_students st
+              WHERE st.school_id = i.school_id AND st.id = i.student_id
+                AND (st.user_id IS NULL OR st.user_id = ${userId})
+            )
+            AND NOT EXISTS (
+              SELECT 1 FROM school_students other
+              WHERE other.school_id = i.school_id
+                AND other.user_id = ${userId}
+                AND other.id <> i.student_id
+            )
+          )
+        )
+      FOR UPDATE OF i
+    ),
+    locked_student AS MATERIALIZED (
+      SELECT st.school_id, st.id
+      FROM school_students st
+      JOIN candidate c
+        ON c.school_id = st.school_id AND c.student_id = st.id
+      WHERE st.user_id IS NULL OR st.user_id = ${userId}
+      FOR UPDATE OF st
+    ),
+    claimed AS (
+      UPDATE school_invitations i
       SET accepted_at = NOW()
-      WHERE token_hash = ${tokenHash}
-        AND email = ${email}
-        AND accepted_at IS NULL
-        AND expires_at > NOW()
-      RETURNING school_id, role, email
+      FROM candidate c
+      WHERE i.id = c.id
+        AND (c.student_id IS NULL OR EXISTS (
+          SELECT 1 FROM locked_student st
+          WHERE st.school_id = c.school_id AND st.id = c.student_id
+        ))
+      RETURNING i.school_id, i.role, i.email, i.student_id,
+                i.teacher_name, i.teacher_code
     ),
     added AS (
-      INSERT INTO school_members (school_id, user_id, role, email)
-      SELECT school_id, ${userId}, role, email FROM claimed
+      INSERT INTO school_members
+        (school_id, user_id, role, email, display_name, teacher_code)
+      SELECT school_id, ${userId}, role, email, teacher_name, teacher_code FROM claimed
       ON CONFLICT (school_id, user_id)
-      DO UPDATE SET email = COALESCE(school_members.email, EXCLUDED.email)
+      DO UPDATE SET
+        email = COALESCE(school_members.email, EXCLUDED.email),
+        display_name = COALESCE(school_members.display_name, EXCLUDED.display_name),
+        teacher_code = COALESCE(school_members.teacher_code, EXCLUDED.teacher_code)
+        WHERE school_members.role = EXCLUDED.role
       RETURNING school_id, user_id
+    ),
+    linked AS (
+      UPDATE school_students st
+      SET user_id = ${userId}
+      FROM claimed c
+      JOIN added a ON a.school_id = c.school_id
+      WHERE c.student_id IS NOT NULL
+        AND st.school_id = c.school_id
+        AND st.id = c.student_id
+        AND (st.user_id IS NULL OR st.user_id = ${userId})
+      RETURNING st.school_id, st.id
     )
     SELECT claimed.school_id AS "schoolId", claimed.role
     FROM claimed
-    LEFT JOIN added ON added.school_id = claimed.school_id
+    JOIN added ON added.school_id = claimed.school_id
+    WHERE claimed.student_id IS NULL
+      OR EXISTS (
+        SELECT 1 FROM linked
+        WHERE linked.school_id = claimed.school_id
+          AND linked.id = claimed.student_id
+      )
   `;
   return membership ?? null;
 }
