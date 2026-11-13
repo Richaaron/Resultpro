@@ -225,18 +225,21 @@ function App() {
   const role = school?.role || "admin";
   const current = portalData[role];
   const visibleNavigation = navigation.filter(([id]) => role === "admin" || (role === "teacher" && ["overview", "results", "attendance", "classes"].includes(id)) || (role === "student" && ["overview", "results"].includes(id)));
-  const dashboardForCurrentSchool = dashboardData?.schoolId === school?.id ? dashboardData : null;
+  const dashboardForCurrentSchool = dashboardData && dashboardData.schoolId === school?.id ? dashboardData : null;
   const dashboardErrorForCurrentSchool = dashboardError && dashboardError.schoolId === school?.id
     ? dashboardError.message
     : "";
   const dashboardPending = dashboardLoading || (!dashboardForCurrentSchool && !dashboardErrorForCurrentSchool);
-  const invitationsForCurrentSchool = invitationData?.schoolId === school?.id ? invitationData.invitations : null;
+  const invitationsForCurrentSchool = invitationData && invitationData.schoolId === school?.id
+    ? invitationData.invitations
+    : null;
   const invitationErrorForCurrentSchool = invitationError && invitationError.schoolId === school?.id
     ? invitationError.message
     : "";
   const invitationsPending = loadingInvitations || (!invitationsForCurrentSchool && !invitationErrorForCurrentSchool);
   const selectedStudentResult = studentResultData?.sheets.find((sheet) => sheet.id === selectedStudentResultId) || null;
-  const attendanceReportForSelection = attendanceReportData?.schoolId === school?.id
+  const attendanceReportForSelection = attendanceReportData
+    && attendanceReportData.schoolId === school?.id
     && attendanceReportData.classId === attendanceClassId
     && attendanceReportData.from === attendanceReportFrom
     && attendanceReportData.to === attendanceReportTo
