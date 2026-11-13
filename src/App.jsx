@@ -158,6 +158,11 @@ function App() {
   const [loadingAssessments, setLoadingAssessments] = useState(false);
   const [assessmentError, setAssessmentError] = useState("");
   const [assessmentRefresh, setAssessmentRefresh] = useState(0);
+  const [resultSheet, setResultSheet] = useState(null);
+  const [loadingResultSheet, setLoadingResultSheet] = useState(false);
+  const [resultSheetError, setResultSheetError] = useState("");
+  const [resultSheetClassId, setResultSheetClassId] = useState("");
+  const [resultSheetTerm, setResultSheetTerm] = useState("Term 1");
   const [assessmentDetailLoading, setAssessmentDetailLoading] = useState(false);
   const [assessmentDetail, setAssessmentDetail] = useState(null);
   const [assessmentMarks, setAssessmentMarks] = useState([]);
@@ -315,6 +320,39 @@ function App() {
     setAssignmentClassId("");
     setAssignmentSubject("");
   }, [schoolClasses, assignmentClassId]);
+
+  useEffect(() => {
+    if (page !== "results" || role === "student" || loadingClasses) return;
+    if (!schoolClasses.some((item) => item.id === resultSheetClassId)) {
+      setResultSheetClassId(schoolClasses[0]?.id || "");
+    }
+  }, [page, role, loadingClasses, schoolClasses, resultSheetClassId]);
+
+  useEffect(() => {
+    let active = true;
+    if (!school?.id || page !== "results" || role === "student" || !resultSheetClassId) {
+      setResultSheet(null);
+      setLoadingResultSheet(false);
+      return () => { active = false; };
+    }
+
+    setLoadingResultSheet(true);
+    setResultSheetError("");
+    const query = new URLSearchParams({ classId: resultSheetClassId, term: resultSheetTerm });
+    apiRequest(`/api/schools/${school.id}/result-sheet?${query}`)
+      .then((data) => {
+        if (active) setResultSheet(data);
+      })
+      .catch((requestError) => {
+        if (!active) return;
+        setResultSheet(null);
+        setResultSheetError(requestError.message || "Could not load the result sheet.");
+      })
+      .finally(() => {
+        if (active) setLoadingResultSheet(false);
+      });
+    return () => { active = false; };
+  }, [school?.id, page, role, resultSheetClassId, resultSheetTerm, assessmentRefresh]);
 
   useEffect(() => {
     let active = true;
@@ -776,6 +814,46 @@ function App() {
     setToast("Your results have been exported.");
   }
 
+  function exportResultSheet() {
+    if (!resultSheet?.rows.length) return;
+    const csvCell = (value) => {
+      const text = String(value ?? "");
+      const safeText = /^[\s]*[=+\-@]/.test(text) ? `'${text}` : text;
+      return `"${safeText.replaceAll('"', '""')}"`;
+    };
+    const rows = [
+      ["School", school.name],
+      ["Class", `${resultSheet.schoolClass.grade} ${resultSheet.schoolClass.section}`],
+      ["Academic year", resultSheet.schoolClass.academicYear],
+      ["Term", resultSheet.term],
+      ["Calculation", "Sum of approved marks / sum of possible marks"],
+      [],
+      ["Student", "Admission number", "Subject", "Approved marks", "Possible marks", "Percentage", "Approved assessments"],
+      ...resultSheet.rows.map((row) => [
+        `${row.firstName} ${row.lastName}`,
+        row.admissionNumber,
+        row.subject,
+        row.earnedPoints ?? "",
+        row.possiblePoints ?? "",
+        row.percentage == null ? "" : `${row.percentage}%`,
+        row.assessmentCount,
+      ]),
+    ];
+    const csv = rows.map((row) => row.map(csvCell).join(",")).join("\r\n");
+    const link = document.createElement("a");
+    const objectUrl = URL.createObjectURL(new Blob([`\uFEFF${csv}`], { type: "text/csv;charset=utf-8" }));
+    link.href = objectUrl;
+    const className = `${resultSheet.schoolClass.grade}-${resultSheet.schoolClass.section}`.replace(/[^a-z0-9-]+/gi, "-");
+    link.download = `aster-result-sheet-${className}-${resultSheet.term.toLowerCase().replace(" ", "-")}.csv`;
+    link.click();
+    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
+    setToast("The result sheet has been exported.");
+  }
+
+  function printResultSheet() {
+    if (resultSheet?.rows.length) window.print();
+  }
+
   function updateForm(field, value) {
     setForm((previous) => ({ ...previous, [field]: value }));
   }
@@ -826,7 +904,7 @@ function App() {
         <div className={`page-content ${page === "classes" ? "curriculum-page" : page === "students" ? "students-page" : page === "teachers" ? "teachers-page" : page === "results" ? "results-page" : ""}`}>
           {!school ? <section className="panel onboarding-panel"><span className="auth-kicker">WELCOME TO ASTER</span><h1>Create your school workspace</h1><p className="page-subtitle">Your account is ready. Set up your school profile to begin; only people you invite can join its portal.</p><button className="button button-primary" type="button" onClick={showSetup}>＋ Create school profile</button></section> : <>
           <section className="welcome-row">
-            <div><div className="eyebrow"><span className="live-dot" /> {currentDateLabel} <span className="eyebrow-divider">·</span> SCHOOL WORKSPACE</div><h1>{page === "overview" ? role === "admin" ? `Good morning, ${userName}` : current.title : page === "results" ? role === "student" ? "Results, at a glance" : "Assessments & marks" : page === "profile" ? "Your school, your story." : page === "classes" ? "Classes & subjects" : page === "students" ? "Student register" : `${page[0].toUpperCase()}${page.slice(1)}`} <span className="wave">✳</span></h1><p className="page-subtitle">{page === "overview" ? current.subtitle : page === "results" && role !== "student" ? role === "admin" ? "Set assessments, review teacher submissions, and track mark completion." : "Enter marks for your assigned classes and submit them for administrator review." : page === "classes" ? "Configure subjects and organise your classes." : page === "students" ? "Enrol students and keep their school records up to date." : `Keep your ${page} organised for the term ahead.`}</p></div>
+            <div><div className="eyebrow"><span className="live-dot" /> {currentDateLabel} <span className="eyebrow-divider">·</span> SCHOOL WORKSPACE</div><h1>{page === "overview" ? role === "admin" ? `Good morning, ${userName}` : current.title : page === "results" ? role === "student" ? "Results, at a glance" : "Result sheet & assessments" : page === "profile" ? "Your school, your story." : page === "classes" ? "Classes & subjects" : page === "students" ? "Student register" : `${page[0].toUpperCase()}${page.slice(1)}`} <span className="wave">✳</span></h1><p className="page-subtitle">{page === "overview" ? current.subtitle : page === "results" && role !== "student" ? role === "admin" ? "Calculate term percentages from approved marks, create assessments, and review submissions." : "View calculated results and enter marks for your assigned classes." : page === "classes" ? "Configure subjects and organise your classes." : page === "students" ? "Enrol students and keep their school records up to date." : `Keep your ${page} organised for the term ahead.`}</p></div>
             {page !== "classes" && page !== "students" && page !== "teachers" && page !== "results" && <div className="welcome-actions"><button className="button button-secondary" type="button" onClick={async () => { try { await navigator.clipboard.writeText(`${window.location.origin}/school/${school.slug}`); setToast("Your school link has been copied."); } catch { setToast("Could not copy the school link. Please try again."); } }}>↗ Share school link</button><button className="button button-primary" type="button" onClick={() => page === "profile" ? showSetup() : page === "access" ? document.getElementById("inviteEmail")?.focus() : setToast(`${role === "teacher" ? "Enter marks" : role === "student" ? "View your results" : "Add a student"} — student records are not connected yet.`)}>＋ {page === "access" ? "Invite a member" : role === "teacher" ? "Enter marks" : role === "student" ? "View my results" : "Add a student"}</button></div>}
           </section>
 
@@ -876,6 +954,34 @@ function App() {
           </section>}
 
           {page === "results" && role !== "student" && <section className="assessment-workspace">
+            <section className="panel result-sheet-panel">
+              <div className="panel-heading result-sheet-heading">
+                <div><h2>Term result sheet</h2><p>Only administrator-approved assessments are included. No letter grades or class positions are inferred.</p></div>
+                <div className="result-sheet-actions"><button className="button button-secondary button-small" type="button" onClick={printResultSheet} disabled={loadingResultSheet || !resultSheet?.rows.length}>Print</button><button className="button button-secondary button-small" type="button" onClick={exportResultSheet} disabled={loadingResultSheet || !resultSheet?.rows.length}>Export CSV</button></div>
+              </div>
+              {resultSheet?.schoolClass && <div className="result-sheet-print-heading"><strong>{school.name}</strong><span>{resultSheet.schoolClass.grade} {resultSheet.schoolClass.section} · {resultSheet.schoolClass.academicYear} · {resultSheet.term}</span><small>Calculated from administrator-approved assessments only</small></div>}
+              <div className="result-sheet-filters">
+                <label><span>Class</span><select className="text-input" value={resultSheetClassId} onChange={(event) => setResultSheetClassId(event.target.value)} disabled={loadingClasses || !schoolClasses.length}><option value="">Select a class</option>{schoolClasses.map((item) => <option key={item.id} value={item.id}>{item.grade} {item.section} · {item.academicYear}</option>)}</select></label>
+                <label><span>Term</span><select className="text-input" value={resultSheetTerm} onChange={(event) => setResultSheetTerm(event.target.value)}><option>Term 1</option><option>Term 2</option><option>Term 3</option></select></label>
+                {resultSheet?.schoolClass && <span className="result-sheet-summary">{resultSheet.rows.filter((row) => row.percentage !== null).length} graded subject entries</span>}
+              </div>
+              <p className="result-calculation-note">Percentage = total points earned across approved assessments ÷ total possible points × 100. Subjects without approved assessments remain ungraded; percentages can change as more assessments are approved.</p>
+              {resultSheetError && <p className="form-error" role="alert">{resultSheetError}</p>}
+              {loadingResultSheet ? <p className="empty-search">Calculating the result sheet…</p>
+                : !resultSheetClassId ? <p className="empty-search">{loadingClasses ? "Loading classes…" : "Create a class and assign a teacher to its subjects to view a result sheet."}</p>
+                  : resultSheet?.rows.length ? <div className="table-scroll"><table className="result-sheet-table"><thead><tr><th>STUDENT</th><th>ADMISSION NO.</th><th>SUBJECT</th><th>APPROVED MARKS</th><th>ASSESSMENTS</th><th>TERM PERCENTAGE</th></tr></thead><tbody>{resultSheet.rows.map((row) => <tr key={`${row.studentId}-${row.subject}`}>
+                    <td><strong>{row.firstName} {row.lastName}</strong></td>
+                    <td>{row.admissionNumber}</td>
+                    <td>{row.subject}</td>
+                    <td>{row.percentage === null ? "—" : `${Number(row.earnedPoints).toLocaleString("en-NG", { maximumFractionDigits: 2 })} / ${Number(row.possiblePoints).toLocaleString("en-NG", { maximumFractionDigits: 2 })}`}</td>
+                    <td>{row.assessmentCount}</td>
+                    <td><strong className={row.percentage === null ? "ungraded-mark" : "result-percentage"}>{row.percentage === null ? "Not graded" : `${row.percentage.toFixed(2)}%`}</strong></td>
+                  </tr>)}</tbody></table></div>
+                    : resultSheet?.schoolClass.studentCount === 0
+                      ? <p className="empty-search">This class has no enrolled students for a result sheet yet.</p>
+                      : <p className="empty-search">No assigned subjects are available for this class, or no students have results from approved assessments in {resultSheetTerm}. Assign teachers and approve mark submissions first.</p>}
+            </section>
+
             {role === "admin" && <section className="panel assessment-form-panel">
               <div className="panel-heading"><div><h2>Create an assessment</h2><p>Assessments can be created for subjects with an assigned teacher.</p></div></div>
               {loadingAssignments || loadingClasses ? <p className="empty-search">Loading assigned classes…</p> : assessmentAssignableClasses.length === 0 ? <p className="empty-search">{schoolClasses.length === 0 ? "Create a class and save its subjects first." : "Assign a teacher to a class subject first."} <button className="inline-action" type="button" onClick={() => setPage(schoolClasses.length === 0 ? "classes" : "teachers")}>Go to {schoolClasses.length === 0 ? "Classes & subjects" : "Teachers"} →</button></p> : <form className="assessment-create-form" onSubmit={createAssessment}>

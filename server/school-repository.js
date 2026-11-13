@@ -1,6 +1,7 @@
 import { neon } from "@neondatabase/serverless";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { createSchoolSlug } from "./school-input.js";
+import { calculatePointsPercentage } from "../shared/school-data.js";
 
 let initializedDatabaseUrl;
 let initializePromise;
@@ -317,6 +318,81 @@ export async function listSchoolClasses(schoolId, academicYear, teacherUserId = 
     GROUP BY c.id
     ORDER BY c.grade, c.section
   `;
+}
+
+export async function listSchoolResultSheet(schoolId, classId, term, teacherUserId = null) {
+  const sql = await getReadyDatabase();
+  const rows = await sql`
+    WITH selected_class AS MATERIALIZED (
+      SELECT id, grade, section, academic_year
+      FROM school_classes
+      WHERE school_id = ${schoolId} AND id = ${classId}
+    ),
+    roster AS MATERIALIZED (
+      SELECT st.id, st.admission_number, st.first_name, st.last_name
+      FROM school_students st
+      JOIN selected_class c ON c.id = st.class_id
+      WHERE st.school_id = ${schoolId}
+        AND st.is_active
+      UNION
+      SELECT st.id, st.admission_number, st.first_name, st.last_name
+      FROM school_assessment_marks historical_mark
+      JOIN school_assessments historical_assessment
+        ON historical_assessment.school_id = historical_mark.school_id
+        AND historical_assessment.id = historical_mark.assessment_id
+      JOIN school_students st
+        ON st.school_id = historical_mark.school_id AND st.id = historical_mark.student_id
+      WHERE historical_mark.school_id = ${schoolId}
+        AND historical_assessment.class_id = ${classId}
+        AND historical_assessment.term = ${term}
+        AND historical_assessment.status = 'approved'
+    ),
+    subjects AS MATERIALIZED (
+      SELECT cs.subject_name,
+             tm.email AS teacher_email
+      FROM selected_class c
+      JOIN school_class_subjects cs ON cs.class_id = c.id
+      LEFT JOIN school_teaching_assignments ta
+        ON ta.school_id = ${schoolId}
+        AND ta.class_id = c.id
+        AND ta.subject_name = cs.subject_name
+      LEFT JOIN school_members tm
+        ON tm.school_id = ta.school_id AND tm.user_id = ta.teacher_user_id
+      WHERE (${teacherUserId}::text IS NULL OR ta.teacher_user_id = ${teacherUserId})
+    ),
+    approved_totals AS (
+      SELECT m.student_id, a.subject_name,
+             SUM(m.score)::float8 AS "earnedPoints",
+             SUM(a.max_score)::float8 AS "possiblePoints",
+             COUNT(*)::int AS "assessmentCount"
+      FROM school_assessments a
+      JOIN school_assessment_marks m
+        ON m.school_id = a.school_id AND m.assessment_id = a.id
+      WHERE a.school_id = ${schoolId}
+        AND a.class_id = ${classId}
+        AND a.term = ${term}
+        AND a.status = 'approved'
+        AND m.score IS NOT NULL
+      GROUP BY m.student_id, a.subject_name
+    )
+    SELECT c.id AS "classId", c.grade, c.section,
+           c.academic_year AS "academicYear", ${term} AS term,
+           r.id AS "studentId", r.admission_number AS "admissionNumber",
+           r.first_name AS "firstName", r.last_name AS "lastName",
+           s.subject_name AS subject, s.teacher_email AS "teacherEmail",
+           totals."earnedPoints", totals."possiblePoints",
+           COALESCE(totals."assessmentCount", 0)::int AS "assessmentCount"
+    FROM selected_class c
+    CROSS JOIN roster r
+    CROSS JOIN subjects s
+    LEFT JOIN approved_totals totals
+      ON totals.student_id = r.id AND totals.subject_name = s.subject_name
+    ORDER BY s.subject_name, r.last_name, r.first_name, r.admission_number
+  `;
+  return rows.map((row) => ({
+    ...row,
+    percentage: calculatePointsPercentage(row.earnedPoints, row.possiblePoints),
+  }));
 }
 
 export async function listSchoolTeachers(schoolId) {

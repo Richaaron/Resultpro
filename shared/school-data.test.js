@@ -6,6 +6,7 @@ import {
   normalizeAssessmentInput,
   normalizeAssessmentMarksInput,
   normalizeAssessmentReviewInput,
+  calculatePointsPercentage,
   normalizeTeachingAssignmentInput,
 } from "./school-data.js";
 
@@ -160,4 +161,14 @@ test("validates complete mark payload shapes, duplicate students, and review out
     decision: "approved",
     note: null,
   });
+});
+
+test("calculates a points-weighted percentage from approved marks", () => {
+  assert.equal(calculatePointsPercentage(45, 50), 90);
+  assert.equal(calculatePointsPercentage(75, 100), 75);
+  assert.equal(calculatePointsPercentage(2, 3), 66.67);
+  assert.equal(calculatePointsPercentage(0, 100), 0);
+  assert.equal(calculatePointsPercentage(0, 0), null);
+  assert.equal(calculatePointsPercentage(101, 100), null);
+  assert.equal(calculatePointsPercentage("unknown", 100), null);
 });

@@ -309,6 +309,19 @@ select.text-input { color: #58645a; }
 .teacher-assignment-cards { margin-top: 18px; }
 .teacher-assignment-cards .class-card > p { color: #5e715f; font-size: 10px; }
 .assessment-workspace { display: grid; gap: 14px; }
+.result-sheet-panel { padding: 20px; }
+.result-sheet-heading { align-items: center; }
+.result-sheet-actions { display: flex; gap: 7px; }
+.result-sheet-print-heading { display: none; }
+.result-sheet-filters { display: flex; flex-wrap: wrap; align-items: end; gap: 10px; margin-top: 16px; }
+.result-sheet-filters label { display: grid; min-width: 190px; gap: 5px; color: #637065; font-size: 9px; font-weight: 600; }
+.result-sheet-filters .text-input { height: 35px; font-size: 10px; }
+.result-sheet-summary { margin-left: auto; padding-bottom: 8px; color: #607664; font-size: 9px; font-weight: 600; }
+.result-calculation-note { margin: 13px 0 7px; color: #8b948d; font-size: 9px; line-height: 1.5; }
+.result-sheet-table td { vertical-align: middle; }
+.result-sheet-table td > strong { color: #4a574d; font-size: 9px; font-weight: 600; }
+.result-percentage { color: #477b59 !important; }
+.ungraded-mark { color: #949c95 !important; font-weight: 500 !important; }
 .assessment-form-panel, .assessment-list-panel, .assessment-detail-panel { padding: 20px; }
 .assessment-create-form { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); align-items: end; gap: 11px; margin-top: 17px; }
 .assessment-create-form label, .assessment-review-actions label { display: grid; gap: 5px; color: #637065; font-size: 9px; font-weight: 600; }
@@ -382,5 +395,21 @@ select.text-input { color: #58645a; }
 @media (max-width: 390px) {
   .topbar-actions { gap: 4px; }.breadcrumb { gap: 6px; font-size: 10px; }.notification-button { width: 26px; }.topbar-avatar { width: 27px; height: 27px; }
   .welcome-actions .button { gap: 5px; }.welcome-actions .button svg { width: 12px; }.field-row { grid-template-columns: 1fr; gap: 0; }.page-footer > span:first-child { max-width: 155px; }
-  .curriculum-grid, .class-list, .class-create-form, .student-create-form, .assignment-form, .assessment-create-form { grid-template-columns: 1fr; }.teacher-assignment-panel, .assessment-form-panel, .assessment-list-panel, .assessment-detail-panel { padding: 15px; }.teacher-assignment-panel > .panel-heading { align-items: flex-start; flex-direction: column; }.assessment-list-panel > .panel-heading { align-items: flex-start; flex-direction: column; }.assessment-actions { align-items: stretch; flex-direction: column; }.assessment-actions .field-hint { margin-right: 0; }.assessment-review-actions > div { align-items: stretch; flex-direction: column; }.student-filters { align-items: stretch; flex-direction: column; }.student-filters .text-input { width: 100%; }.student-register-panel { padding-right: 11px; padding-left: 11px; }.student-register-panel .panel-heading { align-items: flex-start; flex-direction: column; }
+  .curriculum-grid, .class-list, .class-create-form, .student-create-form, .assignment-form, .assessment-create-form { grid-template-columns: 1fr; }.teacher-assignment-panel, .result-sheet-panel, .assessment-form-panel, .assessment-list-panel, .assessment-detail-panel { padding: 15px; }.teacher-assignment-panel > .panel-heading, .result-sheet-heading, .assessment-list-panel > .panel-heading { align-items: flex-start; flex-direction: column; }.result-sheet-filters { align-items: stretch; flex-direction: column; }.result-sheet-filters label { min-width: 0; }.result-sheet-summary { margin-left: 0; }.assessment-actions { align-items: stretch; flex-direction: column; }.assessment-actions .field-hint { margin-right: 0; }.assessment-review-actions > div { align-items: stretch; flex-direction: column; }.student-filters { align-items: stretch; flex-direction: column; }.student-filters .text-input { width: 100%; }.student-register-panel { padding-right: 11px; padding-left: 11px; }.student-register-panel .panel-heading { align-items: flex-start; flex-direction: column; }
+}
+@media print {
+  body * { visibility: hidden !important; }
+  .result-sheet-panel, .result-sheet-panel * { visibility: visible !important; }
+  .result-sheet-panel { position: absolute; inset: 0; width: 100%; padding: 0; border: 0; box-shadow: none; }
+  .result-sheet-print-heading { display: grid; gap: 5px; margin: 18px 0 12px; color: #26352a; }
+  .result-sheet-print-heading strong { font-size: 18px; }
+  .result-sheet-print-heading span { font-size: 12px; }
+  .result-sheet-print-heading small { color: #667269; font-size: 9px; }
+  .result-sheet-actions, .result-sheet-filters, .result-sheet-panel .panel-heading p { display: none !important; }
+  .result-sheet-panel .panel-heading { display: block; }
+  .result-calculation-note { color: #526055; }
+  .result-sheet-panel .table-scroll { overflow: visible; }
+  .result-sheet-table { width: 100%; white-space: normal; }
+  .result-sheet-table th, .result-sheet-table td { padding: 7px; border: 1px solid #d5dcd5; color: #26352a; font-size: 9px; }
+  .result-sheet-table thead { background: #edf2eb; }
 }

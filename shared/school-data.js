@@ -146,3 +146,12 @@ export function normalizeAssessmentReviewInput(body = {}) {
   }
   return { decision, note: note || null };
 }
+
+export function calculatePointsPercentage(earnedPoints, possiblePoints) {
+  const earned = Number(earnedPoints);
+  const possible = Number(possiblePoints);
+  if (!Number.isFinite(earned) || !Number.isFinite(possible) || earned < 0 || possible <= 0 || earned > possible) {
+    return null;
+  }
+  return Number(((earned / possible) * 100).toFixed(2));
+}

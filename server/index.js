@@ -16,6 +16,7 @@ import {
   listSchoolStudents,
   listSchoolSubjects,
   listSchoolAssessments,
+  listSchoolResultSheet,
   listTeachingAssignments,
   getSchoolAssessment,
   removeTeachingAssignment,
@@ -206,6 +207,33 @@ app.delete("/api/schools/:schoolId/teaching-assignments/:assignmentId", requireA
     const removed = await removeTeachingAssignment(schoolId, assignmentId);
     if (!removed) return response.status(404).json({ error: "Teacher assignment not found." });
     return response.status(204).end();
+  } catch (error) {
+    return handleDatabaseError(error, response);
+  }
+});
+
+app.get("/api/schools/:schoolId/result-sheet", requireAuth, async (request, response) => {
+  const { schoolId } = request.params;
+  const classId = typeof request.query.classId === "string" ? request.query.classId : "";
+  const term = typeof request.query.term === "string" ? request.query.term : "";
+  if (!isUuid(schoolId) || !isUuid(classId) || !["Term 1", "Term 2", "Term 3"].includes(term)) {
+    return response.status(400).json({ error: "Select a valid class and school term." });
+  }
+
+  try {
+    const membershipRole = await getSchoolRole(schoolId, request.auth.userId);
+    if (!membershipRole) return response.status(404).json({ error: "School not found." });
+    if (membershipRole === "student") {
+      return response.status(403).json({ error: "Result sheets are not available to student accounts yet." });
+    }
+
+    const teacherUserId = membershipRole === "teacher" ? request.auth.userId : null;
+    const classes = await listSchoolClasses(schoolId, null, teacherUserId);
+    const schoolClass = classes.find((item) => item.id === classId);
+    if (!schoolClass) return response.status(404).json({ error: "Class not found or not assigned to this teacher." });
+
+    const rows = await listSchoolResultSheet(schoolId, classId, term, teacherUserId);
+    return response.json({ schoolClass, term, rows });
   } catch (error) {
     return handleDatabaseError(error, response);
   }
