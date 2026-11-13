@@ -7,6 +7,7 @@ import {
   normalizeAssessmentMarksInput,
   normalizeAssessmentReviewInput,
   calculatePointsPercentage,
+  summarizePublishedResultRows,
   normalizeTeachingAssignmentInput,
 } from "./school-data.js";
 
@@ -171,4 +172,28 @@ test("calculates a points-weighted percentage from approved marks", () => {
   assert.equal(calculatePointsPercentage(0, 0), null);
   assert.equal(calculatePointsPercentage(101, 100), null);
   assert.equal(calculatePointsPercentage("unknown", 100), null);
+});
+
+test("summarizes a published report using weighted approved points only", () => {
+  assert.deepEqual(summarizePublishedResultRows([
+    { earnedPoints: 45, possiblePoints: 50, assessmentCount: 2, percentage: 90 },
+    { earnedPoints: 30, possiblePoints: 50, assessmentCount: 1, percentage: 60 },
+    { earnedPoints: null, possiblePoints: null, assessmentCount: 0, percentage: null },
+  ]), {
+    subjectCount: 3,
+    gradedSubjectCount: 2,
+    assessmentCount: 3,
+    earnedPoints: 75,
+    possiblePoints: 100,
+    averagePercentage: 75,
+  });
+  assert.deepEqual(summarizePublishedResultRows([]), {
+    subjectCount: 0,
+    gradedSubjectCount: 0,
+    assessmentCount: 0,
+    earnedPoints: 0,
+    possiblePoints: 0,
+    averagePercentage: null,
+  });
+  assert.equal(summarizePublishedResultRows(null).averagePercentage, null);
 });

@@ -155,3 +155,43 @@ export function calculatePointsPercentage(earnedPoints, possiblePoints) {
   }
   return Number(((earned / possible) * 100).toFixed(2));
 }
+
+export function summarizePublishedResultRows(rows) {
+  const summary = {
+    subjectCount: Array.isArray(rows) ? rows.length : 0,
+    gradedSubjectCount: 0,
+    assessmentCount: 0,
+    earnedPoints: 0,
+    possiblePoints: 0,
+  };
+  if (!Array.isArray(rows)) return { ...summary, averagePercentage: null };
+
+  for (const row of rows) {
+    const earnedValue = row?.earnedPoints;
+    const possibleValue = row?.possiblePoints;
+    const hasPoints = earnedValue != null
+      && possibleValue != null
+      && String(earnedValue).trim() !== ""
+      && String(possibleValue).trim() !== "";
+    const earned = Number(earnedValue);
+    const possible = Number(possibleValue);
+    const percentage = hasPoints ? calculatePointsPercentage(earned, possible) : null;
+    if (percentage !== null) {
+      summary.gradedSubjectCount += 1;
+      summary.earnedPoints += earned;
+      summary.possiblePoints += possible;
+    }
+
+    const assessmentCount = Number(row?.assessmentCount);
+    if (Number.isInteger(assessmentCount) && assessmentCount > 0) {
+      summary.assessmentCount += assessmentCount;
+    }
+  }
+
+  summary.earnedPoints = Number(summary.earnedPoints.toFixed(2));
+  summary.possiblePoints = Number(summary.possiblePoints.toFixed(2));
+  return {
+    ...summary,
+    averagePercentage: calculatePointsPercentage(summary.earnedPoints, summary.possiblePoints),
+  };
+}

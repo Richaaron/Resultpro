@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import AuthScreen from "./AuthScreen.jsx";
 import { authClient, pendingSchoolNameKey } from "./auth.js";
 import { curriculumByGrade, curriculumGrades } from "../shared/curriculum.js";
+import { summarizePublishedResultRows } from "../shared/school-data.js";
 
 const navigation = [
   ["overview", "Overview", "▦"],
@@ -183,6 +184,8 @@ function App() {
     ? invitationError.message
     : "";
   const invitationsPending = loadingInvitations || (!invitationsForCurrentSchool && !invitationErrorForCurrentSchool);
+  const selectedStudentResult = studentResultData?.sheets.find((sheet) => sheet.id === selectedStudentResultId) || null;
+  const selectedStudentResultSummary = summarizePublishedResultRows(selectedStudentResult?.rows);
   const dashboardSummary = dashboardForCurrentSchool?.summary;
   const dashboardAverage = dashboardSummary?.averagePercentage == null
     ? "—"
@@ -1122,6 +1125,10 @@ function App() {
     if (resultSheet?.rows.length) window.print();
   }
 
+  function printStudentReport() {
+    if (selectedStudentResult?.rows.length) window.print();
+  }
+
   function updateForm(field, value) {
     setForm((previous) => ({ ...previous, [field]: value }));
   }
@@ -1251,15 +1258,37 @@ function App() {
                     : <>
                       <div className="result-sheet-filters">
                         <label><span>Published result sheet</span><select className="text-input" value={selectedStudentResultId} onChange={(event) => setSelectedStudentResultId(event.target.value)}><option value="">Select a result sheet</option>{studentResultData.sheets.map((sheet) => <option key={sheet.id} value={sheet.id}>{sheet.grade} {sheet.section} · {sheet.academicYear} · {sheet.term}</option>)}</select></label>
-                        {studentResultData.sheets.find((sheet) => sheet.id === selectedStudentResultId)?.publishedAt && <span className="result-sheet-summary">Published {new Date(studentResultData.sheets.find((sheet) => sheet.id === selectedStudentResultId).publishedAt).toLocaleDateString("en-NG")}</span>}
+                        {selectedStudentResult?.publishedAt && <span className="result-sheet-summary">Published {new Date(selectedStudentResult.publishedAt).toLocaleDateString("en-NG")}</span>}
+                        <button className="button button-secondary button-small report-print-button" type="button" onClick={printStudentReport} disabled={!selectedStudentResult?.rows.length}>Print report card</button>
                       </div>
-                      {studentResultData.sheets.find((sheet) => sheet.id === selectedStudentResultId)?.rows.length
-                        ? <div className="table-scroll"><table className="result-sheet-table"><thead><tr><th>SUBJECT</th><th>APPROVED MARKS</th><th>ASSESSMENTS</th><th>TERM PERCENTAGE</th></tr></thead><tbody>{studentResultData.sheets.find((sheet) => sheet.id === selectedStudentResultId).rows.map((row) => <tr key={row.subject}>
-                          <td><strong>{row.subject}</strong></td>
-                          <td>{row.percentage == null ? "—" : `${Number(row.earnedPoints).toLocaleString("en-NG", { maximumFractionDigits: 2 })} / ${Number(row.possiblePoints).toLocaleString("en-NG", { maximumFractionDigits: 2 })}`}</td>
-                          <td>{row.assessmentCount}</td>
-                          <td><strong className={row.percentage == null ? "ungraded-mark" : "result-percentage"}>{row.percentage == null ? "Not graded" : `${Number(row.percentage).toFixed(2)}%`}</strong></td>
-                        </tr>)}</tbody></table></div>
+                      {selectedStudentResult?.rows.length
+                        ? <div className="student-report-card">
+                          <header className="student-report-print-heading">
+                            <strong>{school.name}</strong>
+                            <h2>Term report card</h2>
+                            <div className="student-report-identity">
+                              <span><b>Student</b>{selectedStudentResult.rows[0].firstName} {selectedStudentResult.rows[0].lastName}</span>
+                              <span><b>Admission no.</b>{selectedStudentResult.rows[0].admissionNumber}</span>
+                              <span><b>Class</b>{selectedStudentResult.grade} {selectedStudentResult.section}</span>
+                              <span><b>Academic year</b>{selectedStudentResult.academicYear}</span>
+                              <span><b>Term</b>{selectedStudentResult.term}</span>
+                              <span><b>Published</b>{new Date(selectedStudentResult.publishedAt).toLocaleDateString("en-NG")}</span>
+                            </div>
+                          </header>
+                          <div className="student-report-summary" aria-label="Report summary">
+                            <div><small>Overall average</small><strong>{selectedStudentResultSummary.averagePercentage == null ? "—" : `${selectedStudentResultSummary.averagePercentage.toFixed(2)}%`}</strong></div>
+                            <div><small>Total points</small><strong>{selectedStudentResultSummary.earnedPoints.toLocaleString("en-NG")} / {selectedStudentResultSummary.possiblePoints.toLocaleString("en-NG")}</strong></div>
+                            <div><small>Graded subjects</small><strong>{selectedStudentResultSummary.gradedSubjectCount} / {selectedStudentResultSummary.subjectCount}</strong></div>
+                            <div><small>Approved assessments</small><strong>{selectedStudentResultSummary.assessmentCount}</strong></div>
+                          </div>
+                          <div className="table-scroll"><table className="result-sheet-table"><thead><tr><th>SUBJECT</th><th>APPROVED MARKS</th><th>ASSESSMENTS</th><th>TERM PERCENTAGE</th></tr></thead><tbody>{selectedStudentResult.rows.map((row) => <tr key={row.subject}>
+                            <td><strong>{row.subject}</strong></td>
+                            <td>{row.percentage == null ? "—" : `${Number(row.earnedPoints).toLocaleString("en-NG", { maximumFractionDigits: 2 })} / ${Number(row.possiblePoints).toLocaleString("en-NG", { maximumFractionDigits: 2 })}`}</td>
+                            <td>{row.assessmentCount}</td>
+                            <td><strong className={row.percentage == null ? "ungraded-mark" : "result-percentage"}>{row.percentage == null ? "Not graded" : `${Number(row.percentage).toFixed(2)}%`}</strong></td>
+                          </tr>)}</tbody></table></div>
+                          <p className="student-report-note">This report reflects the school’s published snapshot. Percentages are calculated from approved marks. No letter grade or class position has been assigned.</p>
+                        </div>
                         : <p className="empty-search">Select one of your published result sheets to view its subjects.</p>}
                     </>}
           </section>}
