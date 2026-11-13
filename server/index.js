@@ -10,6 +10,7 @@ import {
   createSchoolStudent,
   deleteSchoolClass,
   getSchoolDashboard,
+  getSchoolClassAttendance,
   getSchoolRole,
   listSchoolInvitations,
   getSchoolPublishedResultSheet,
@@ -30,6 +31,7 @@ import {
   replaceSchoolSubjects,
   reviewSchoolAssessment,
   saveSchoolAssessmentMarks,
+  saveSchoolClassAttendance,
   saveTeachingAssignment,
   setSchoolStudentActive,
   submitSchoolAssessment,
@@ -42,6 +44,8 @@ import {
   normalizeAssessmentInput,
   normalizeAssessmentMarksInput,
   normalizeAssessmentReviewInput,
+  normalizeAttendanceInput,
+  isValidAttendanceDate,
   normalizeStudentInput,
   normalizeTeachingAssignmentInput,
 } from "../shared/school-data.js";
@@ -183,6 +187,63 @@ app.get("/api/schools/:schoolId/teaching-assignments", requireAuth, async (reque
       isAdmin ? listSchoolTeachers(schoolId) : [],
     ]);
     return response.json({ assignments, teachers });
+  } catch (error) {
+    return handleDatabaseError(error, response);
+  }
+});
+
+app.get("/api/schools/:schoolId/attendance", requireAuth, async (request, response) => {
+  const { schoolId } = request.params;
+  const classId = typeof request.query.classId === "string" ? request.query.classId : "";
+  const date = typeof request.query.date === "string" ? request.query.date : "";
+  if (!isUuid(schoolId) || !isUuid(classId) || !isValidAttendanceDate(date)) {
+    return response.status(400).json({ error: "Select a valid class and attendance date." });
+  }
+
+  try {
+    const membershipRole = await getSchoolRole(schoolId, request.auth.userId);
+    if (!membershipRole) return response.status(404).json({ error: "School not found." });
+    if (!["admin", "teacher"].includes(membershipRole)) {
+      return response.status(403).json({ error: "Attendance is available to school administrators and teachers." });
+    }
+    const teacherUserId = membershipRole === "teacher" ? request.auth.userId : null;
+    const attendance = await getSchoolClassAttendance(schoolId, classId, date, teacherUserId);
+    if (!attendance) return response.status(404).json({ error: "Class not found or not assigned to this teacher." });
+    return response.json({ attendance });
+  } catch (error) {
+    return handleDatabaseError(error, response);
+  }
+});
+
+app.put("/api/schools/:schoolId/attendance", requireAuth, async (request, response) => {
+  const { schoolId } = request.params;
+  const attendance = normalizeAttendanceInput(request.body);
+  if (!isUuid(schoolId) || !attendance) {
+    return response.status(400).json({ error: "Enter a valid class, date, and attendance status for every active student." });
+  }
+
+  try {
+    const membershipRole = await getSchoolRole(schoolId, request.auth.userId);
+    if (!membershipRole) return response.status(404).json({ error: "School not found." });
+    if (!["admin", "teacher"].includes(membershipRole)) {
+      return response.status(403).json({ error: "Only school administrators and teachers can record attendance." });
+    }
+    const teacherUserId = membershipRole === "teacher" ? request.auth.userId : null;
+    const result = await saveSchoolClassAttendance(
+      schoolId,
+      attendance.classId,
+      attendance.date,
+      request.auth.userId,
+      attendance.marks,
+      teacherUserId,
+    );
+    if (result.error === "class") {
+      return response.status(404).json({ error: "Class not found or not assigned to this teacher." });
+    }
+    if (result.error === "roster") {
+      return response.status(409).json({ error: "The active class roster changed. Reload attendance and try again." });
+    }
+    return response.json({ savedCount: result.savedCount });
   } catch (error) {
     return handleDatabaseError(error, response);
   }

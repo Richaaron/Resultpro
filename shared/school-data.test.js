@@ -6,6 +6,8 @@ import {
   normalizeAssessmentInput,
   normalizeAssessmentMarksInput,
   normalizeAssessmentReviewInput,
+  normalizeAttendanceInput,
+  isValidAttendanceDate,
   calculatePointsPercentage,
   summarizePublishedResultRows,
   groupPublishedResultRowsByStudent,
@@ -81,6 +83,37 @@ test("validates the identifiers and subject for a teaching assignment", () => {
     teacherUserId: "",
     subject: "Mathematics",
   }), null);
+});
+
+test("validates complete daily attendance mark payloads", () => {
+  const classId = "123e4567-e89b-42d3-a456-426614174000";
+  const studentId = "123e4567-e89b-42d3-a456-426614174001";
+  assert.deepEqual(normalizeAttendanceInput({
+    classId,
+    date: "2026-11-13",
+    marks: [{ studentId, status: "present" }],
+  }), {
+    classId,
+    date: "2026-11-13",
+    marks: [{ studentId, status: "present" }],
+  });
+  assert.equal(normalizeAttendanceInput({
+    classId,
+    date: "2026-02-30",
+    marks: [{ studentId, status: "present" }],
+  }), null);
+  assert.equal(normalizeAttendanceInput({
+    classId,
+    date: "2026-11-13",
+    marks: [{ studentId, status: "unknown" }],
+  }), null);
+  assert.equal(normalizeAttendanceInput({
+    classId,
+    date: "2026-11-13",
+    marks: [{ studentId, status: "present" }, { studentId, status: "absent" }],
+  }), null);
+  assert.equal(isValidAttendanceDate("2026-02-30"), false);
+  assert.equal(isValidAttendanceDate("2026-11-13"), true);
 });
 
 test("validates assessment details and score bounds", () => {

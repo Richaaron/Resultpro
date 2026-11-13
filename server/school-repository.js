@@ -197,6 +197,28 @@ async function getReadyDatabase() {
           $$
         `,
         database.sql`
+          CREATE TABLE IF NOT EXISTS school_attendance (
+            school_id UUID NOT NULL REFERENCES schools(id) ON DELETE CASCADE,
+            class_id UUID NOT NULL,
+            attendance_date DATE NOT NULL,
+            student_id UUID NOT NULL,
+            status VARCHAR(12) NOT NULL
+              CHECK (status IN ('present', 'absent', 'late', 'excused')),
+            recorded_by TEXT NOT NULL,
+            recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            PRIMARY KEY (school_id, class_id, attendance_date, student_id),
+            CONSTRAINT school_attendance_class_fk
+              FOREIGN KEY (school_id, class_id)
+              REFERENCES school_classes(school_id, id) ON DELETE CASCADE,
+            CONSTRAINT school_attendance_student_fk
+              FOREIGN KEY (school_id, student_id)
+              REFERENCES school_students(school_id, id) ON DELETE CASCADE,
+            CONSTRAINT school_attendance_recorder_fk
+              FOREIGN KEY (school_id, recorded_by)
+              REFERENCES school_members(school_id, user_id) ON DELETE RESTRICT
+          )
+        `,
+        database.sql`
           CREATE TABLE IF NOT EXISTS school_assessments (
             id UUID PRIMARY KEY,
             school_id UUID NOT NULL REFERENCES schools(id) ON DELETE CASCADE,
@@ -668,6 +690,118 @@ export async function listSchoolClasses(schoolId, academicYear, teacherUserId = 
     GROUP BY c.id
     ORDER BY c.grade, c.section
   `;
+}
+
+export async function getSchoolClassAttendance(schoolId, classId, date, teacherUserId = null) {
+  const sql = await getReadyDatabase();
+  const rows = await sql`
+    WITH selected_class AS MATERIALIZED (
+      SELECT c.id, c.grade, c.section, c.academic_year
+      FROM school_classes c
+      WHERE c.school_id = ${schoolId}
+        AND c.id = ${classId}
+        AND (
+          ${teacherUserId}::text IS NULL
+          OR EXISTS (
+            SELECT 1 FROM school_teaching_assignments ta
+            WHERE ta.school_id = c.school_id
+              AND ta.class_id = c.id
+              AND ta.teacher_user_id = ${teacherUserId}
+          )
+        )
+    )
+    SELECT c.id AS "classId", c.grade, c.section, c.academic_year AS "academicYear",
+           st.id AS "studentId", st.admission_number AS "admissionNumber",
+           st.first_name AS "firstName", st.last_name AS "lastName",
+           a.status, a.recorded_at AS "recordedAt"
+    FROM selected_class c
+    LEFT JOIN school_students st
+      ON st.school_id = ${schoolId} AND st.class_id = c.id AND st.is_active
+    LEFT JOIN school_attendance a
+      ON a.school_id = ${schoolId}
+      AND a.class_id = c.id
+      AND a.attendance_date = ${date}::date
+      AND a.student_id = st.id
+    ORDER BY st.last_name, st.first_name, st.admission_number
+  `;
+  if (!rows.length) return null;
+  const { classId: resultClassId, grade, section, academicYear } = rows[0];
+  return {
+    schoolClass: { id: resultClassId, grade, section, academicYear },
+    date,
+    rows: rows.filter((row) => row.studentId).map((row) => ({
+      studentId: row.studentId,
+      admissionNumber: row.admissionNumber,
+      firstName: row.firstName,
+      lastName: row.lastName,
+      status: row.status,
+    })),
+  };
+}
+
+export async function saveSchoolClassAttendance(schoolId, classId, date, userId, marks, teacherUserId = null) {
+  const sql = await getReadyDatabase();
+  const [result] = await sql`
+    WITH eligible_class AS MATERIALIZED (
+      SELECT c.id
+      FROM school_classes c
+      WHERE c.school_id = ${schoolId}
+        AND c.id = ${classId}
+        AND (
+          ${teacherUserId}::text IS NULL
+          OR EXISTS (
+            SELECT 1 FROM school_teaching_assignments ta
+            WHERE ta.school_id = c.school_id
+              AND ta.class_id = c.id
+              AND ta.teacher_user_id = ${teacherUserId}
+          )
+        )
+    ),
+    active_roster AS MATERIALIZED (
+      SELECT st.id
+      FROM school_students st
+      JOIN eligible_class c ON c.id = st.class_id
+      WHERE st.school_id = ${schoolId} AND st.is_active
+    ),
+    incoming AS MATERIALIZED (
+      SELECT mark.student_id, mark.status
+      FROM jsonb_to_recordset(${JSON.stringify(marks.map(({ studentId, status }) => ({ student_id: studentId, status })))}::jsonb)
+        AS mark(student_id uuid, status text)
+    ),
+    batch_valid AS MATERIALIZED (
+      SELECT EXISTS (SELECT 1 FROM eligible_class)
+        AND (SELECT COUNT(*) FROM active_roster) = (SELECT COUNT(*) FROM incoming)
+        AND NOT EXISTS (
+          SELECT id FROM active_roster
+          EXCEPT
+          SELECT student_id FROM incoming
+        )
+        AND NOT EXISTS (
+          SELECT student_id FROM incoming
+          EXCEPT
+          SELECT id FROM active_roster
+        ) AS is_valid
+    ),
+    saved AS (
+      INSERT INTO school_attendance
+        (school_id, class_id, attendance_date, student_id, status, recorded_by)
+      SELECT ${schoolId}, ${classId}, ${date}::date, incoming.student_id, incoming.status, ${userId}
+      FROM incoming
+      CROSS JOIN batch_valid
+      WHERE batch_valid.is_valid
+      ON CONFLICT (school_id, class_id, attendance_date, student_id)
+      DO UPDATE SET status = EXCLUDED.status,
+                    recorded_by = EXCLUDED.recorded_by,
+                    recorded_at = NOW()
+      RETURNING student_id
+    )
+    SELECT EXISTS (SELECT 1 FROM eligible_class) AS "classFound",
+           (SELECT is_valid FROM batch_valid) AS "batchValid",
+           (SELECT COUNT(*)::int FROM saved) AS "savedCount"
+  `;
+  if (!result.classFound) return { error: "class" };
+  if (!result.batchValid) return { error: "roster" };
+  return { savedCount: result.savedCount };
 }
 
 export async function listSchoolResultSheet(schoolId, classId, term, teacherUserId = null) {

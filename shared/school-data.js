@@ -5,7 +5,49 @@ const classSectionPattern = /^[\p{L}\p{N}][\p{L}\p{N} -]{0,23}$/u;
 const admissionNumberPattern = /^[A-Z0-9][A-Z0-9/-]{1,31}$/;
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const assessmentTerms = ["Term 1", "Term 2", "Term 3"];
+const attendanceStatuses = ["present", "absent", "late", "excused"];
 const hasAtMostTwoDecimals = (value) => Math.round(value * 100) / 100 === value;
+
+export function isValidAttendanceDate(value) {
+  if (typeof value !== "string") return false;
+  const dateMatch = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!dateMatch || Number(dateMatch[1]) < 1900) return false;
+  return new Date(Date.UTC(Number(dateMatch[1]), Number(dateMatch[2]) - 1, Number(dateMatch[3])))
+    .toISOString()
+    .slice(0, 10) === value;
+}
+
+export function normalizeAttendanceInput(body = {}) {
+  if (!body || typeof body !== "object" || Array.isArray(body)) return null;
+  const classId = typeof body.classId === "string" ? body.classId : "";
+  const attendanceDate = typeof body.date === "string" ? body.date : "";
+  const marks = body.marks;
+  if (
+    !uuidPattern.test(classId)
+    || !isValidAttendanceDate(attendanceDate)
+    || !Array.isArray(marks)
+    || marks.length < 1
+    || marks.length > 1000
+  ) {
+    return null;
+  }
+
+  const normalizedMarks = [];
+  const studentIds = new Set();
+  for (const mark of marks) {
+    if (
+      !mark || typeof mark !== "object" || Array.isArray(mark)
+      || !uuidPattern.test(mark.studentId)
+      || !attendanceStatuses.includes(mark.status)
+      || studentIds.has(mark.studentId.toLowerCase())
+    ) {
+      return null;
+    }
+    studentIds.add(mark.studentId.toLowerCase());
+    normalizedMarks.push({ studentId: mark.studentId, status: mark.status });
+  }
+  return { classId, date: attendanceDate, marks: normalizedMarks };
+}
 
 export function normalizeClassInput(body = {}) {
   if (!body || typeof body !== "object" || Array.isArray(body)) return null;

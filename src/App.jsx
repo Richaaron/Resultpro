@@ -7,6 +7,7 @@ import { groupPublishedResultRowsByStudent, summarizePublishedResultRows } from 
 const navigation = [
   ["overview", "Overview", "▦"],
   ["results", "Results", "▤"],
+  ["attendance", "Attendance", "✓"],
   ["students", "Students", "♧"],
   ["teachers", "Teachers", "♙"],
   ["classes", "Classes & subjects", "▦"],
@@ -44,6 +45,10 @@ const currentDateLabel = new Intl.DateTimeFormat("en-NG", {
   month: "long",
   year: "numeric",
 }).format(new Date()).toUpperCase();
+const localDateInputValue = () => {
+  const date = new Date();
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+};
 const accessOptions = [
   ["invite", "Invite-only portals", "Only verified people invited by a school administrator can join."],
 ];
@@ -134,6 +139,13 @@ function App() {
   const [classRefresh, setClassRefresh] = useState(0);
   const [loadingClasses, setLoadingClasses] = useState(false);
   const [classError, setClassError] = useState("");
+  const [attendanceClassId, setAttendanceClassId] = useState("");
+  const [attendanceDate, setAttendanceDate] = useState(localDateInputValue);
+  const [attendanceData, setAttendanceData] = useState(null);
+  const [loadingAttendance, setLoadingAttendance] = useState(false);
+  const [savingAttendance, setSavingAttendance] = useState(false);
+  const [attendanceError, setAttendanceError] = useState("");
+  const [attendanceRefresh, setAttendanceRefresh] = useState(0);
   const [classForm, setClassForm] = useState({
     grade: curriculumGrades.primary[0],
     section: "",
@@ -206,7 +218,7 @@ function App() {
   const [form, setForm] = useState({ name: "", schoolType: "", country: "", email: "", accessMode: "invite" });
   const role = school?.role || "admin";
   const current = portalData[role];
-  const visibleNavigation = navigation.filter(([id]) => role === "admin" || (role === "teacher" && ["overview", "results", "classes"].includes(id)) || (role === "student" && ["overview", "results"].includes(id)));
+  const visibleNavigation = navigation.filter(([id]) => role === "admin" || (role === "teacher" && ["overview", "results", "attendance", "classes"].includes(id)) || (role === "student" && ["overview", "results"].includes(id)));
   const dashboardForCurrentSchool = dashboardData?.schoolId === school?.id ? dashboardData : null;
   const dashboardErrorForCurrentSchool = dashboardError && dashboardError.schoolId === school?.id
     ? dashboardError.message
@@ -492,6 +504,46 @@ function App() {
     setAssignmentClassId("");
     setAssignmentSubject("");
   }, [schoolClasses, assignmentClassId]);
+
+  useEffect(() => {
+    if (page !== "attendance" || loadingClasses) return;
+    if (!schoolClasses.some((item) => item.id === attendanceClassId)) {
+      setAttendanceClassId(schoolClasses[0]?.id || "");
+    }
+  }, [page, loadingClasses, schoolClasses, attendanceClassId]);
+
+  useEffect(() => {
+    let active = true;
+    if (!school?.id || page !== "attendance" || !attendanceClassId || !attendanceDate) {
+      setAttendanceData(null);
+      setLoadingAttendance(false);
+      setAttendanceError("");
+      return () => { active = false; };
+    }
+
+    setLoadingAttendance(true);
+    setAttendanceError("");
+    setAttendanceData(null);
+    const query = new URLSearchParams({ classId: attendanceClassId, date: attendanceDate });
+    apiRequest(`/api/schools/${school.id}/attendance?${query}`)
+      .then(({ attendance }) => {
+        if (active) {
+          setAttendanceData({
+            schoolId: school.id,
+            classId: attendanceClassId,
+            date: attendanceDate,
+            ...attendance,
+          });
+        }
+      })
+      .catch((requestError) => {
+        if (active) setAttendanceError(requestError.message || "Could not load class attendance.");
+      })
+      .finally(() => {
+        if (active) setLoadingAttendance(false);
+      });
+    return () => { active = false; };
+  }, [school?.id, page, role, attendanceClassId, attendanceDate, attendanceRefresh]);
 
   useEffect(() => {
     if (page !== "results" || role === "student" || loadingClasses) return;
@@ -822,6 +874,35 @@ function App() {
     } catch (requestError) {
       setResultSheetError(requestError.message || "Could not publish the result sheet.");
     }
+  }
+
+  async function saveAttendance() {
+    if (!school || !attendanceData?.rows.length || attendanceData.rows.some((row) => !row.status)) return;
+    setSavingAttendance(true);
+    setAttendanceError("");
+    try {
+      const { savedCount } = await apiRequest(`/api/schools/${school.id}/attendance`, {
+        method: "PUT",
+        body: JSON.stringify({
+          classId: attendanceClassId,
+          date: attendanceDate,
+          marks: attendanceData.rows.map(({ studentId, status }) => ({ studentId, status })),
+        }),
+      });
+      setToast(`Attendance saved for ${savedCount} ${savedCount === 1 ? "student" : "students"}.`);
+      setAttendanceRefresh((previous) => previous + 1);
+    } catch (requestError) {
+      setAttendanceError(requestError.message || "Could not save class attendance.");
+    } finally {
+      setSavingAttendance(false);
+    }
+  }
+
+  function setAttendanceStatus(studentId, status) {
+    setAttendanceData((previous) => previous && ({
+      ...previous,
+      rows: previous.rows.map((row) => row.studentId === studentId ? { ...row, status } : row),
+    }));
   }
 
   function toggleSubject(subject) {
@@ -1232,7 +1313,7 @@ function App() {
         </button>}
         <div className="nav-label">WORKSPACE</div>
         <nav className="main-nav" aria-label="Main navigation">
-          {visibleNavigation.slice(0, role === "admin" ? 5 : visibleNavigation.length).map(([id, label, icon], index) => (
+          {visibleNavigation.slice(0, role === "admin" ? 6 : visibleNavigation.length).map(([id, label, icon]) => (
             <button key={id} className={`nav-item ${page === id ? "active" : ""}`} type="button" onClick={() => { setPage(id); setSidebarOpen(false); }}>
               <span className="nav-symbol">{icon}</span><span>{label}</span>
             </button>
@@ -1241,7 +1322,7 @@ function App() {
         {role === "admin" && <>
           <div className="nav-label nav-label-lower">SCHOOL</div>
           <nav className="main-nav" aria-label="School settings">
-            {visibleNavigation.slice(5).map(([id, label, icon]) => <button key={id} className={`nav-item ${page === id ? "active" : ""}`} type="button" onClick={() => { setPage(id); setSidebarOpen(false); }}><span className="nav-symbol">{icon}</span><span>{label}</span></button>)}
+            {visibleNavigation.slice(6).map(([id, label, icon]) => <button key={id} className={`nav-item ${page === id ? "active" : ""}`} type="button" onClick={() => { setPage(id); setSidebarOpen(false); }}><span className="nav-symbol">{icon}</span><span>{label}</span></button>)}
           </nav>
         </>}
         <div className="sidebar-bottom">
@@ -1252,12 +1333,40 @@ function App() {
 
       <main className="main-content">
         <header className="topbar"><button className="mobile-menu" type="button" aria-label={sidebarOpen ? "Close navigation menu" : "Open navigation menu"} aria-expanded={sidebarOpen} onClick={() => setSidebarOpen((open) => !open)}><span aria-hidden="true">{sidebarOpen ? "×" : "☰"}</span></button><div className="breadcrumb"><span>Workspace</span><span className="breadcrumb-slash">/</span><strong>{page}</strong></div><div className="topbar-actions"><span className="role-select" aria-label="Your school role">{portalData[role].label}</span><button className="icon-button" type="button" onClick={() => setToast("You’re all caught up on school notifications.")} aria-label="Notifications">♧</button><button className="topbar-avatar" type="button" aria-label={`Sign out ${userName}`} onClick={signOut}>{userInitials}</button></div></header>
-        <div className={`page-content ${page === "classes" ? "curriculum-page" : page === "students" ? "students-page" : page === "teachers" ? "teachers-page" : page === "results" ? "results-page" : ""}`}>
+        <div className={`page-content ${page === "classes" ? "curriculum-page" : page === "students" ? "students-page" : page === "teachers" ? "teachers-page" : page === "results" ? "results-page" : page === "attendance" ? "attendance-page" : ""}`}>
           {!school ? <section className="panel onboarding-panel"><span className="auth-kicker">WELCOME TO ASTER</span><h1>Create your school workspace</h1><p className="page-subtitle">Your account is ready. Set up your school profile to begin; only people you invite can join its portal.</p><button className="button button-primary" type="button" onClick={showSetup}>＋ Create school profile</button></section> : <>
           <section className="welcome-row">
-            <div><div className="eyebrow"><span className="live-dot" /> {currentDateLabel} <span className="eyebrow-divider">·</span> SCHOOL WORKSPACE</div><h1>{page === "overview" ? role === "admin" ? `Good morning, ${userName}` : current.title : page === "results" ? role === "student" ? "Results, at a glance" : "Result sheet & assessments" : page === "profile" ? "Your school, your story." : page === "classes" ? "Classes & subjects" : page === "students" ? "Student register" : `${page[0].toUpperCase()}${page.slice(1)}`} <span className="wave">✳</span></h1><p className="page-subtitle">{page === "overview" ? current.subtitle : page === "results" && role === "student" ? "View only the term results your school has published for your linked student record." : page === "results" && role !== "student" ? role === "admin" ? "Calculate term percentages from approved marks, publish frozen result sheets, and review submissions." : "View calculated results and enter marks for your assigned classes." : page === "classes" ? "Configure subjects and organise your classes." : page === "students" ? "Enrol students and keep their school records up to date." : `Keep your ${page} organised for the term ahead.`}</p></div>
-            {page !== "classes" && page !== "students" && page !== "teachers" && page !== "results" && <div className="welcome-actions"><button className="button button-secondary" type="button" onClick={async () => { try { await navigator.clipboard.writeText(`${window.location.origin}${school.portalUrl || `/school/${school.slug}`}`); setToast("Your school workspace link has been copied. Only invited school members can access it."); } catch { setToast("Could not copy the school link. Please try again."); } }}>↗ Copy school workspace link</button><button className="button button-primary" type="button" onClick={() => page === "profile" ? showSetup() : page === "access" ? document.getElementById("inviteEmail")?.focus() : setPage(role === "admin" ? "students" : "results")}>＋ {page === "access" ? "Invite a member" : role === "teacher" ? "Enter marks" : role === "student" ? "View my results" : "Add a student"}</button></div>}
+            <div><div className="eyebrow"><span className="live-dot" /> {currentDateLabel} <span className="eyebrow-divider">·</span> SCHOOL WORKSPACE</div><h1>{page === "overview" ? role === "admin" ? `Good morning, ${userName}` : current.title : page === "results" ? role === "student" ? "Results, at a glance" : "Result sheet & assessments" : page === "attendance" ? "Daily attendance" : page === "profile" ? "Your school, your story." : page === "classes" ? "Classes & subjects" : page === "students" ? "Student register" : `${page[0].toUpperCase()}${page.slice(1)}`} <span className="wave">✳</span></h1><p className="page-subtitle">{page === "overview" ? current.subtitle : page === "results" && role === "student" ? "View only the term results your school has published for your linked student record." : page === "results" && role !== "student" ? role === "admin" ? "Calculate term percentages from approved marks, publish frozen result sheets, and review submissions." : "View calculated results and enter marks for your assigned classes." : page === "attendance" ? "Record and review daily attendance for your active class roster." : page === "classes" ? "Configure subjects and organise your classes." : page === "students" ? "Enrol students and keep their school records up to date." : `Keep your ${page} organised for the term ahead.`}</p></div>
+            {page !== "classes" && page !== "students" && page !== "teachers" && page !== "results" && page !== "attendance" && <div className="welcome-actions"><button className="button button-secondary" type="button" onClick={async () => { try { await navigator.clipboard.writeText(`${window.location.origin}${school.portalUrl || `/school/${school.slug}`}`); setToast("Your school workspace link has been copied. Only invited school members can access it."); } catch { setToast("Could not copy the school link. Please try again."); } }}>↗ Copy school workspace link</button><button className="button button-primary" type="button" onClick={() => page === "profile" ? showSetup() : page === "access" ? document.getElementById("inviteEmail")?.focus() : setPage(role === "admin" ? "students" : "results")}>＋ {page === "access" ? "Invite a member" : role === "teacher" ? "Enter marks" : role === "student" ? "View my results" : "Add a student"}</button></div>}
           </section>
+
+          {page === "attendance" && <section className="panel attendance-panel">
+            <div className="panel-heading"><div><h2>Class register</h2><p>Attendance is saved per school day. Teachers can record attendance only for their assigned classes.</p></div></div>
+            <div className="attendance-controls">
+              <label><span>Class</span><select className="text-input" value={attendanceClassId} onChange={(event) => setAttendanceClassId(event.target.value)} disabled={loadingClasses || !schoolClasses.length}><option value="">Select a class</option>{schoolClasses.map((item) => <option key={item.id} value={item.id}>{item.grade} {item.section} · {item.academicYear}</option>)}</select></label>
+              <label><span>Date</span><input className="text-input" type="date" value={attendanceDate} onChange={(event) => setAttendanceDate(event.target.value)} /></label>
+              {attendanceData?.rows.length > 0 && <div className="attendance-counts" aria-label="Attendance totals">
+                {["present", "absent", "late", "excused"].map((status) => <span key={status}>{status[0].toUpperCase() + status.slice(1)} <strong>{attendanceData.rows.filter((row) => row.status === status).length}</strong></span>)}
+              </div>}
+            </div>
+            {classError && <p className="form-error" role="alert">{classError}</p>}
+            {attendanceError && <p className="form-error" role="alert">{attendanceError}</p>}
+            {loadingAttendance || loadingClasses ? <p className="empty-search">Loading the class register…</p>
+              : !schoolClasses.length ? <p className="empty-search">{classError ? "Your class list could not be loaded." : "Create a class and enrol active students before recording attendance."}</p>
+                : !attendanceDate ? <p className="empty-search">Choose a date to load attendance.</p>
+                : !attendanceClassId ? <p className="empty-search">Select a class to load its active student roster.</p>
+                  : !attendanceData ? <p className="empty-search">The class register could not be loaded. Please try again.</p>
+                    : attendanceData.rows.length === 0 ? <p className="empty-search">This class has no active students to mark for attendance.</p>
+                      : <form onSubmit={(event) => { event.preventDefault(); saveAttendance(); }}>
+                        <div className="attendance-toolbar"><span>{attendanceData.schoolClass.grade} {attendanceData.schoolClass.section} · {attendanceDate}</span><button className="quiet-action" type="button" onClick={() => setAttendanceData((previous) => previous && ({ ...previous, rows: previous.rows.map((row) => ({ ...row, status: "present" })) }))}>Mark all present</button></div>
+                        <div className="table-scroll"><table className="attendance-table"><thead><tr><th>STUDENT</th><th>ADMISSION NO.</th><th>STATUS</th></tr></thead><tbody>{attendanceData.rows.map((row) => <tr key={row.studentId}>
+                          <td><strong>{row.firstName} {row.lastName}</strong></td>
+                          <td>{row.admissionNumber}</td>
+                          <td><select className="text-input attendance-status" aria-label={`Attendance status for ${row.firstName} ${row.lastName}`} value={row.status || ""} onChange={(event) => setAttendanceStatus(row.studentId, event.target.value)}><option value="">Choose status</option><option value="present">Present</option><option value="absent">Absent</option><option value="late">Late</option><option value="excused">Excused</option></select></td>
+                        </tr>)}</tbody></table></div>
+                        <div className="attendance-footer"><span className="field-hint">Mark every active student before saving. Saving again updates this class and date.</span><button className="button button-primary" type="submit" disabled={savingAttendance || attendanceData.rows.some((row) => !row.status)}>{savingAttendance ? "Saving…" : "Save attendance"}</button></div>
+                      </form>}
+          </section>}
 
           {page === "classes" && <section className="panel curriculum-panel">
             <div className="panel-heading curriculum-heading">
