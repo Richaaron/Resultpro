@@ -11,6 +11,7 @@ import {
   deleteSchoolClass,
   getSchoolDashboard,
   getSchoolRole,
+  listSchoolInvitations,
   getSchoolPublishedResultSheet,
   listSchoolTeachers,
   listSchoolClasses,
@@ -24,6 +25,8 @@ import {
   getSchoolAssessment,
   removeTeachingAssignment,
   publishSchoolResultSheet,
+  renewSchoolInvitation,
+  revokeSchoolInvitation,
   replaceSchoolSubjects,
   reviewSchoolAssessment,
   saveSchoolAssessmentMarks,
@@ -648,6 +651,65 @@ app.post("/api/schools/:schoolId/invitations", requireAuth, async (request, resp
       });
     }
     return response.status(201).json({ invitation });
+  } catch (error) {
+    return handleDatabaseError(error, response);
+  }
+});
+
+app.get("/api/schools/:schoolId/invitations", requireAuth, async (request, response) => {
+  const { schoolId } = request.params;
+  if (!isUuid(schoolId)) return response.status(400).json({ error: "Enter a valid school." });
+
+  try {
+    const membershipRole = await getSchoolRole(schoolId, request.auth.userId);
+    if (!membershipRole) return response.status(404).json({ error: "School not found." });
+    if (membershipRole !== "admin") {
+      return response.status(403).json({ error: "Only a school administrator can manage invitations." });
+    }
+    const invitations = await listSchoolInvitations(schoolId);
+    return response.json({ invitations });
+  } catch (error) {
+    return handleDatabaseError(error, response);
+  }
+});
+
+app.post("/api/schools/:schoolId/invitations/:invitationId/resend", requireAuth, async (request, response) => {
+  const { schoolId, invitationId } = request.params;
+  if (!isUuid(schoolId) || !isUuid(invitationId)) {
+    return response.status(400).json({ error: "Enter a valid invitation." });
+  }
+
+  try {
+    const membershipRole = await getSchoolRole(schoolId, request.auth.userId);
+    if (!membershipRole) return response.status(404).json({ error: "School not found." });
+    if (membershipRole !== "admin") {
+      return response.status(403).json({ error: "Only a school administrator can manage invitations." });
+    }
+    const invitation = await renewSchoolInvitation(schoolId, invitationId);
+    if (!invitation) {
+      return response.status(404).json({ error: "This invitation is no longer available to renew." });
+    }
+    return response.json({ invitation });
+  } catch (error) {
+    return handleDatabaseError(error, response);
+  }
+});
+
+app.delete("/api/schools/:schoolId/invitations/:invitationId", requireAuth, async (request, response) => {
+  const { schoolId, invitationId } = request.params;
+  if (!isUuid(schoolId) || !isUuid(invitationId)) {
+    return response.status(400).json({ error: "Enter a valid invitation." });
+  }
+
+  try {
+    const membershipRole = await getSchoolRole(schoolId, request.auth.userId);
+    if (!membershipRole) return response.status(404).json({ error: "School not found." });
+    if (membershipRole !== "admin") {
+      return response.status(403).json({ error: "Only a school administrator can manage invitations." });
+    }
+    const revoked = await revokeSchoolInvitation(schoolId, invitationId);
+    if (!revoked) return response.status(404).json({ error: "This invitation is no longer available to revoke." });
+    return response.status(204).end();
   } catch (error) {
     return handleDatabaseError(error, response);
   }

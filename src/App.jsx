@@ -86,6 +86,11 @@ function App() {
   const [inviting, setInviting] = useState(false);
   const [invitationUrl, setInvitationUrl] = useState("");
   const [invitationLabel, setInvitationLabel] = useState("");
+  const [invitationData, setInvitationData] = useState(null);
+  const [loadingInvitations, setLoadingInvitations] = useState(false);
+  const [invitationError, setInvitationError] = useState(null);
+  const [invitationRefresh, setInvitationRefresh] = useState(0);
+  const [busyInvitationId, setBusyInvitationId] = useState("");
   const [selectedGrade, setSelectedGrade] = useState(curriculumGrades.primary[0]);
   const [savedSubjects, setSavedSubjects] = useState({});
   const [draftSubjects, setDraftSubjects] = useState({});
@@ -173,6 +178,11 @@ function App() {
     ? dashboardError.message
     : "";
   const dashboardPending = dashboardLoading || (!dashboardForCurrentSchool && !dashboardErrorForCurrentSchool);
+  const invitationsForCurrentSchool = invitationData?.schoolId === school?.id ? invitationData.invitations : null;
+  const invitationErrorForCurrentSchool = invitationError && invitationError.schoolId === school?.id
+    ? invitationError.message
+    : "";
+  const invitationsPending = loadingInvitations || (!invitationsForCurrentSchool && !invitationErrorForCurrentSchool);
   const dashboardSummary = dashboardForCurrentSchool?.summary;
   const dashboardAverage = dashboardSummary?.averagePercentage == null
     ? "—"
@@ -345,6 +355,33 @@ function App() {
       });
     return () => { active = false; };
   }, [school?.id, role, page, assessmentRefresh, studentRefresh, classRefresh, assignmentRefresh, dashboardRefresh]);
+
+  useEffect(() => {
+    let active = true;
+    if (!school?.id || role !== "admin" || page !== "access") {
+      setLoadingInvitations(false);
+      return () => { active = false; };
+    }
+
+    setLoadingInvitations(true);
+    setInvitationError(null);
+    apiRequest(`/api/schools/${school.id}/invitations`)
+      .then(({ invitations }) => {
+        if (active) setInvitationData({ schoolId: school.id, invitations });
+      })
+      .catch((requestError) => {
+        if (!active) return;
+        setInvitationData(null);
+        setInvitationError({
+          schoolId: school.id,
+          message: requestError.message || "Could not load school invitations.",
+        });
+      })
+      .finally(() => {
+        if (active) setLoadingInvitations(false);
+      });
+    return () => { active = false; };
+  }, [school?.id, role, page, invitationRefresh]);
 
   useEffect(() => {
     let active = true;
@@ -974,6 +1011,50 @@ function App() {
     }
   }
 
+  async function renewInvitation(invitation) {
+    if (!school || !window.confirm(`Create a fresh seven-day link for ${invitation.email}? Any previous activation link for this invitation will stop working.`)) return;
+    setBusyInvitationId(invitation.id);
+    setInvitationError(null);
+    try {
+      const { invitation: renewed } = await apiRequest(
+        `/api/schools/${school.id}/invitations/${invitation.id}/resend`,
+        { method: "POST" },
+      );
+      const invitee = renewed.teacherName || invitation.inviteeName || invitation.email;
+      setInvitationLabel(`${renewed.role === "teacher" ? "Teacher" : "Student"} activation for ${invitee} · ${renewed.email}`);
+      setInvitationUrl(`${window.location.origin}${school.portalUrl || `/school/${school.slug}`}#invite=${encodeURIComponent(renewed.token)}`);
+      setInvitationRefresh((previous) => previous + 1);
+      setToast(`A new seven-day link is ready for ${renewed.email}. The previous link no longer works.`);
+    } catch (requestError) {
+      setInvitationError({
+        schoolId: school.id,
+        message: requestError.message || "Could not create a replacement invitation link.",
+      });
+    } finally {
+      setBusyInvitationId("");
+    }
+  }
+
+  async function revokeInvitation(invitation) {
+    if (!school || !window.confirm(`Revoke the invitation for ${invitation.email}? Its activation link will stop working.`)) return;
+    setBusyInvitationId(invitation.id);
+    setInvitationError(null);
+    try {
+      await apiRequest(`/api/schools/${school.id}/invitations/${invitation.id}`, { method: "DELETE" });
+      setInvitationUrl("");
+      setInvitationLabel("");
+      setInvitationRefresh((previous) => previous + 1);
+      setToast(`Invitation for ${invitation.email} revoked.`);
+    } catch (requestError) {
+      setInvitationError({
+        schoolId: school.id,
+        message: requestError.message || "Could not revoke this invitation.",
+      });
+    } finally {
+      setBusyInvitationId("");
+    }
+  }
+
   async function restoreSession({ schoolName = "" } = {}) {
     const result = await authClient.getSession();
     if (result.error) throw new Error(result.error.message || "Could not load your account.");
@@ -1354,7 +1435,33 @@ function App() {
             </section>
           </section>}
 
-          {role === "admin" && page === "access" && <section className="panel invite-panel"><div className="panel-heading"><div><h2>Portal access</h2><p>Register teachers from the Teachers page to generate their staff code and activation link. Student invitations are tied to the selected student record.</p></div><button className="button button-secondary button-small" type="button" onClick={() => setPage("teachers")}>Go to Teachers</button></div>{invitationUrl && <div className="invitation-link"><label className="field-label" htmlFor="invitationUrl">{invitationLabel || "One-time invitation link"}</label><div><input className="text-input" id="invitationUrl" readOnly value={invitationUrl} /><button className="button button-secondary" type="button" onClick={copyInvitation}>Copy</button></div><p className="field-hint">Send this link directly to the invited email address. Aster does not email invitations yet.</p></div>}</section>}
+          {role === "admin" && page === "access" && <>
+            <section className="panel invite-panel">
+              <div className="panel-heading"><div><h2>Portal access</h2><p>Register teachers from the Teachers page to generate their staff code and activation link. Student invitations are tied to the selected student record.</p></div><button className="button button-secondary button-small" type="button" onClick={() => setPage("teachers")}>Go to Teachers</button></div>
+              {invitationUrl && <div className="invitation-link"><label className="field-label" htmlFor="invitationUrl">{invitationLabel || "One-time invitation link"}</label><div><input className="text-input" id="invitationUrl" readOnly value={invitationUrl} /><button className="button button-secondary" type="button" onClick={copyInvitation}>Copy</button></div><p className="field-hint">Send this link directly to the invited email address. Aster does not email invitations yet.</p></div>}
+            </section>
+            <section className="panel invitation-manager-panel">
+              <div className="panel-heading"><div><h2>Outstanding invitations</h2><p>Review and manage links for people who have not activated their school access yet.</p></div><button className="button button-secondary button-small" type="button" onClick={() => setInvitationRefresh((previous) => previous + 1)} disabled={loadingInvitations}>Refresh</button></div>
+              {invitationErrorForCurrentSchool && <p className="form-error" role="alert">{invitationErrorForCurrentSchool}</p>}
+              {invitationsPending ? <p className="empty-search">Loading invitations…</p>
+                : invitationsForCurrentSchool?.length ? <div className="table-scroll"><table className="invitation-manager-table"><thead><tr><th>INVITEE</th><th>EMAIL</th><th>ACCESS</th><th>EXPIRES</th><th>STATUS</th><th>ACTIONS</th></tr></thead><tbody>
+                  {invitationsForCurrentSchool.map((invitation) => {
+                    const invitee = invitation.inviteeName || invitation.email;
+                    const busy = busyInvitationId === invitation.id;
+                    return <tr key={invitation.id}>
+                      <td><strong>{invitee}</strong></td>
+                      <td>{invitation.email}</td>
+                      <td>{invitation.role === "teacher" ? `Teacher${invitation.teacherCode ? ` · ${invitation.teacherCode}` : ""}` : "Student portal"}</td>
+                      <td>{new Date(invitation.expiresAt).toLocaleString("en-NG", { dateStyle: "medium", timeStyle: "short" })}</td>
+                      <td><span className={`status-pill ${invitation.status === "expired" ? "draft" : "pending"}`}><i />{invitation.status === "expired" ? "Expired" : "Pending"}</span></td>
+                      <td><div className="invitation-actions"><button className="quiet-action" type="button" disabled={busy} onClick={() => renewInvitation(invitation)}>{busy ? "Working…" : "Create new link"}</button><button className="quiet-action invitation-revoke-action" type="button" disabled={busy} onClick={() => revokeInvitation(invitation)}>Revoke</button></div></td>
+                    </tr>;
+                  })}
+                </tbody></table></div>
+                  : <p className="empty-search">There are no outstanding invitations. Create one from the Teachers page or a student record.</p>}
+              <p className="field-hint">Creating a new link invalidates the previous one and gives it a fresh seven-day expiry. Share links manually with the invited email address; automatic email delivery is not configured.</p>
+            </section>
+          </>}
 
           {page === "overview" && dashboardPending && <section className="panel dashboard-message" role="status">Loading your school overview…</section>}
           {page === "overview" && dashboardErrorForCurrentSchool && <section className="panel dashboard-message dashboard-error" role="alert"><span>{dashboardErrorForCurrentSchool}</span><button className="button button-secondary button-small" type="button" onClick={() => setDashboardRefresh((previous) => previous + 1)}>Retry</button></section>}

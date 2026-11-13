@@ -260,6 +260,13 @@ select.text-input { color: #58645a; }
 .onboarding-panel { display: grid; justify-items: start; gap: 12px; padding: 32px; }
 .onboarding-panel .page-subtitle { max-width: 520px; line-height: 1.6; }
 .invite-panel { padding: 21px; }
+.invitation-manager-panel { padding: 21px; }
+.invitation-manager-panel > .panel-heading { align-items: center; margin-bottom: 14px; }
+.invitation-manager-panel > .field-hint { margin-top: 12px; line-height: 1.55; }
+.invitation-manager-table { min-width: 760px; }
+.invitation-actions { display: flex; align-items: center; gap: 8px; }
+.invitation-revoke-action { color: #9c6257; }
+.invitation-revoke-action:disabled { color: #a7afa8; }
 .dashboard-message { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 15px; color: #778178; font-size: 12px; }
 .dashboard-error { border-color: #e7c9c4; color: #9c4b42; }
 .curriculum-page > .term-banner, .curriculum-page > .stats-grid, .curriculum-page > .main-grid, .curriculum-page > .results-panel,
@@ -572,7 +579,7 @@ textarea.text-input { min-height: 84px; padding: 11px; }
   .main-grid { grid-template-columns: minmax(0, 1fr); gap: 11px; }
   .panel, .curriculum-panel, .result-sheet-panel, .assessment-form-panel, .assessment-list-panel,
   .assessment-detail-panel, .student-form-panel, .student-results-panel, .teacher-assignment-panel,
-  .invite-panel { padding: 16px; border-radius: 12px; }
+  .invite-panel, .invitation-manager-panel { padding: 16px; border-radius: 12px; }
   .panel-heading { gap: 10px; }
   .panel-heading h2 { font-size: 15px; }
   .panel-heading p { font-size: 11px; line-height: 1.55; }
@@ -611,6 +618,9 @@ textarea.text-input { min-height: 84px; padding: 11px; }
   .assessment-review-actions { margin-left: 0; }
   .invite-form { width: 100%; }
   .invite-form .button { width: 100%; min-height: 44px; }
+  .invitation-manager-panel > .panel-heading { align-items: flex-start; }
+  .invitation-actions { align-items: flex-start; flex-direction: column; gap: 3px; }
+  .invitation-actions .quiet-action { min-height: 36px; }
   .invitation-link > div { align-items: stretch; flex-direction: column; }
   .invitation-link > div .button { min-height: 44px; }
   .page-footer { flex-wrap: wrap; line-height: 1.6; }
@@ -691,6 +701,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .help-card strong { color: #e7f2e9; }
 .help-card > span { color: #adbdaf; }
 .help-card button, .quiet-action, .inline-action, .auth-text-button { color: #8fe0a4; }
+.invitation-revoke-action { color: #f0aaa0; }
 .user-profile { border-top-color: #2a4033; }
 .user-avatar, .topbar-avatar { background: #244b32; color: #d6f1dc; }
 .topbar { border-bottom-color: #243a2d; background: rgb(10 20 14 / 90%); }

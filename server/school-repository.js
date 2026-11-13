@@ -70,9 +70,13 @@ async function getReadyDatabase() {
             created_by TEXT NOT NULL,
             expires_at TIMESTAMPTZ NOT NULL,
             accepted_at TIMESTAMPTZ,
+            revoked_at TIMESTAMPTZ,
             student_id UUID,
             created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
           )
+        `,
+        database.sql`
+          ALTER TABLE school_invitations ADD COLUMN IF NOT EXISTS revoked_at TIMESTAMPTZ
         `,
         database.sql`
           ALTER TABLE school_invitations ADD COLUMN IF NOT EXISTS student_id UUID
@@ -1515,6 +1519,7 @@ export async function createInvitation({ schoolId, email, role, userId, studentI
             AND i.email = ${email}
             AND i.role = 'teacher'
             AND i.accepted_at IS NULL
+            AND i.revoked_at IS NULL
             AND i.expires_at > NOW()
         )
         RETURNING email, role, teacher_name AS "teacherName",
@@ -1552,6 +1557,71 @@ export async function createInvitation({ schoolId, email, role, userId, studentI
   return { ...invitation, token };
 }
 
+export async function listSchoolInvitations(schoolId) {
+  const sql = await getReadyDatabase();
+  return sql`
+    SELECT i.id, i.email, i.role,
+           COALESCE(i.teacher_name, NULLIF(CONCAT_WS(' ', st.first_name, st.last_name), '')) AS "inviteeName",
+           i.teacher_code AS "teacherCode",
+           i.expires_at AS "expiresAt",
+           i.created_at AS "createdAt",
+           CASE WHEN i.expires_at <= NOW() THEN 'expired' ELSE 'pending' END AS status
+    FROM school_invitations i
+    LEFT JOIN school_students st
+      ON st.school_id = i.school_id AND st.id = i.student_id
+    WHERE i.school_id = ${schoolId}
+      AND i.accepted_at IS NULL
+      AND i.revoked_at IS NULL
+    ORDER BY i.created_at DESC
+    LIMIT 100
+  `;
+}
+
+export async function renewSchoolInvitation(schoolId, invitationId) {
+  const sql = await getReadyDatabase();
+  const token = randomBytes(32).toString("base64url");
+  const tokenHash = createHash("sha256").update(token).digest("hex");
+  const [invitation] = await sql`
+    UPDATE school_invitations i
+    SET token_hash = ${tokenHash},
+        expires_at = NOW() + INTERVAL '7 days'
+    WHERE i.school_id = ${schoolId}
+      AND i.id = ${invitationId}
+      AND i.accepted_at IS NULL
+      AND i.revoked_at IS NULL
+      AND (
+        i.role <> 'teacher'
+        OR NOT EXISTS (
+          SELECT 1 FROM school_invitations active
+          WHERE active.school_id = i.school_id
+            AND active.email = i.email
+            AND active.role = 'teacher'
+            AND active.id <> i.id
+            AND active.accepted_at IS NULL
+            AND active.revoked_at IS NULL
+            AND active.expires_at > NOW()
+        )
+      )
+    RETURNING i.id, i.email, i.role, i.teacher_name AS "teacherName",
+              i.teacher_code AS "teacherCode", i.expires_at AS "expiresAt"
+  `;
+  return invitation ? { ...invitation, token } : null;
+}
+
+export async function revokeSchoolInvitation(schoolId, invitationId) {
+  const sql = await getReadyDatabase();
+  const [revoked] = await sql`
+    UPDATE school_invitations
+    SET revoked_at = NOW()
+    WHERE school_id = ${schoolId}
+      AND id = ${invitationId}
+      AND accepted_at IS NULL
+      AND revoked_at IS NULL
+    RETURNING id
+  `;
+  return revoked ?? null;
+}
+
 export async function acceptInvitation({ token, email, userId }) {
   const sql = await getReadyDatabase();
   const tokenHash = createHash("sha256").update(token).digest("hex");
@@ -1563,6 +1633,7 @@ export async function acceptInvitation({ token, email, userId }) {
       WHERE i.token_hash = ${tokenHash}
         AND i.email = ${email}
         AND i.accepted_at IS NULL
+        AND i.revoked_at IS NULL
         AND i.expires_at > NOW()
         AND NOT EXISTS (
           SELECT 1 FROM school_members existing
