@@ -1,11 +1,12 @@
 import React, { useState } from "react";
+import AsterLogoMark from "./AsterLogo.jsx";
 import { pendingSchoolNameKey } from "./auth.js";
 
 function AuthIllustration() {
   return (
     <aside className="auth-showcase" aria-label="Aster school results illustration">
       <a className="brand auth-showcase-brand" href="/" aria-label="Aster home">
-        <span className="brand-mark">✳</span><span className="brand-name">aster<span>.</span></span>
+        <AsterLogoMark /><span className="brand-name">aster<span>.</span></span>
       </a>
       <div className="auth-showcase-copy">
         <span className="auth-kicker">A CLEARER VIEW OF EVERY TERM</span>
@@ -168,7 +169,7 @@ export default function AuthScreen({ authClient, notice, initialEmail = "", veri
       <main className="auth-shell">
         <AuthIllustration />
         <section className="auth-card">
-          <a className="brand auth-brand" href="/" aria-label="Aster home"><span className="brand-mark">✳</span><span className="brand-name">aster<span>.</span></span></a>
+          <a className="brand auth-brand" href="/" aria-label="Aster home"><AsterLogoMark /><span className="brand-name">aster<span>.</span></span></a>
           <h1>Authentication setup needed</h1>
           <p className="auth-description">Set VITE_NEON_AUTH_URL to your Neon Auth Base URL to continue.</p>
         </section>
@@ -180,7 +181,7 @@ export default function AuthScreen({ authClient, notice, initialEmail = "", veri
     <main className="auth-shell">
       <AuthIllustration />
       <section className="auth-card">
-        <a className="brand auth-brand" href="/" aria-label="Aster home"><span className="brand-mark">✳</span><span className="brand-name">aster<span>.</span></span></a>
+        <a className="brand auth-brand" href="/" aria-label="Aster home"><AsterLogoMark /><span className="brand-name">aster<span>.</span></span></a>
         {hasInvitation && <p className="auth-invitation">You’ve been invited to a school. Use the email address that received the invitation.</p>}
         <p className="auth-kicker">YOUR SCHOOL, IN FOCUS</p>
         <h1>{verifyingEmail ? "Verify your email" : mode === "sign-up" ? "Create your Aster account" : "Welcome back"}</h1>

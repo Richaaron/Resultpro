@@ -22,8 +22,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .app-shell { min-height: 100vh; }
 .sidebar { width: 252px; position: fixed; inset: 0 auto 0 0; z-index: 20; display: flex; flex-direction: column; padding: 27px 17px 13px; background: #fff; border-right: 1px solid #eceee9; }
 .brand { display: flex; align-items: center; gap: 10px; height: 34px; margin: 0 0 29px 7px; color: var(--ink); text-decoration: none; }
-.brand-mark { width: 32px; height: 32px; display: grid; place-items: center; color: var(--green); }
-.brand-mark svg { width: 100%; height: 100%; }
+.brand-mark { display: block; flex: 0 0 auto; width: 32px; height: 32px; color: var(--green); }
 .brand-name { font: 800 24px/1 var(--font-display); letter-spacing: -1.5px; }
 .brand-name > span { color: #80a484; }
 .school-switcher { position: relative; display: flex; align-items: center; width: 100%; padding: 9px 8px; border: 1px solid var(--line); border-radius: 9px; background: #fff; text-align: left; cursor: pointer; }
