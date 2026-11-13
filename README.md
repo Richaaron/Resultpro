@@ -25,7 +25,7 @@ npm install
 npm run dev
 ```
 
-Open the Vite URL printed in the terminal (usually `http://localhost:5173`). Vite proxies `/api` requests to the Express API on port `4000`. `neon env pull` writes `NEON_AUTH_BASE_URL` to `.env.local`; Vite uses it as the public auth URL. The API verifies bearer tokens against that branch's Managed Auth JWKS. The API creates the school, membership, and invitation tables automatically.
+Open the Vite URL printed in the terminal (usually `http://localhost:5173`). Vite proxies `/api` requests to the Express API on port `4000`. `neon env pull` writes `NEON_AUTH_BASE_URL` to `.env.local`; Vite uses it as the public auth URL. The API verifies bearer tokens against that branch's Managed Auth JWKS. The API creates school, membership, invitation, subject, class, student, teacher-assignment, assessment, and mark tables automatically.
 
 The production frontend can be built with `npm run build`; `npm start` serves the built frontend and API on port `4000`. `DATABASE_URL` must be available to the server.
 
@@ -53,11 +53,38 @@ The browser calls the Render API directly. The API only allows origins listed in
 - `GET /api/health` — API health check
 - `GET /api/schools` — list only schools the signed-in user belongs to
 - `POST /api/schools` — create a school and make the verified account its first administrator
+- `GET /api/schools/:schoolId/subjects` — list saved grade subjects for a school member
+- `PUT /api/schools/:schoolId/subjects` — replace a grade's subjects (school administrators only)
+- `GET /api/schools/:schoolId/classes` — list school classes for a member
+- `POST /api/schools/:schoolId/classes` — create a class using saved grade subjects (school administrators only)
+- `DELETE /api/schools/:schoolId/classes/:classId` — delete an empty class (school administrators only)
+- `GET /api/schools/:schoolId/teaching-assignments` — list all assignments and accepted teachers for admins; teachers only see their own assignments
+- `PUT /api/schools/:schoolId/classes/:classId/teaching-assignments` — assign or reassign a teacher to a class subject (school administrators only)
+- `DELETE /api/schools/:schoolId/teaching-assignments/:assignmentId` — remove an assignment (school administrators only)
+- `GET /api/schools/:schoolId/assessments` — list school assessments for admins or the signed-in teacher's assignments
+- `POST /api/schools/:schoolId/assessments` — create an assessment for an assigned class subject (school administrators only)
+- `GET /api/schools/:schoolId/assessments/:assessmentId/marks` — view the assessment's saved roster and marks
+- `PUT /api/schools/:schoolId/assessments/:assessmentId/marks` — save draft marks for rostered students (assigned teacher only)
+- `POST /api/schools/:schoolId/assessments/:assessmentId/submit` — submit complete marks for administrator review (assigned teacher only)
+- `PATCH /api/schools/:schoolId/assessments/:assessmentId/review` — approve submitted marks or return them with a note (school administrators only)
+- `GET /api/schools/:schoolId/students` — search and page through the student register (school administrators only)
+- `POST /api/schools/:schoolId/students` — enrol a student (school administrators only)
+- `PUT /api/schools/:schoolId/students/:studentId` — update a student record (school administrators only)
+- `PATCH /api/schools/:schoolId/students/:studentId/status` — archive or reactivate a student (school administrators only)
 - `POST /api/schools/:schoolId/invitations` — create a seven-day, email-restricted teacher or student invitation
 - `POST /api/invitations/accept` — accept an invitation for the signed-in, verified email address
 
 School membership is checked on the server for every school API request; CORS is not an authorization boundary. Admins create invitation links in **Portal access** and send them to invitees themselves. A link can only be accepted by an account with the matching verified email and expires after seven days.
 
+## Curriculum subjects
+
+School administrators can choose and save subjects by Primary 1–6, JSS 1–3, and SSS 1–3 under **Classes & subjects**. Saved subjects are scoped to the selected school; teachers can view them but cannot edit them. The catalogue is a starting point, not a claim that every optional subject applies to every school. Confirm current grade-specific subjects with the official NERDC curriculum pages and the relevant state education authority:
+
+- [Revised Basic Education Curriculum](https://nerdc.gov.ng/content_manager/new_curriculum_home.html)
+- [Revised Senior Secondary Education Curriculum](https://nerdc.gov.ng/content_manager/new_senior_curriculum_home.html)
+
 ## Data readiness
 
-The login, email verification, school profiles, school memberships, and invite-only access are connected to Neon. Dashboard figures and result rows are still sample data; real student records, class management, and publishing results are not implemented. Do not enter real student data until those features and production email/domain settings are complete.
+Login, email verification, school profiles, school memberships, invite-only access, subject selections, classes, student records, teacher-to-class/subject assignments, assessments, marks, and assessment reviews are persisted in Neon. Administrators can enrol, search, update, archive, and reactivate student records; class deletion is blocked when student records still reference it. Teacher assignments are visible to the assigned teacher, and teacher class listings and assessments are limited to their assigned classes and subjects. Each assessment snapshots its active class roster when it is created. Teachers can save incomplete mark drafts, but must enter marks for every student on that snapshot before submission. Administrators can approve submitted marks or return them with a required note.
+
+The overview figures and student results table still contain sample data. Final result calculation, report-card publishing, student account-to-record linking, and parent access are not implemented yet. Approved assessment marks are not term report cards and do not have a grading policy applied. Do not use the sample figures or results for school decisions. Before using real student information, deploy and test the updated API, confirm privacy requirements and backups, and verify school permissions in the production environment.
