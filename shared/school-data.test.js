@@ -8,6 +8,7 @@ import {
   normalizeAssessmentReviewInput,
   calculatePointsPercentage,
   summarizePublishedResultRows,
+  groupPublishedResultRowsByStudent,
   normalizeTeachingAssignmentInput,
 } from "./school-data.js";
 
@@ -196,4 +197,18 @@ test("summarizes a published report using weighted approved points only", () => 
     averagePercentage: null,
   });
   assert.equal(summarizePublishedResultRows(null).averagePercentage, null);
+});
+
+test("groups published rows into alphabetized student report cards", () => {
+  const rows = [
+    { studentId: "student-2", firstName: "Ada", lastName: "Zulu", admissionNumber: "AST-002", subject: "Mathematics" },
+    { studentId: "student-1", firstName: "Bola", lastName: "Ade", admissionNumber: "AST-001", subject: "English" },
+    { studentId: "student-1", firstName: "Bola", lastName: "Ade", admissionNumber: "AST-001", subject: "Mathematics" },
+  ];
+
+  assert.deepEqual(groupPublishedResultRowsByStudent(rows), [
+    { studentId: "student-1", rows: [rows[1], rows[2]] },
+    { studentId: "student-2", rows: [rows[0]] },
+  ]);
+  assert.deepEqual(groupPublishedResultRowsByStudent(null), []);
 });

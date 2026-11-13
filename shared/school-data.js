@@ -195,3 +195,24 @@ export function summarizePublishedResultRows(rows) {
     averagePercentage: calculatePointsPercentage(summary.earnedPoints, summary.possiblePoints),
   };
 }
+
+export function groupPublishedResultRowsByStudent(rows) {
+  const rowsByStudent = new Map();
+  for (const row of Array.isArray(rows) ? rows : []) {
+    let studentRows = rowsByStudent.get(row.studentId);
+    if (!studentRows) {
+      studentRows = [];
+      rowsByStudent.set(row.studentId, studentRows);
+    }
+    studentRows.push(row);
+  }
+  return [...rowsByStudent.entries()]
+    .map(([studentId, studentRows]) => ({ studentId, rows: studentRows }))
+    .sort((left, right) => {
+      const leftStudent = left.rows[0];
+      const rightStudent = right.rows[0];
+      return leftStudent.lastName.localeCompare(rightStudent.lastName)
+        || leftStudent.firstName.localeCompare(rightStudent.firstName)
+        || leftStudent.admissionNumber.localeCompare(rightStudent.admissionNumber);
+    });
+}

@@ -338,6 +338,7 @@ select.text-input { color: #58645a; }
 .student-results-panel .result-sheet-filters { margin: 14px 0; }
 .student-results-panel .result-sheet-filters label { min-width: 260px; }
 .student-report-card { min-width: 0; }
+.class-report-print-root { display: none; }
 .student-report-print-heading { display: none; }
 .student-report-summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 9px; margin: 14px 0; }
 .student-report-summary > div { display: grid; gap: 7px; min-width: 0; padding: 12px; border: 1px solid #e8eee8; border-radius: 9px; background: #f8faf7; }
@@ -995,4 +996,29 @@ select.text-input option { background: #101d16; color: #edf5ef; }
   .student-report-card .result-sheet-table td { border-color: #d5dcd5; background: transparent; color: #26352a; }
   .student-report-card .result-sheet-table thead { background: #edf2eb; }
   .student-report-card .result-sheet-table td > strong { color: #26352a !important; }
+  body.printing-class-reports * { visibility: hidden !important; }
+  body.printing-class-reports .class-report-print-root,
+  body.printing-class-reports .class-report-print-root * { visibility: visible !important; }
+  body.printing-class-reports .class-report-print-root {
+    display: block !important;
+    position: absolute;
+    inset: 0 auto auto 0;
+    width: 100%;
+  }
+  body.printing-class-reports .class-report-card {
+    break-after: page;
+    break-inside: avoid;
+    page-break-after: always;
+    page-break-inside: avoid;
+  }
+  body.printing-class-reports .class-report-card:last-child {
+    break-after: auto;
+    page-break-after: auto;
+  }
+  body.printing-class-reports .class-report-card .student-report-card {
+    position: relative;
+    inset: auto;
+    width: 100%;
+    padding: 0;
+  }
 }
