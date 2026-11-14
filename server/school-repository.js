@@ -2074,6 +2074,70 @@ export async function createSchoolStudent(schoolId, student) {
   return created ?? null;
 }
 
+export async function importSchoolStudents(schoolId, classId, students) {
+  const sql = await getReadyDatabase();
+  const records = students.map((student) => ({
+    id: randomUUID(),
+    admission_number: student.admissionNumber,
+    first_name: student.firstName,
+    last_name: student.lastName,
+    guardian_email: student.guardianEmail,
+    guardian_phone: student.guardianPhone,
+  }));
+  const [result] = await sql`
+    WITH input AS MATERIALIZED (
+      SELECT * FROM jsonb_to_recordset(${JSON.stringify(records)}::jsonb)
+        AS student_import(id uuid, admission_number text, first_name text, last_name text,
+                          guardian_email text, guardian_phone text)
+    ),
+    eligible_class AS MATERIALIZED (
+      SELECT c.id
+      FROM school_classes c
+      WHERE c.school_id = ${schoolId} AND c.id = ${classId}
+      FOR KEY SHARE
+    ),
+    batch_duplicates AS MATERIALIZED (
+      SELECT admission_number
+      FROM input
+      GROUP BY admission_number
+      HAVING COUNT(*) > 1
+    ),
+    existing_duplicates AS MATERIALIZED (
+      SELECT DISTINCT input.admission_number
+      FROM input
+      JOIN school_students existing
+        ON existing.school_id = ${schoolId}
+        AND existing.admission_number = input.admission_number
+    ),
+    inserted AS (
+      INSERT INTO school_students
+        (id, school_id, class_id, admission_number, first_name, last_name,
+         guardian_email, guardian_phone)
+      SELECT input.id, ${schoolId}, eligible_class.id, input.admission_number,
+             input.first_name, input.last_name, input.guardian_email, input.guardian_phone
+      FROM input
+      CROSS JOIN eligible_class
+      WHERE NOT EXISTS (SELECT 1 FROM batch_duplicates)
+        AND NOT EXISTS (SELECT 1 FROM existing_duplicates)
+      RETURNING id
+    )
+    SELECT EXISTS (SELECT 1 FROM eligible_class) AS "classFound",
+           COALESCE((SELECT ARRAY_AGG(admission_number) FROM batch_duplicates), ARRAY[]::text[])
+             AS "duplicateAdmissions",
+           COALESCE((SELECT ARRAY_AGG(admission_number) FROM existing_duplicates), ARRAY[]::text[])
+             AS "existingAdmissions",
+           (SELECT COUNT(*)::int FROM inserted) AS "importedCount"
+  `;
+  if (!result.classFound) return { error: "class" };
+  if (result.duplicateAdmissions.length) {
+    return { error: "duplicates", admissions: result.duplicateAdmissions };
+  }
+  if (result.existingAdmissions.length) {
+    return { error: "existing", admissions: result.existingAdmissions };
+  }
+  return { importedCount: result.importedCount };
+}
+
 export async function updateSchoolStudent(schoolId, studentId, student) {
   const sql = await getReadyDatabase();
   const [updated] = await sql`

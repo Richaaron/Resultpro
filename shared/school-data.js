@@ -234,6 +234,181 @@ export function normalizeStudentInput(body = {}) {
   return { firstName, lastName, admissionNumber, classId, guardianEmail: guardianEmail || null, guardianPhone: guardianPhone || null };
 }
 
+function parseCsvRecords(text) {
+  const records = [];
+  let cells = [];
+  let value = "";
+  let line = 1;
+  let recordLine = 1;
+  let quoted = false;
+  let quoteClosed = false;
+
+  const pushCell = () => {
+    cells.push(value);
+    value = "";
+    quoteClosed = false;
+  };
+  const pushRecord = () => {
+    pushCell();
+    records.push({ cells, line: recordLine });
+    cells = [];
+    recordLine = line + 1;
+  };
+
+  for (let index = 0; index < text.length; index += 1) {
+    const character = text[index];
+    if (quoted) {
+      if (character === "\"") {
+        if (text[index + 1] === "\"") {
+          value += "\"";
+          index += 1;
+        } else {
+          quoted = false;
+          quoteClosed = true;
+        }
+      } else if (character === "\r" || character === "\n") {
+        if (character === "\r" && text[index + 1] === "\n") index += 1;
+        value += "\n";
+        line += 1;
+      } else {
+        value += character;
+      }
+      continue;
+    }
+
+    if (quoteClosed && character !== "," && character !== "\r" && character !== "\n" && !/[ \t]/.test(character)) {
+      return { records: [], error: `Unexpected character after a quoted value on line ${line}.` };
+    }
+    if (quoteClosed && /[ \t]/.test(character)) continue;
+    if (character === "\"" && value.length === 0) {
+      quoted = true;
+    } else if (character === ",") {
+      pushCell();
+    } else if (character === "\r" || character === "\n") {
+      if (character === "\r" && text[index + 1] === "\n") index += 1;
+      pushRecord();
+      line += 1;
+      recordLine = line;
+    } else if (character === "\"") {
+      return { records: [], error: `Unexpected quote on line ${line}.` };
+    } else {
+      value += character;
+    }
+  }
+
+  if (quoted) return { records: [], error: "The CSV ends inside a quoted value." };
+  if (value.length || cells.length || quoteClosed) {
+    pushCell();
+    records.push({ cells, line: recordLine });
+  }
+  return { records, error: null };
+}
+
+export function parseStudentCsv(text) {
+  if (typeof text !== "string" || text.length > 1_000_000) {
+    return { students: [], errors: [{ line: 1, message: "Choose a CSV file smaller than 1 MB." }] };
+  }
+
+  const { records, error: parseError } = parseCsvRecords(text.replace(/^\uFEFF/, ""));
+  if (parseError) return { students: [], errors: [{ line: 1, message: parseError }] };
+  const nonEmptyRecords = records.filter(({ cells }) => cells.some((cell) => cell.trim() !== ""));
+  if (!nonEmptyRecords.length) {
+    return { students: [], errors: [{ line: 1, message: "The CSV file is empty." }] };
+  }
+
+  const knownHeaders = {
+    firstname: "firstName",
+    lastname: "lastName",
+    admissionnumber: "admissionNumber",
+    guardianemail: "guardianEmail",
+    guardianphone: "guardianPhone",
+  };
+  const headerRecord = nonEmptyRecords[0];
+  const headerKeys = headerRecord.cells.map((cell) => cell.trim().toLowerCase().replace(/[\s_-]+/g, ""));
+  const errors = [];
+  const columnIndexes = new Map();
+  headerKeys.forEach((key, index) => {
+    const field = knownHeaders[key];
+    if (!field) {
+      errors.push({ line: headerRecord.line, message: `Unrecognized column "${headerRecord.cells[index].trim()}".` });
+    } else if (columnIndexes.has(field)) {
+      errors.push({ line: headerRecord.line, message: `The ${field} column appears more than once.` });
+    } else {
+      columnIndexes.set(field, index);
+    }
+  });
+  for (const requiredField of ["firstName", "lastName", "admissionNumber"]) {
+    if (!columnIndexes.has(requiredField)) {
+      errors.push({ line: headerRecord.line, message: `Add the required ${requiredField} column.` });
+    }
+  }
+  if (errors.length) return { students: [], errors };
+
+  const students = [];
+  const seenAdmissionNumbers = new Set();
+  const validationClassId = "123e4567-e89b-42d3-a456-426614174000";
+  const dataRecords = nonEmptyRecords.slice(1);
+  for (let recordIndex = 0; recordIndex < dataRecords.length; recordIndex += 1) {
+    const record = dataRecords[recordIndex];
+    if (recordIndex >= 200) {
+      errors.push({ line: record.line, message: "Imports are limited to 200 student records per file." });
+      break;
+    }
+    if (record.cells.length > headerKeys.length
+      && record.cells.slice(headerKeys.length).some((cell) => cell.trim() !== "")) {
+      errors.push({ line: record.line, message: "This row has more values than the header." });
+      continue;
+    }
+    const row = Object.fromEntries([...columnIndexes].map(([field, index]) => [field, record.cells[index] ?? ""]));
+    const student = normalizeStudentInput({ ...row, classId: validationClassId });
+    if (!student) {
+      errors.push({
+        line: record.line,
+        message: "Check the name, admission number, guardian email, and phone length.",
+      });
+      continue;
+    }
+    const admissionKey = student.admissionNumber.toLowerCase();
+    if (seenAdmissionNumbers.has(admissionKey)) {
+      errors.push({ line: record.line, message: `Admission number ${student.admissionNumber} is duplicated in this file.` });
+      continue;
+    }
+    seenAdmissionNumbers.add(admissionKey);
+    students.push({
+      firstName: student.firstName,
+      lastName: student.lastName,
+      admissionNumber: student.admissionNumber,
+      guardianEmail: student.guardianEmail,
+      guardianPhone: student.guardianPhone,
+    });
+  }
+
+  if (!students.length && !errors.length) {
+    errors.push({ line: headerRecord.line + 1, message: "Add at least one student record below the header." });
+  }
+  return { students, errors };
+}
+
+export function normalizeStudentImportInput(body = {}) {
+  if (!body || typeof body !== "object" || Array.isArray(body)
+    || !uuidPattern.test(body.classId)
+    || !Array.isArray(body.students)
+    || body.students.length < 1
+    || body.students.length > 200) {
+    return null;
+  }
+
+  const students = [];
+  const admissions = new Set();
+  for (const item of body.students) {
+    const student = normalizeStudentInput({ ...item, classId: body.classId });
+    if (!student || admissions.has(student.admissionNumber)) return null;
+    admissions.add(student.admissionNumber);
+    students.push(student);
+  }
+  return { classId: body.classId, students };
+}
+
 export function normalizeTeachingAssignmentInput(body = {}) {
   if (!body || typeof body !== "object" || Array.isArray(body)) return null;
   const classId = typeof body.classId === "string" ? body.classId : "";

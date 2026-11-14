@@ -14,6 +14,7 @@ import {
   getSchoolClassAttendanceReport,
   getSchoolGradingSettings,
   getSchoolRole,
+  importSchoolStudents,
   listSchoolInvitations,
   getSchoolPublishedResultSheet,
   listSchoolTeachers,
@@ -49,6 +50,7 @@ import {
   normalizeAssessmentMarksInput,
   normalizeAssessmentReviewInput,
   normalizeAttendanceInput,
+  normalizeStudentImportInput,
   normalizeGradingSettingsInput,
   isValidAttendanceDate,
   isValidAttendanceReportRange,
@@ -705,6 +707,42 @@ app.post("/api/schools/:schoolId/students", requireAuth, async (request, respons
     const created = await createSchoolStudent(schoolId, student);
     if (!created) return response.status(400).json({ error: "Choose a class in this school." });
     return response.status(201).json({ student: created });
+  } catch (error) {
+    return handleDatabaseError(error, response);
+  }
+});
+
+app.post("/api/schools/:schoolId/students/import", requireAuth, async (request, response) => {
+  const { schoolId } = request.params;
+  const studentImport = normalizeStudentImportInput(request.body);
+  if (!isUuid(schoolId) || !studentImport) {
+    return response.status(400).json({
+      error: "Provide a valid class and between one and 200 students with unique admission numbers.",
+    });
+  }
+
+  try {
+    const membershipRole = await getSchoolRole(schoolId, request.auth.userId);
+    if (!membershipRole) return response.status(404).json({ error: "School not found." });
+    if (membershipRole !== "admin") {
+      return response.status(403).json({ error: "Only a school administrator can import students." });
+    }
+
+    const result = await importSchoolStudents(schoolId, studentImport.classId, studentImport.students);
+    if (result.error === "class") {
+      return response.status(400).json({ error: "Choose a class in this school." });
+    }
+    if (result.error === "duplicates") {
+      return response.status(400).json({
+        error: `Admission numbers are duplicated in the file: ${result.admissions.join(", ")}. No students were imported.`,
+      });
+    }
+    if (result.error === "existing") {
+      return response.status(409).json({
+        error: `These admission numbers already exist: ${result.admissions.join(", ")}. No students were imported.`,
+      });
+    }
+    return response.status(201).json({ importedCount: result.importedCount });
   } catch (error) {
     return handleDatabaseError(error, response);
   }

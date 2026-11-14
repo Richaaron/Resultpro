@@ -9,6 +9,7 @@ import {
   defaultGradingSettings,
   groupPublishedResultRowsByStudent,
   normalizeGradingSettingsInput,
+  parseStudentCsv,
   summarizePublishedResultRows,
 } from "../shared/school-data.js";
 
@@ -222,6 +223,10 @@ function App() {
   const [studentPage, setStudentPage] = useState(1);
   const [studentTotal, setStudentTotal] = useState(0);
   const [studentRefresh, setStudentRefresh] = useState(0);
+  const [studentImportClassId, setStudentImportClassId] = useState("");
+  const [studentImportPreview, setStudentImportPreview] = useState(null);
+  const [studentImportError, setStudentImportError] = useState("");
+  const [studentImporting, setStudentImporting] = useState(false);
   const [studentForm, setStudentForm] = useState({
     firstName: "",
     lastName: "",
@@ -1377,6 +1382,74 @@ function App() {
     }
   }
 
+  function downloadStudentImportTemplate() {
+    const template = "firstName,lastName,admissionNumber,guardianEmail,guardianPhone\r\n";
+    const objectUrl = URL.createObjectURL(new Blob([template], { type: "text/csv;charset=utf-8" }));
+    const link = document.createElement("a");
+    link.href = objectUrl;
+    link.download = "aster-student-import-template.csv";
+    link.click();
+    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
+  }
+
+  async function previewStudentImport(event) {
+    const file = event.target.files?.[0];
+    setStudentImportError("");
+    setStudentImportPreview(null);
+    if (!file) return;
+    if (file.size > 1_000_000) {
+      setStudentImportError("Choose a CSV file smaller than 1 MB.");
+      event.target.value = "";
+      return;
+    }
+
+    try {
+      const parsed = parseStudentCsv(await file.text());
+      setStudentImportPreview({ fileName: file.name, ...parsed });
+    } catch (requestError) {
+      setStudentImportError(requestError.message || "Could not read the selected CSV file.");
+      event.target.value = "";
+    }
+  }
+
+  async function importStudentsFromCsv() {
+    if (!school || !studentImportClassId || !studentImportPreview?.students.length
+      || studentImportPreview.errors.length) {
+      setStudentImportError("Choose a class and resolve all CSV preview errors before importing.");
+      return;
+    }
+
+    const requestBody = JSON.stringify({
+      classId: studentImportClassId,
+      students: studentImportPreview.students,
+    });
+    if (new Blob([requestBody]).size > 120 * 1024) {
+      setStudentImportError("This batch is too large to send at once. Remove some rows and import them in smaller batches.");
+      return;
+    }
+
+    setStudentImporting(true);
+    setStudentImportError("");
+    try {
+      const { importedCount } = await apiRequest(`/api/schools/${school.id}/students/import`, {
+        method: "POST",
+        body: requestBody,
+      });
+      setStudentImportPreview(null);
+      const fileInput = document.getElementById("studentImportFile");
+      if (fileInput) fileInput.value = "";
+      setStudentPage(1);
+      setStudentRefresh((previous) => previous + 1);
+      setClassRefresh((previous) => previous + 1);
+      setDashboardRefresh((previous) => previous + 1);
+      setToast(`${importedCount} student${importedCount === 1 ? "" : "s"} imported successfully.`);
+    } catch (requestError) {
+      setStudentImportError(requestError.message || "Could not import the student records.");
+    } finally {
+      setStudentImporting(false);
+    }
+  }
+
   async function toggleStudentStatus(student) {
     setStudentError("");
     try {
@@ -2009,6 +2082,35 @@ function App() {
                 <div className="student-form-actions">{editingStudentId && <button className="button button-secondary" type="button" onClick={resetStudentForm}>Cancel edit</button>}<button className="button button-primary" type="submit" disabled={savingStudent}>{savingStudent ? "Saving…" : editingStudentId ? "Save changes" : "Enrol student"}</button></div>
               </form>}
               {studentError && <p className="form-error" role="alert">{studentError}</p>}
+            </section>
+            <section className="panel student-import-panel">
+              <div className="panel-heading">
+                <div><h2>Import students from CSV</h2><p>Enroll up to 200 students into one class at a time. Every row is checked before anything is saved.</p></div>
+                <button className="button button-secondary button-small" type="button" onClick={downloadStudentImportTemplate}>Download CSV template</button>
+              </div>
+              <div className="student-import-controls">
+                <label><span>Target class</span><select className="text-input" value={studentImportClassId} onChange={(event) => setStudentImportClassId(event.target.value)} disabled={loadingClasses || !schoolClasses.length}><option value="">Select a class</option>{schoolClasses.map((schoolClass) => <option key={schoolClass.id} value={schoolClass.id}>{schoolClass.grade} {schoolClass.section} · {schoolClass.academicYear}</option>)}</select></label>
+                <label><span>CSV file</span><input className="text-input" id="studentImportFile" type="file" accept=".csv,text/csv" onChange={previewStudentImport} disabled={!schoolClasses.length || studentImporting} /></label>
+              </div>
+              <p className="field-hint">Required columns: firstName, lastName, admissionNumber. guardianEmail and guardianPhone are optional. Imports are all-or-nothing; duplicate admission numbers stop the full import.</p>
+              {studentImportError && <p className="form-error" role="alert">{studentImportError}</p>}
+              {studentImportPreview && <>
+                <div className="student-import-preview-heading">
+                  <strong>{studentImportPreview.fileName}</strong>
+                  <span>{studentImportPreview.students.length} valid row{studentImportPreview.students.length === 1 ? "" : "s"} · {studentImportPreview.errors.length} issue{studentImportPreview.errors.length === 1 ? "" : "s"}</span>
+                </div>
+                {studentImportPreview.errors.length > 0 && <ul className="student-import-errors" role="alert">
+                  {studentImportPreview.errors.slice(0, 8).map((item, index) => <li key={`${item.line}-${index}`}>Line {item.line}: {item.message}</li>)}
+                  {studentImportPreview.errors.length > 8 && <li>And {studentImportPreview.errors.length - 8} more issue{studentImportPreview.errors.length - 8 === 1 ? "" : "s"}.</li>}
+                </ul>}
+                {studentImportPreview.students.length > 0 && <div className="table-scroll student-import-table"><table><thead><tr><th>FIRST NAME</th><th>LAST NAME</th><th>ADMISSION NO.</th><th>GUARDIAN EMAIL</th><th>GUARDIAN PHONE</th></tr></thead><tbody>
+                  {studentImportPreview.students.slice(0, 5).map((student) => <tr key={student.admissionNumber}><td>{student.firstName}</td><td>{student.lastName}</td><td>{student.admissionNumber}</td><td>{student.guardianEmail || "—"}</td><td>{student.guardianPhone || "—"}</td></tr>)}
+                </tbody></table>{studentImportPreview.students.length > 5 && <p className="field-hint">Showing 5 of {studentImportPreview.students.length} valid rows.</p>}</div>}
+                <div className="student-import-actions">
+                  <button className="button button-secondary" type="button" onClick={() => { setStudentImportPreview(null); setStudentImportError(""); const fileInput = document.getElementById("studentImportFile"); if (fileInput) fileInput.value = ""; }} disabled={studentImporting}>Clear file</button>
+                  <button className="button button-primary" type="button" onClick={importStudentsFromCsv} disabled={studentImporting || !studentImportClassId || !studentImportPreview.students.length || studentImportPreview.errors.length > 0}>{studentImporting ? "Importing…" : `Import ${studentImportPreview.students.length} students`}</button>
+                </div>
+              </>}
             </section>
             <section className="panel results-panel student-register-panel">
               <div className="panel-heading results-heading"><div><h2>Student register</h2><p>{studentTotal} student record{studentTotal === 1 ? "" : "s"} matching your filters.</p></div>

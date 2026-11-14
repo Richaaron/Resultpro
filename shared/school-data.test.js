@@ -3,6 +3,8 @@ import { test } from "node:test";
 import {
   normalizeClassInput,
   normalizeStudentInput,
+  normalizeStudentImportInput,
+  parseStudentCsv,
   normalizeAssessmentInput,
   normalizeAssessmentMarksInput,
   normalizeAssessmentReviewInput,
@@ -66,6 +68,68 @@ test("normalizes admission details and optional guardian contacts", () => {
     guardianEmail: "not-an-email",
   }), null);
   assert.equal(normalizeStudentInput(null), null);
+});
+
+test("parses student CSV rows, quoted values, and optional guardian contacts", () => {
+  const parsed = parseStudentCsv(
+    "\uFEFFfirstName,lastName,admissionNumber,guardianEmail,guardianPhone\r\n"
+    + '"Ada, Jr.","O""Neil",ast/001,parent@example.com,+234 800 000 0000\r\n',
+  );
+  assert.deepEqual(parsed, {
+    students: [{
+      firstName: "Ada, Jr.",
+      lastName: "O\"Neil",
+      admissionNumber: "AST/001",
+      guardianEmail: "parent@example.com",
+      guardianPhone: "+234 800 000 0000",
+    }],
+    errors: [],
+  });
+});
+
+test("rejects malformed, duplicate, and oversized student CSV imports", () => {
+  assert.match(parseStudentCsv('firstName,lastName,admissionNumber\n"Ada,Okafor,AST/001').errors[0].message, /quoted value/);
+  assert.match(parseStudentCsv("firstName,lastName\nAda,Okafor").errors[0].message, /admissionNumber/);
+  assert.match(
+    parseStudentCsv("firstName,lastName,admissionNumber\nAda,One,AST/001\nBea,Two,ast/001").errors[0].message,
+    /duplicated in this file/,
+  );
+  const oversized = parseStudentCsv(
+    `firstName,lastName,admissionNumber\n${Array.from({ length: 201 }, (_, index) => `Student,Name,AST/${index + 1}`).join("\n")}`,
+  );
+  assert.equal(oversized.students.length, 200);
+  assert.match(oversized.errors[0].message, /limited to 200/);
+});
+
+test("normalizes a whole student import and rejects invalid or duplicate admissions", () => {
+  const classId = "123e4567-e89b-42d3-a456-426614174000";
+  assert.deepEqual(normalizeStudentImportInput({
+    classId,
+    students: [{
+      firstName: "Ada",
+      lastName: "Okafor",
+      admissionNumber: "ast/001",
+      guardianEmail: "",
+      guardianPhone: "",
+    }],
+  }), {
+    classId,
+    students: [{
+      firstName: "Ada",
+      lastName: "Okafor",
+      admissionNumber: "AST/001",
+      classId,
+      guardianEmail: null,
+      guardianPhone: null,
+    }],
+  });
+  assert.equal(normalizeStudentImportInput({
+    classId,
+    students: [
+      { firstName: "Ada", lastName: "One", admissionNumber: "AST/001" },
+      { firstName: "Bea", lastName: "Two", admissionNumber: "ast/001" },
+    ],
+  }), null);
 });
 
 test("validates the identifiers and subject for a teaching assignment", () => {
