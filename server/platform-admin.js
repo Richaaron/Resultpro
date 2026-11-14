@@ -2,6 +2,7 @@ import { subscriptionPlans } from "../shared/billing-plans.js";
 
 const platformBillingStatuses = new Set(["pending", "exempt", "paid"]);
 const platformBillingPlanIds = new Set(subscriptionPlans.map((plan) => plan.id));
+const platformSchoolPageSize = 50;
 
 export function isPlatformAdminEmail(email, configuredEmails = process.env.PLATFORM_ADMIN_EMAILS || "") {
   if (typeof email !== "string") return false;
@@ -27,4 +28,17 @@ export function normalizePlatformSchoolBillingDecision(body = {}) {
       : null;
   }
   return planId === null ? { billingStatus, planId: null } : null;
+}
+
+export function normalizePlatformSchoolDirectoryQuery(query = {}) {
+  if (!query || typeof query !== "object" || Array.isArray(query)) return null;
+
+  const rawPage = query.page ?? 1;
+  const validPageValue = (typeof rawPage === "number" && Number.isSafeInteger(rawPage))
+    || (typeof rawPage === "string" && /^\d+$/.test(rawPage));
+  const page = Number(rawPage);
+  const search = query.search ?? "";
+  if (!validPageValue || !Number.isSafeInteger(page) || page < 1 || page > 100000) return null;
+  if (typeof search !== "string" || search.length > 100) return null;
+  return { page, pageSize: platformSchoolPageSize, search: search.trim() };
 }

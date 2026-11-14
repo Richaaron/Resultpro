@@ -64,6 +64,7 @@ import { requireAuth } from "./auth.js";
 import {
   isPlatformAdminEmail,
   normalizePlatformSchoolBillingDecision,
+  normalizePlatformSchoolDirectoryQuery,
 } from "./platform-admin.js";
 import { sendInvitationEmail } from "./invitation-email.js";
 import path from "node:path";
@@ -97,9 +98,13 @@ app.get("/api/platform/overview", requireAuth, async (request, response) => {
   if (!isPlatformAdminEmail(request.auth.email)) {
     return response.status(403).json({ error: "Platform administrator access is required." });
   }
+  const directoryQuery = normalizePlatformSchoolDirectoryQuery(request.query);
+  if (!directoryQuery) {
+    return response.status(400).json({ error: "The school directory page or search query is invalid." });
+  }
   response.set("Cache-Control", "no-store");
   try {
-    const overview = await getPlatformOverview();
+    const overview = await getPlatformOverview(directoryQuery);
     return response.json({ overview });
   } catch (error) {
     return handleDatabaseError(error, response);

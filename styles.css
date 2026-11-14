@@ -270,9 +270,14 @@ select.text-input { color: #58645a; }
 .dashboard-error { border-color: #e7c9c4; color: #9c4b42; }
 .platform-overview { display: grid; gap: 14px; }
 .platform-summary-panel { display: grid; gap: 14px; }
-.platform-directory-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-top: 2px; }
+.platform-directory-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; margin-top: 2px; }
 .platform-directory-heading h3 { margin: 0; color: #4f5b52; font: 700 12px/1.4 var(--font-display); }
 .platform-directory-heading p { margin: 4px 0 0; color: #89938b; font-size: 10px; }
+.platform-school-search { display: flex; align-items: flex-end; gap: 7px; }
+.platform-school-search-field { display: grid; min-width: 220px; gap: 4px; color: #637065; font-size: 9px; font-weight: 600; }
+.platform-school-search-field .text-input { height: 33px; min-height: 33px; padding: 0 8px; font-size: 10px; }
+.platform-directory-pagination { display: flex; align-items: center; justify-content: space-between; gap: 10px; color: #778178; font-size: 10px; }
+.platform-directory-pagination > div { display: flex; gap: 7px; }
 .platform-directory-table { min-width: 1180px; }
 .platform-directory-table td > strong { color: #4f5b52; font-size: 10px; font-weight: 600; }
 .platform-billing-controls { display: grid; min-width: 215px; gap: 7px; }
@@ -483,6 +488,9 @@ select.text-input { color: #58645a; }
   .class-create-form, .student-create-form, .assignment-form, .assessment-create-form, .student-import-controls { grid-template-columns: repeat(2, minmax(0, 1fr)); }.class-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }.student-filters { width: 100%; }.student-filters .search-box { flex: 1; }.student-filters .text-input { width: 130px; }
   .student-report-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .platform-pricing-grid { grid-template-columns: 1fr; }
+  .platform-directory-heading { align-items: stretch; flex-direction: column; }
+  .platform-school-search { flex-wrap: wrap; }
+  .platform-school-search-field { flex: 1; min-width: 180px; }
   .grading-band-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }.grading-band-remove { grid-column: 1 / -1; justify-self: start; }
 }
 @media (max-width: 390px) {
@@ -813,6 +821,8 @@ h1, .panel-heading h2, .stat-number { color: #f0f7f1; }
 .panel-heading p { color: #b3c2b6; }
 .platform-directory-heading h3 { color: #e8f4e9; }
 .platform-directory-heading p { color: #a9b9ac; }
+.platform-school-search-field { color: #d4e1d7; }
+.platform-directory-pagination { color: #b0c0b4; }
 .platform-billing-field { color: #d4e1d7; }
 .platform-billing-feedback { color: #a2d6a5; }
 .platform-billing-notice { border-color: #514629; background: #2b2619; color: #e3cb8b; }

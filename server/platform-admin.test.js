@@ -3,6 +3,7 @@ import { test } from "node:test";
 import {
   isPlatformAdminEmail,
   normalizePlatformSchoolBillingDecision,
+  normalizePlatformSchoolDirectoryQuery,
 } from "./platform-admin.js";
 
 test("matches platform administrators by exact normalized email", () => {
@@ -34,4 +35,22 @@ test("validates per-school billing decisions and requires an approved plan for p
   assert.equal(normalizePlatformSchoolBillingDecision({ billingStatus: "paid", planId: "custom" }), null);
   assert.equal(normalizePlatformSchoolBillingDecision({ billingStatus: "exempt", planId: "starter" }), null);
   assert.equal(normalizePlatformSchoolBillingDecision({ billingStatus: "overdue" }), null);
+});
+
+test("normalizes school directory search and pagination inputs", () => {
+  assert.deepEqual(normalizePlatformSchoolDirectoryQuery(), {
+    page: 1,
+    pageSize: 50,
+    search: "",
+  });
+  assert.deepEqual(normalizePlatformSchoolDirectoryQuery({ page: "2", search: "  academy " }), {
+    page: 2,
+    pageSize: 50,
+    search: "academy",
+  });
+  assert.equal(normalizePlatformSchoolDirectoryQuery({ page: "0" }), null);
+  assert.equal(normalizePlatformSchoolDirectoryQuery({ page: "1.5" }), null);
+  assert.equal(normalizePlatformSchoolDirectoryQuery({ page: "1e2" }), null);
+  assert.equal(normalizePlatformSchoolDirectoryQuery({ search: "x".repeat(101) }), null);
+  assert.equal(normalizePlatformSchoolDirectoryQuery({ search: " ".repeat(101) }), null);
 });

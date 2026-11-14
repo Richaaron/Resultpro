@@ -172,6 +172,9 @@ function App() {
   const [loadingPlatformOverview, setLoadingPlatformOverview] = useState(false);
   const [platformOverviewError, setPlatformOverviewError] = useState("");
   const [platformRefresh, setPlatformRefresh] = useState(0);
+  const [platformSchoolSearchDraft, setPlatformSchoolSearchDraft] = useState("");
+  const [platformSchoolSearch, setPlatformSchoolSearch] = useState("");
+  const [platformSchoolPage, setPlatformSchoolPage] = useState(1);
   const [platformBillingDrafts, setPlatformBillingDrafts] = useState({});
   const [platformBillingSaving, setPlatformBillingSaving] = useState("");
   const [platformBillingFeedback, setPlatformBillingFeedback] = useState({});
@@ -297,6 +300,16 @@ function App() {
   const verifiedEmail = session?.user?.email?.trim().toLowerCase() || "";
   const platformAdmin = platformAccess?.email === verifiedEmail && platformAccess?.isPlatformAdmin === true;
   const platformOverviewForUser = platformOverview?.email === verifiedEmail ? platformOverview : null;
+  const platformDirectory = platformOverviewForUser?.directory;
+  const platformDirectoryPageCount = platformDirectory
+    ? Math.ceil(platformDirectory.totalCount / platformDirectory.pageSize)
+    : 0;
+  const platformDirectoryFirstRow = platformDirectory?.totalCount
+    ? ((platformDirectory.page - 1) * platformDirectory.pageSize) + 1
+    : 0;
+  const platformDirectoryLastRow = platformDirectory
+    ? Math.min(platformDirectory.page * platformDirectory.pageSize, platformDirectory.totalCount)
+    : 0;
   const current = portalData[role];
   const visibleNavigation = navigation.filter(([id]) => role === "admin" || (role === "teacher" && ["overview", "results", "attendance", "classes"].includes(id)) || (["student", "parent"].includes(role) && ["overview", "results"].includes(id)));
   const dashboardForCurrentSchool = dashboardData && dashboardData.schoolId === school?.id ? dashboardData : null;
@@ -518,7 +531,8 @@ function App() {
 
       setLoadingPlatformOverview(true);
       setPlatformOverviewError("");
-      apiRequest("/api/platform/overview")
+      const search = encodeURIComponent(platformSchoolSearch);
+      apiRequest(`/api/platform/overview?page=${platformSchoolPage}&search=${search}`)
         .then(({ overview }) => {
           if (active) setPlatformOverview({ ...overview, email: verifiedEmail });
         })
@@ -531,11 +545,14 @@ function App() {
           if (active) setLoadingPlatformOverview(false);
         });
       return () => { active = false; };
-  }, [platformAdmin, page, platformRefresh, verifiedEmail]);
+  }, [platformAdmin, page, platformRefresh, platformSchoolPage, platformSchoolSearch, verifiedEmail]);
 
   useEffect(() => {
     setPlatformBillingDrafts({});
     setPlatformBillingFeedback({});
+    setPlatformSchoolSearchDraft("");
+    setPlatformSchoolSearch("");
+    setPlatformSchoolPage(1);
   }, [verifiedEmail]);
 
   useEffect(() => {
@@ -1913,8 +1930,17 @@ function App() {
                     <div className="stat-number">{Number(value).toLocaleString("en-NG")}</div><div className="stat-foot"><span>{detail}</span></div>
                   </article>)}
                 </section>
-                <div className="platform-directory-heading"><div><h3>Recently created schools</h3><p>Showing up to 100 of {platformOverviewForUser.summary.schoolCount.toLocaleString("en-NG")} schools. New schools remain pending until you decide.</p></div></div>
-                {platformOverviewForUser.schools.length === 0 ? <p className="empty-search">No school workspaces have been created yet.</p> : <div className="table-scroll"><table className="platform-directory-table"><thead><tr><th>SCHOOL</th><th>COUNTRY</th><th>TYPE</th><th>STUDENTS</th><th>TEACHERS</th><th>CLASSES</th><th>ADMINS</th><th>CREATED</th><th>BILLING DECISION</th></tr></thead><tbody>
+                <div className="platform-directory-heading">
+                  <div><h3>School directory</h3><p>Showing {platformDirectoryFirstRow.toLocaleString("en-NG")}–{platformDirectoryLastRow.toLocaleString("en-NG")} of {platformDirectory?.totalCount.toLocaleString("en-NG")} {platformSchoolSearch ? "matching " : ""}schools; {platformOverviewForUser.summary.schoolCount.toLocaleString("en-NG")} registered. New schools remain pending until you decide.</p></div>
+                  <form className="platform-school-search" onSubmit={(event) => { event.preventDefault(); setPlatformSchoolSearch(platformSchoolSearchDraft.trim()); setPlatformSchoolPage(1); }}>
+                    <label className="platform-school-search-field"><span>Find a school</span><input className="text-input" type="search" value={platformSchoolSearchDraft} maxLength={100} placeholder="Name, type, or country" onChange={(event) => setPlatformSchoolSearchDraft(event.target.value)} /></label>
+                    <button className="button button-secondary button-small" type="submit" disabled={loadingPlatformOverview}>Search</button>
+                    {(platformSchoolSearch || platformSchoolSearchDraft) && <button className="button button-secondary button-small" type="button" onClick={() => { setPlatformSchoolSearchDraft(""); setPlatformSchoolSearch(""); setPlatformSchoolPage(1); }}>Clear</button>}
+                  </form>
+                </div>
+                {platformOverviewForUser.schools.length === 0
+                  ? <p className="empty-search">{platformSchoolSearch ? "No schools match that search. Try another name, type, or country." : "No school workspaces have been created yet."}</p>
+                  : <div className="table-scroll"><table className="platform-directory-table"><thead><tr><th>SCHOOL</th><th>COUNTRY</th><th>TYPE</th><th>STUDENTS</th><th>TEACHERS</th><th>CLASSES</th><th>ADMINS</th><th>CREATED</th><th>BILLING DECISION</th></tr></thead><tbody>
                   {platformOverviewForUser.schools.map((schoolRow) => {
                     const billingDraft = platformBillingDrafts[schoolRow.id] || {
                       billingStatus: schoolRow.billingStatus || "pending",
@@ -1943,6 +1969,13 @@ function App() {
                     </tr>;
                   })}
                 </tbody></table></div>}
+                {platformDirectoryPageCount > 1 && <nav className="platform-directory-pagination" aria-label="School directory pages">
+                  <span>Page {platformDirectory?.page.toLocaleString("en-NG")} of {platformDirectoryPageCount.toLocaleString("en-NG")}</span>
+                  <div>
+                    <button className="button button-secondary button-small" type="button" onClick={() => setPlatformSchoolPage((currentPage) => currentPage - 1)} disabled={loadingPlatformOverview || platformDirectory?.page <= 1}>Previous</button>
+                    <button className="button button-secondary button-small" type="button" onClick={() => setPlatformSchoolPage((currentPage) => currentPage + 1)} disabled={loadingPlatformOverview || platformDirectory?.page >= platformDirectoryPageCount}>Next</button>
+                  </div>
+                </nav>}
               </>}
               {!loadingPlatformOverview && !platformOverviewError && !platformOverviewForUser && <p className="empty-search">Platform operations are unavailable. Refresh to try again.</p>}
             </section>

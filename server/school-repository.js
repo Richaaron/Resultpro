@@ -466,7 +466,7 @@ export async function listSchools(userId) {
   `;
 }
 
-export async function getPlatformOverview() {
+export async function getPlatformOverview({ page, pageSize, search }) {
   const sql = await getReadyDatabase();
   const [summary] = await sql`
     SELECT
@@ -475,23 +475,42 @@ export async function getPlatformOverview() {
       (SELECT COUNT(*)::int FROM school_students WHERE is_active) AS "activeStudentCount",
       (SELECT COUNT(*)::int FROM school_members WHERE role = 'teacher') AS "teacherMembershipCount"
   `;
+  const [directoryCount] = await sql`
+    SELECT COUNT(*)::int AS "totalCount"
+    FROM schools s
+    WHERE ${search} = ''
+       OR POSITION(LOWER(${search}) IN LOWER(CONCAT_WS(' ', s.name, s.school_type, s.country))) > 0
+  `;
+  const offset = (page - 1) * pageSize;
   const schools = await sql`
-    WITH member_counts AS (
-      SELECT school_id,
-             COUNT(*) FILTER (WHERE role = 'admin')::int AS "administratorCount",
-             COUNT(*) FILTER (WHERE role = 'teacher')::int AS "teacherCount"
-      FROM school_members
-      GROUP BY school_id
+    WITH filtered_schools AS (
+      SELECT s.id, s.name, s.school_type, s.country, s.created_at
+      FROM schools s
+      WHERE ${search} = ''
+         OR POSITION(LOWER(${search}) IN LOWER(CONCAT_WS(' ', s.name, s.school_type, s.country))) > 0
+      ORDER BY s.created_at DESC, s.id DESC
+      LIMIT ${pageSize}
+      OFFSET ${offset}
+    ),
+    member_counts AS (
+      SELECT sm.school_id,
+             COUNT(*) FILTER (WHERE sm.role = 'admin')::int AS "administratorCount",
+             COUNT(*) FILTER (WHERE sm.role = 'teacher')::int AS "teacherCount"
+      FROM school_members sm
+      INNER JOIN filtered_schools fs ON fs.id = sm.school_id
+      GROUP BY sm.school_id
     ),
     student_counts AS (
-      SELECT school_id, COUNT(*) FILTER (WHERE is_active)::int AS "studentCount"
-      FROM school_students
-      GROUP BY school_id
+      SELECT ss.school_id, COUNT(*) FILTER (WHERE ss.is_active)::int AS "studentCount"
+      FROM school_students ss
+      INNER JOIN filtered_schools fs ON fs.id = ss.school_id
+      GROUP BY ss.school_id
     ),
     class_counts AS (
-      SELECT school_id, COUNT(*)::int AS "classCount"
-      FROM school_classes
-      GROUP BY school_id
+      SELECT sc.school_id, COUNT(*)::int AS "classCount"
+      FROM school_classes sc
+      INNER JOIN filtered_schools fs ON fs.id = sc.school_id
+      GROUP BY sc.school_id
     )
     SELECT s.id, s.name, s.school_type AS "schoolType", s.country,
            s.created_at AS "createdAt",
@@ -502,15 +521,18 @@ export async function getPlatformOverview() {
            COALESCE(bs.billing_status, 'pending') AS "billingStatus",
            bs.plan_id AS "planId",
            bs.updated_at AS "billingUpdatedAt"
-    FROM schools s
+    FROM filtered_schools s
     LEFT JOIN member_counts m ON m.school_id = s.id
     LEFT JOIN student_counts st ON st.school_id = s.id
     LEFT JOIN class_counts c ON c.school_id = s.id
     LEFT JOIN school_billing_settings bs ON bs.school_id = s.id
-    ORDER BY s.created_at DESC
-    LIMIT 100
+    ORDER BY s.created_at DESC, s.id DESC
   `;
-  return { summary, schools };
+  return {
+    summary,
+    schools,
+    directory: { page, pageSize, totalCount: directoryCount.totalCount },
+  };
 }
 
 export async function setPlatformSchoolBillingDecision(schoolId, decision, updatedBy) {
