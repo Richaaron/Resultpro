@@ -12,6 +12,7 @@ import {
   getSchoolDashboard,
   getSchoolClassAttendance,
   getSchoolClassAttendanceReport,
+  getSchoolGradingSettings,
   getSchoolRole,
   listSchoolInvitations,
   getSchoolPublishedResultSheet,
@@ -33,6 +34,7 @@ import {
   reviewSchoolAssessment,
   saveSchoolAssessmentMarks,
   saveSchoolClassAttendance,
+  saveSchoolGradingSettings,
   saveTeachingAssignment,
   setSchoolStudentActive,
   submitSchoolAssessment,
@@ -46,6 +48,7 @@ import {
   normalizeAssessmentMarksInput,
   normalizeAssessmentReviewInput,
   normalizeAttendanceInput,
+  normalizeGradingSettingsInput,
   isValidAttendanceDate,
   isValidAttendanceReportRange,
   normalizeStudentInput,
@@ -321,6 +324,45 @@ app.delete("/api/schools/:schoolId/teaching-assignments/:assignmentId", requireA
   }
 });
 
+app.get("/api/schools/:schoolId/grading-settings", requireAuth, async (request, response) => {
+  const { schoolId } = request.params;
+  if (!isUuid(schoolId)) return response.status(400).json({ error: "Enter a valid school." });
+
+  try {
+    const membershipRole = await getSchoolRole(schoolId, request.auth.userId);
+    if (!membershipRole) return response.status(404).json({ error: "School not found." });
+    if (membershipRole !== "admin") {
+      return response.status(403).json({ error: "Only a school administrator can manage grading rules." });
+    }
+    const settings = await getSchoolGradingSettings(schoolId);
+    return response.json({ settings });
+  } catch (error) {
+    return handleDatabaseError(error, response);
+  }
+});
+
+app.put("/api/schools/:schoolId/grading-settings", requireAuth, async (request, response) => {
+  const { schoolId } = request.params;
+  const settings = normalizeGradingSettingsInput(request.body);
+  if (!isUuid(schoolId) || !settings) {
+    return response.status(400).json({
+      error: "Enter between two and twelve grade bands with unique labels, valid score thresholds, a zero-score band, and supported position rules.",
+    });
+  }
+
+  try {
+    const membershipRole = await getSchoolRole(schoolId, request.auth.userId);
+    if (!membershipRole) return response.status(404).json({ error: "School not found." });
+    if (membershipRole !== "admin") {
+      return response.status(403).json({ error: "Only a school administrator can manage grading rules." });
+    }
+    const saved = await saveSchoolGradingSettings(schoolId, settings);
+    return response.json({ settings: saved });
+  } catch (error) {
+    return handleDatabaseError(error, response);
+  }
+});
+
 app.get("/api/schools/:schoolId/result-sheet", requireAuth, async (request, response) => {
   const { schoolId } = request.params;
   const classId = typeof request.query.classId === "string" ? request.query.classId : "";
@@ -343,16 +385,25 @@ app.get("/api/schools/:schoolId/result-sheet", requireAuth, async (request, resp
 
     const published = await getSchoolPublishedResultSheet(schoolId, classId, term, teacherUserId);
     if (published) {
+      const rows = membershipRole === "teacher"
+        ? published.rows.map((row) => ({
+          ...row,
+          overallPercentage: null,
+          overallGrade: null,
+          classPosition: null,
+        }))
+        : published.rows;
       return response.json({
         schoolClass,
         term,
-        rows: published.rows,
+        rows,
         published: published.publication,
       });
     }
 
-    const rows = await listSchoolResultSheet(schoolId, classId, term, teacherUserId);
-    return response.json({ schoolClass, term, rows, published: null });
+    const gradingSettings = await getSchoolGradingSettings(schoolId);
+    const rows = await listSchoolResultSheet(schoolId, classId, term, teacherUserId, gradingSettings);
+    return response.json({ schoolClass, term, rows, published: null, gradingSettings });
   } catch (error) {
     return handleDatabaseError(error, response);
   }

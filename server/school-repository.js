@@ -1,7 +1,11 @@
 import { neon } from "@neondatabase/serverless";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { createSchoolSlug } from "./school-input.js";
-import { calculatePointsPercentage } from "../shared/school-data.js";
+import {
+  applyGradingSettingsToRows,
+  calculatePointsPercentage,
+  defaultGradingSettings,
+} from "../shared/school-data.js";
 
 let initializedDatabaseUrl;
 let initializePromise;
@@ -34,6 +38,17 @@ async function getReadyDatabase() {
               CHECK (access_mode IN ('invite', 'school-code', 'public')),
             slug VARCHAR(64) NOT NULL UNIQUE,
             created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+          )
+        `,
+        database.sql`
+          CREATE TABLE IF NOT EXISTS school_grading_settings (
+            school_id UUID PRIMARY KEY REFERENCES schools(id) ON DELETE CASCADE,
+            grade_bands JSONB NOT NULL,
+            tie_method VARCHAR(20) NOT NULL
+              CHECK (tie_method IN ('competition', 'dense', 'none')),
+            incomplete_policy VARCHAR(20) NOT NULL
+              CHECK (incomplete_policy IN ('require_all', 'graded_only')),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
           )
         `,
         database.sql`
@@ -284,6 +299,7 @@ async function getReadyDatabase() {
             term VARCHAR(12) NOT NULL CHECK (term IN ('Term 1', 'Term 2', 'Term 3')),
             academic_year VARCHAR(9) NOT NULL,
             published_by TEXT NOT NULL,
+            grading_settings JSONB,
             published_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
             UNIQUE (school_id, class_id, term),
             UNIQUE (school_id, id),
@@ -294,6 +310,10 @@ async function getReadyDatabase() {
               FOREIGN KEY (school_id, published_by)
               REFERENCES school_members(school_id, user_id) ON DELETE RESTRICT
           )
+        `,
+        database.sql`
+          ALTER TABLE school_result_publications
+          ADD COLUMN IF NOT EXISTS grading_settings JSONB
         `,
         database.sql`
           CREATE TABLE IF NOT EXISTS school_published_results (
@@ -308,6 +328,10 @@ async function getReadyDatabase() {
             earned_points NUMERIC(10, 2),
             possible_points NUMERIC(10, 2),
             percentage NUMERIC(5, 2),
+            grade VARCHAR(12),
+            overall_percentage NUMERIC(5, 2),
+            overall_grade VARCHAR(12),
+            class_position INTEGER,
             assessment_count INTEGER NOT NULL DEFAULT 0,
             PRIMARY KEY (publication_id, student_id, subject_name),
             CONSTRAINT school_published_results_publication_fk
@@ -317,6 +341,22 @@ async function getReadyDatabase() {
               FOREIGN KEY (school_id, student_id)
               REFERENCES school_students(school_id, id) ON DELETE RESTRICT
           )
+        `,
+        database.sql`
+          ALTER TABLE school_published_results
+          ADD COLUMN IF NOT EXISTS grade VARCHAR(12)
+        `,
+        database.sql`
+          ALTER TABLE school_published_results
+          ADD COLUMN IF NOT EXISTS overall_percentage NUMERIC(5, 2)
+        `,
+        database.sql`
+          ALTER TABLE school_published_results
+          ADD COLUMN IF NOT EXISTS overall_grade VARCHAR(12)
+        `,
+        database.sql`
+          ALTER TABLE school_published_results
+          ADD COLUMN IF NOT EXISTS class_position INTEGER
         `,
         database.sql`
           CREATE INDEX IF NOT EXISTS school_published_results_student_idx
@@ -384,6 +424,52 @@ export async function getSchoolRole(schoolId, userId) {
     WHERE school_id = ${schoolId} AND user_id = ${userId}
   `;
   return membership?.role ?? null;
+}
+
+export async function getSchoolGradingSettings(schoolId) {
+  const sql = await getReadyDatabase();
+  await sql`
+    INSERT INTO school_grading_settings
+      (school_id, grade_bands, tie_method, incomplete_policy)
+    VALUES (
+      ${schoolId},
+      ${JSON.stringify(defaultGradingSettings.bands)}::jsonb,
+      ${defaultGradingSettings.tieMethod},
+      ${defaultGradingSettings.incompletePolicy}
+    )
+    ON CONFLICT (school_id) DO NOTHING
+  `;
+  const [settings] = await sql`
+    SELECT grade_bands AS bands, tie_method AS "tieMethod",
+           incomplete_policy AS "incompletePolicy"
+    FROM school_grading_settings
+    WHERE school_id = ${schoolId}
+  `;
+  return settings;
+}
+
+export async function saveSchoolGradingSettings(schoolId, settings) {
+  const sql = await getReadyDatabase();
+  const [saved] = await sql`
+    INSERT INTO school_grading_settings
+      (school_id, grade_bands, tie_method, incomplete_policy, updated_at)
+    VALUES (
+      ${schoolId},
+      ${JSON.stringify(settings.bands)}::jsonb,
+      ${settings.tieMethod},
+      ${settings.incompletePolicy},
+      NOW()
+    )
+    ON CONFLICT (school_id) DO UPDATE SET
+      grade_bands = EXCLUDED.grade_bands,
+      tie_method = EXCLUDED.tie_method,
+      incomplete_policy = EXCLUDED.incomplete_policy,
+      updated_at = NOW()
+    RETURNING grade_bands AS bands, tie_method AS "tieMethod",
+              incomplete_policy AS "incompletePolicy",
+              updated_at AS "updatedAt"
+  `;
+  return saved;
 }
 
 export async function getSchoolDashboard(schoolId, userId, role) {
@@ -894,8 +980,9 @@ export async function saveSchoolClassAttendance(schoolId, classId, date, userId,
   return { savedCount: result.savedCount };
 }
 
-export async function listSchoolResultSheet(schoolId, classId, term, teacherUserId = null) {
+export async function listSchoolResultSheet(schoolId, classId, term, teacherUserId = null, savedGradingSettings = null) {
   const sql = await getReadyDatabase();
+  const gradingSettings = savedGradingSettings || await getSchoolGradingSettings(schoolId);
   const rows = await sql`
     WITH selected_class AS MATERIALIZED (
       SELECT id, grade, section, academic_year
@@ -963,10 +1050,10 @@ export async function listSchoolResultSheet(schoolId, classId, term, teacherUser
       ON totals.student_id = r.id AND totals.subject_name = s.subject_name
     ORDER BY s.subject_name, r.last_name, r.first_name, r.admission_number
   `;
-  return rows.map((row) => ({
+  return applyGradingSettingsToRows(rows.map((row) => ({
     ...row,
     percentage: calculatePointsPercentage(row.earnedPoints, row.possiblePoints),
-  }));
+  })), gradingSettings, { includeOverall: teacherUserId === null });
 }
 
 export async function getSchoolPublishedResultSheet(schoolId, classId, term, teacherUserId = null) {
@@ -974,7 +1061,8 @@ export async function getSchoolPublishedResultSheet(schoolId, classId, term, tea
   const [publication] = await sql`
     SELECT p.id, p.class_id AS "classId", c.grade, c.section,
            p.academic_year AS "academicYear", p.term,
-           p.published_at AS "publishedAt", m.email AS "publishedBy"
+           p.published_at AS "publishedAt", p.grading_settings AS "gradingSettings",
+           m.email AS "publishedBy"
     FROM school_result_publications p
     JOIN school_classes c
       ON c.school_id = p.school_id AND c.id = p.class_id
@@ -1001,7 +1089,10 @@ export async function getSchoolPublishedResultSheet(schoolId, classId, term, tea
            subject_name AS subject, teacher_email AS "teacherEmail",
            earned_points::float8 AS "earnedPoints",
            possible_points::float8 AS "possiblePoints",
-           percentage::float8 AS percentage, assessment_count AS "assessmentCount"
+           percentage::float8 AS percentage, grade,
+           overall_percentage::float8 AS "overallPercentage",
+           overall_grade AS "overallGrade", class_position AS "classPosition",
+           assessment_count AS "assessmentCount"
     FROM school_published_results
     WHERE school_id = ${schoolId} AND publication_id = ${publication.id}
       AND (
@@ -1021,9 +1112,13 @@ export async function getSchoolPublishedResultSheet(schoolId, classId, term, tea
 
 export async function publishSchoolResultSheet(schoolId, classId, term, publisherUserId) {
   const sql = await getReadyDatabase();
+  const gradingSettings = await getSchoolGradingSettings(schoolId);
   const publicationId = randomUUID();
   const [created] = await sql`
-    WITH selected_class AS MATERIALIZED (
+    WITH grading_config AS MATERIALIZED (
+      SELECT ${JSON.stringify(gradingSettings)}::jsonb AS config
+    ),
+    selected_class AS MATERIALIZED (
       SELECT c.id, c.school_id, c.grade, c.section, c.academic_year
       FROM school_classes c
       WHERE c.school_id = ${schoolId} AND c.id = ${classId}
@@ -1088,11 +1183,79 @@ export async function publishSchoolResultSheet(schoolId, classId, term, publishe
       LEFT JOIN approved_totals totals
         ON totals.student_id = r.id AND totals.subject_name = s.subject_name
     ),
+    student_totals AS MATERIALIZED (
+      SELECT student_id,
+             SUM(COALESCE(earned_points, 0)) AS earned_points,
+             SUM(COALESCE(possible_points, 0)) AS possible_points,
+             COUNT(*) FILTER (WHERE percentage IS NOT NULL)::int AS graded_subject_count,
+             COUNT(*)::int AS subject_count
+      FROM snapshot_rows
+      GROUP BY student_id
+    ),
+    overall_results AS MATERIALIZED (
+      SELECT totals.student_id,
+             CASE WHEN totals.possible_points > 0
+               THEN ROUND(totals.earned_points / totals.possible_points * 100, 2)
+               ELSE NULL
+             END AS overall_percentage,
+             CASE WHEN totals.possible_points > 0
+               AND (
+                 grading_config.config->>'incompletePolicy' = 'graded_only'
+                 OR totals.graded_subject_count = totals.subject_count
+               )
+               THEN ROUND(totals.earned_points / totals.possible_points * 100, 2)
+               ELSE NULL
+             END AS position_percentage
+      FROM student_totals totals
+      CROSS JOIN grading_config
+    ),
+    ranked_results AS MATERIALIZED (
+      SELECT overall.student_id, overall.overall_percentage,
+             overall.position_percentage,
+             CASE
+               WHEN grading_config.config->>'tieMethod' = 'competition'
+                 THEN RANK() OVER (ORDER BY overall.position_percentage DESC NULLS LAST)
+               WHEN grading_config.config->>'tieMethod' = 'dense'
+                 THEN DENSE_RANK() OVER (ORDER BY overall.position_percentage DESC NULLS LAST)
+               ELSE NULL
+             END AS class_position
+      FROM overall_results overall
+      CROSS JOIN grading_config
+    ),
+    graded_snapshot_rows AS MATERIALIZED (
+      SELECT snapshot.*,
+             subject_grade.label AS grade,
+             ranked.overall_percentage,
+             overall_grade.label AS overall_grade,
+             CASE WHEN ranked.position_percentage IS NOT NULL
+               THEN ranked.class_position
+               ELSE NULL
+             END AS class_position
+      FROM snapshot_rows snapshot
+      JOIN ranked_results ranked ON ranked.student_id = snapshot.student_id
+      CROSS JOIN grading_config
+      LEFT JOIN LATERAL (
+        SELECT band.value->>'label' AS label
+        FROM jsonb_array_elements(grading_config.config->'bands') AS band(value)
+        WHERE snapshot.percentage >= (band.value->>'minimum')::numeric
+        ORDER BY (band.value->>'minimum')::numeric DESC
+        LIMIT 1
+      ) subject_grade ON TRUE
+      LEFT JOIN LATERAL (
+        SELECT band.value->>'label' AS label
+        FROM jsonb_array_elements(grading_config.config->'bands') AS band(value)
+        WHERE ranked.overall_percentage >= (band.value->>'minimum')::numeric
+        ORDER BY (band.value->>'minimum')::numeric DESC
+        LIMIT 1
+      ) overall_grade ON TRUE
+    ),
     created_publication AS (
       INSERT INTO school_result_publications
-        (id, school_id, class_id, term, academic_year, published_by)
-      SELECT ${publicationId}, c.school_id, c.id, ${term}, c.academic_year, ${publisherUserId}
+        (id, school_id, class_id, term, academic_year, published_by, grading_settings)
+      SELECT ${publicationId}, c.school_id, c.id, ${term}, c.academic_year,
+             ${publisherUserId}, grading_config.config
       FROM selected_class c
+      CROSS JOIN grading_config
       WHERE EXISTS (SELECT 1 FROM snapshot_rows)
         AND EXISTS (
           SELECT 1 FROM school_students st
@@ -1116,12 +1279,15 @@ export async function publishSchoolResultSheet(schoolId, classId, term, publishe
       INSERT INTO school_published_results
         (school_id, publication_id, student_id, admission_number, first_name,
          last_name, subject_name, teacher_email, earned_points, possible_points,
-         percentage, assessment_count)
+         percentage, grade, overall_percentage, overall_grade, class_position,
+         assessment_count)
       SELECT publication.school_id, publication.id, snapshot.student_id,
              snapshot.admission_number, snapshot.first_name, snapshot.last_name,
              snapshot.subject_name, snapshot.teacher_email, snapshot.earned_points,
-             snapshot.possible_points, snapshot.percentage, snapshot.assessment_count
-      FROM snapshot_rows snapshot
+             snapshot.possible_points, snapshot.percentage, snapshot.grade,
+             snapshot.overall_percentage, snapshot.overall_grade,
+             snapshot.class_position, snapshot.assessment_count
+      FROM graded_snapshot_rows snapshot
       CROSS JOIN created_publication publication
       ON CONFLICT (publication_id, student_id, subject_name) DO NOTHING
       RETURNING publication_id
@@ -1178,6 +1344,8 @@ export async function listStudentPublishedResultSheets(schoolId, userId) {
            r.teacher_email AS "teacherEmail", r.earned_points::float8 AS "earnedPoints",
            r.possible_points::float8 AS "possiblePoints",
            r.percentage::float8 AS percentage,
+           r.grade, r.overall_percentage::float8 AS "overallPercentage",
+           r.overall_grade AS "overallGrade", r.class_position AS "classPosition",
            r.assessment_count AS "assessmentCount"
     FROM school_published_results r
     JOIN school_result_publications p
@@ -1211,6 +1379,10 @@ export async function listStudentPublishedResultSheets(schoolId, userId) {
       earnedPoints: row.earnedPoints,
       possiblePoints: row.possiblePoints,
       percentage: row.percentage,
+      grade: row.grade,
+      overallPercentage: row.overallPercentage,
+      overallGrade: row.overallGrade,
+      classPosition: row.classPosition,
       assessmentCount: row.assessmentCount,
     });
   }

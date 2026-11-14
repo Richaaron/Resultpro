@@ -13,6 +13,10 @@ import {
   summarizePublishedResultRows,
   groupPublishedResultRowsByStudent,
   normalizeTeachingAssignmentInput,
+  defaultGradingSettings,
+  normalizeGradingSettingsInput,
+  gradeForPercentage,
+  applyGradingSettingsToRows,
 } from "./school-data.js";
 
 test("normalizes a valid class and rejects unsupported grade or academic year", () => {
@@ -248,4 +252,79 @@ test("groups published rows into alphabetized student report cards", () => {
     { studentId: "student-2", rows: [rows[0]] },
   ]);
   assert.deepEqual(groupPublishedResultRowsByStudent(null), []);
+});
+
+test("provides an editable A1-F9 default and normalizes custom grade bands", () => {
+  assert.equal(defaultGradingSettings.bands.length, 9);
+  assert.equal(gradeForPercentage(75, defaultGradingSettings.bands), "A1");
+  assert.equal(gradeForPercentage(74.99, defaultGradingSettings.bands), "B2");
+  assert.equal(gradeForPercentage(0, defaultGradingSettings.bands), "F9");
+
+  assert.deepEqual(normalizeGradingSettingsInput({
+    bands: [{ label: "Pass", minimum: "50" }, { label: "Fail", minimum: 0 }],
+    tieMethod: "dense",
+    incompletePolicy: "graded_only",
+  }), {
+    bands: [{ label: "PASS", minimum: 50 }, { label: "FAIL", minimum: 0 }],
+    tieMethod: "dense",
+    incompletePolicy: "graded_only",
+  });
+  assert.equal(normalizeGradingSettingsInput({
+    bands: [{ label: "A", minimum: 90 }, { label: "B", minimum: 50 }],
+    tieMethod: "competition",
+    incompletePolicy: "require_all",
+  }), null);
+  assert.equal(normalizeGradingSettingsInput({
+    bands: [{ label: "A", minimum: 100 }, { label: "A", minimum: 0 }],
+    tieMethod: "competition",
+    incompletePolicy: "require_all",
+  }), null);
+  assert.equal(normalizeGradingSettingsInput({
+    bands: [{ label: "A", minimum: 100 }, { label: "B", minimum: 0 }],
+    tieMethod: "invalid",
+    incompletePolicy: "require_all",
+  }), null);
+});
+
+test("assigns subject grades, weighted overall grades, and competition positions", () => {
+  const rows = [
+    { studentId: "a", subject: "English", earnedPoints: 90, possiblePoints: 100, percentage: 90 },
+    { studentId: "a", subject: "Maths", earnedPoints: 80, possiblePoints: 100, percentage: 80 },
+    { studentId: "b", subject: "English", earnedPoints: 90, possiblePoints: 100, percentage: 90 },
+    { studentId: "b", subject: "Maths", earnedPoints: 80, possiblePoints: 100, percentage: 80 },
+    { studentId: "c", subject: "English", earnedPoints: 80, possiblePoints: 100, percentage: 80 },
+    { studentId: "c", subject: "Maths", earnedPoints: 70, possiblePoints: 100, percentage: 70 },
+    { studentId: "d", subject: "English", earnedPoints: 100, possiblePoints: 100, percentage: 100 },
+    { studentId: "d", subject: "Maths", earnedPoints: null, possiblePoints: null, percentage: null },
+  ];
+
+  const graded = applyGradingSettingsToRows(rows, defaultGradingSettings);
+  assert.equal(graded[0].grade, "A1");
+  assert.equal(graded[0].overallPercentage, 85);
+  assert.equal(graded[0].overallGrade, "A1");
+  assert.equal(graded[0].classPosition, 1);
+  assert.equal(graded[2].classPosition, 1);
+  assert.equal(graded[4].classPosition, 3);
+  assert.equal(graded[6].overallPercentage, 100);
+  assert.equal(graded[6].classPosition, null);
+
+  const dense = applyGradingSettingsToRows(rows, {
+    ...defaultGradingSettings,
+    tieMethod: "dense",
+  });
+  assert.equal(dense[4].classPosition, 2);
+
+  const gradedOnly = applyGradingSettingsToRows(rows, {
+    ...defaultGradingSettings,
+    incompletePolicy: "graded_only",
+  });
+  assert.equal(gradedOnly[6].classPosition, 1);
+  assert.equal(gradedOnly[0].classPosition, 2);
+
+  const unranked = applyGradingSettingsToRows(rows, {
+    ...defaultGradingSettings,
+    tieMethod: "none",
+  });
+  assert.ok(unranked.every((row) => row.classPosition === null));
+  assert.throws(() => applyGradingSettingsToRows(rows, { ...defaultGradingSettings, tieMethod: "invalid" }));
 });

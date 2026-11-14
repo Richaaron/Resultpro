@@ -8,6 +8,136 @@ const assessmentTerms = ["Term 1", "Term 2", "Term 3"];
 const attendanceStatuses = ["present", "absent", "late", "excused"];
 const hasAtMostTwoDecimals = (value) => Math.round(value * 100) / 100 === value;
 
+export const defaultGradingSettings = {
+  bands: [
+    { label: "A1", minimum: 75 },
+    { label: "B2", minimum: 70 },
+    { label: "B3", minimum: 65 },
+    { label: "C4", minimum: 60 },
+    { label: "C5", minimum: 55 },
+    { label: "C6", minimum: 50 },
+    { label: "D7", minimum: 45 },
+    { label: "E8", minimum: 40 },
+    { label: "F9", minimum: 0 },
+  ],
+  tieMethod: "competition",
+  incompletePolicy: "require_all",
+};
+
+export function normalizeGradingSettingsInput(body = {}) {
+  if (!body || typeof body !== "object" || Array.isArray(body) || !Array.isArray(body.bands)
+    || body.bands.length < 2 || body.bands.length > 12
+    || !["competition", "dense", "none"].includes(body.tieMethod)
+    || !["require_all", "graded_only"].includes(body.incompletePolicy)) {
+    return null;
+  }
+
+  const labels = new Set();
+  const minimums = new Set();
+  const bands = [];
+  for (const band of body.bands) {
+    if (!band || typeof band !== "object" || Array.isArray(band)) return null;
+    const label = typeof band.label === "string" ? band.label.trim().toUpperCase() : "";
+    const minimum = typeof band.minimum === "number"
+      ? band.minimum
+      : typeof band.minimum === "string" && /^\d{1,3}(?:\.\d{1,2})?$/.test(band.minimum.trim())
+        ? Number(band.minimum)
+        : NaN;
+    const normalizedLabel = label.toLowerCase();
+    if (!/^[A-Z0-9][A-Z0-9 +*./-]{0,11}$/.test(label)
+      || labels.has(normalizedLabel)
+      || !Number.isFinite(minimum)
+      || minimum < 0
+      || minimum > 100
+      || !hasAtMostTwoDecimals(minimum)
+      || minimums.has(minimum)) {
+      return null;
+    }
+    labels.add(normalizedLabel);
+    minimums.add(minimum);
+    bands.push({ label, minimum });
+  }
+  if (!minimums.has(0)) return null;
+
+  bands.sort((left, right) => right.minimum - left.minimum);
+  return { bands, tieMethod: body.tieMethod, incompletePolicy: body.incompletePolicy };
+}
+
+export function gradeForPercentage(percentage, bands) {
+  if (percentage == null || !Array.isArray(bands)) return null;
+  const score = Number(percentage);
+  if (!Number.isFinite(score) || score < 0 || score > 100) return null;
+  return [...bands]
+    .sort((left, right) => right.minimum - left.minimum)
+    .find((band) => score >= band.minimum)?.label ?? null;
+}
+
+export function applyGradingSettingsToRows(rows, settings, { includeOverall = true } = {}) {
+  if (!Array.isArray(rows)) return [];
+  const gradingSettings = settings == null ? defaultGradingSettings : normalizeGradingSettingsInput(settings);
+  if (!gradingSettings) throw new Error("The school grading settings are invalid.");
+  const students = new Map();
+  for (const row of rows) {
+    const student = students.get(row.studentId) || {
+      earnedPoints: 0,
+      possiblePoints: 0,
+      gradedSubjectCount: 0,
+      subjectCount: 0,
+    };
+    student.subjectCount += 1;
+    const percentage = calculatePointsPercentage(row.earnedPoints, row.possiblePoints);
+    if (percentage !== null) {
+      student.earnedPoints += Number(row.earnedPoints);
+      student.possiblePoints += Number(row.possiblePoints);
+      student.gradedSubjectCount += 1;
+    }
+    students.set(row.studentId, student);
+  }
+
+  const summaries = new Map();
+  const rankable = [];
+  for (const [studentId, student] of students) {
+    const overallPercentage = calculatePointsPercentage(student.earnedPoints, student.possiblePoints);
+    const mayRank = includeOverall
+      && gradingSettings.tieMethod !== "none"
+      && overallPercentage !== null
+      && (gradingSettings.incompletePolicy === "graded_only"
+        || student.gradedSubjectCount === student.subjectCount);
+    const summary = {
+      overallPercentage: includeOverall ? overallPercentage : null,
+      overallGrade: includeOverall ? gradeForPercentage(overallPercentage, gradingSettings.bands) : null,
+      classPosition: null,
+    };
+    summaries.set(studentId, summary);
+    if (mayRank) rankable.push({ studentId, overallPercentage });
+  }
+
+  rankable.sort((left, right) => right.overallPercentage - left.overallPercentage);
+  let competitionPosition = 0;
+  let densePosition = 0;
+  let previousPercentage;
+  rankable.forEach((student, index) => {
+    if (index === 0 || student.overallPercentage !== previousPercentage) {
+      competitionPosition = index + 1;
+      densePosition += 1;
+    }
+    summaries.get(student.studentId).classPosition = gradingSettings.tieMethod === "competition"
+      ? competitionPosition
+      : densePosition;
+    previousPercentage = student.overallPercentage;
+  });
+
+  return rows.map((row) => ({
+    ...row,
+    grade: gradeForPercentage(row.percentage, gradingSettings.bands),
+    ...(summaries.get(row.studentId) || {
+      overallPercentage: null,
+      overallGrade: null,
+      classPosition: null,
+    }),
+  }));
+}
+
 export function isValidAttendanceDate(value) {
   if (typeof value !== "string") return false;
   const dateMatch = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);

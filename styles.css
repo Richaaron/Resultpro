@@ -273,6 +273,13 @@ select.text-input { color: #58645a; }
 .teachers-page > .term-banner, .teachers-page > .stats-grid, .teachers-page > .main-grid, .teachers-page > .results-panel,
 .results-page > .term-banner, .results-page > .stats-grid, .results-page > .main-grid, .results-page > .results-panel { display: none; }
 .curriculum-panel { padding: 22px; }
+.grading-settings-panel { padding: 22px; }
+.grading-band-list { display: grid; gap: 9px; margin: 18px 0 12px; }
+.grading-band-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; align-items: end; gap: 10px; padding: 10px; border: 1px solid #e8ebe6; border-radius: 8px; background: #fbfcfa; }
+.grading-band-row label, .grading-policy-grid label { display: grid; gap: 6px; color: #637065; font-size: 9px; font-weight: 600; }
+.grading-band-row .text-input, .grading-policy-grid .text-input { height: 36px; font-size: 10px; }
+.grading-band-remove { min-height: 36px; }
+.grading-policy-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 18px; }
 .curriculum-heading { align-items: center; }
 .grade-picker { display: grid; min-width: 150px; gap: 5px; color: #778178; font-size: 10px; font-weight: 600; }
 .grade-picker .text-input { height: 35px; }
@@ -364,7 +371,7 @@ select.text-input { color: #58645a; }
 .student-report-card { min-width: 0; }
 .class-report-print-root { display: none; }
 .student-report-print-heading { display: none; }
-.student-report-summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 9px; margin: 14px 0; }
+.student-report-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 9px; margin: 14px 0; }
 .student-report-summary > div { display: grid; gap: 7px; min-width: 0; padding: 12px; border: 1px solid #e8eee8; border-radius: 9px; background: #f8faf7; }
 .student-report-summary small { color: #78877d; font-size: 9px; }
 .student-report-summary strong { color: #34463a; font: 700 16px/1.3 var(--font-display); overflow-wrap: anywhere; }
@@ -437,9 +444,10 @@ select.text-input { color: #58645a; }
   .results-heading { align-items: flex-start; flex-direction: column; }.table-actions { width: 100%; }.search-box { flex: 1; }.export-button { display: none; }.results-panel { padding: 14px 11px 0; }.results-panel .panel-heading { padding: 0 4px; }th, td { padding-right: 8px; padding-left: 8px; }
   .page-footer { gap: 12px; font-size: 7px; }.modal { padding: 26px 21px 22px; }
   .auth-card { padding: 27px 22px; }.invite-panel { padding: 15px; }.invitation-link > div { align-items: stretch; flex-direction: column; }
-  .curriculum-panel { padding: 15px; }.curriculum-heading { align-items: flex-start; flex-direction: column; }.grade-picker { width: 100%; }.curriculum-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .curriculum-panel, .grading-settings-panel { padding: 15px; }.curriculum-heading { align-items: flex-start; flex-direction: column; }.grade-picker { width: 100%; }.curriculum-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }.grading-policy-grid { grid-template-columns: 1fr; }
   .class-create-form, .student-create-form, .assignment-form, .assessment-create-form { grid-template-columns: repeat(2, minmax(0, 1fr)); }.class-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }.student-filters { width: 100%; }.student-filters .search-box { flex: 1; }.student-filters .text-input { width: 130px; }
   .student-report-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .grading-band-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }.grading-band-remove { grid-column: 1 / -1; justify-self: start; }
 }
 @media (max-width: 390px) {
   .topbar-actions { gap: 4px; }.breadcrumb { gap: 6px; font-size: 10px; }.notification-button { width: 26px; }.topbar-avatar { width: 27px; height: 27px; }
@@ -800,7 +808,10 @@ h1, .panel-heading h2, .stat-number { color: #f0f7f1; }
 .legend-target strong { color: #c0e0c3; }
 .results-panel, .result-sheet-panel, .attendance-panel, .attendance-report-panel, .assessment-form-panel, .assessment-list-panel,
 .assessment-detail-panel, .student-form-panel, .student-results-panel, .teacher-assignment-panel,
-.curriculum-panel, .invite-panel { background: linear-gradient(145deg, #111f17, #0f1b14); }
+.curriculum-panel, .grading-settings-panel, .invite-panel { background: linear-gradient(145deg, #111f17, #0f1b14); }
+.grading-band-row { border-color: #293f31; background: #14231a; }
+.grading-band-row label, .grading-policy-grid label { color: #c1d0c4; }
+.grading-policy-grid .text-input { border-color: #304636; background: #101b14; color: #e6f0e8; }
 .results-panel th, th { background: #17271d; color: #c1d0c4; }
 td { border-bottom-color: #253a2d; color: #d1dfd4; }
 tbody tr:hover { background: #16271c; }

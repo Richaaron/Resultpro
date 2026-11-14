@@ -5,7 +5,12 @@ import EducationBackground from "./EducationBackground.jsx";
 import ExplainerVideo from "./ExplainerVideo.jsx";
 import { authClient, pendingSchoolNameKey } from "./auth.js";
 import { curriculumByGrade, curriculumGrades } from "../shared/curriculum.js";
-import { groupPublishedResultRowsByStudent, summarizePublishedResultRows } from "../shared/school-data.js";
+import {
+  defaultGradingSettings,
+  groupPublishedResultRowsByStudent,
+  normalizeGradingSettingsInput,
+  summarizePublishedResultRows,
+} from "../shared/school-data.js";
 
 const navigation = [
   ["overview", "Overview", "▦"],
@@ -15,6 +20,7 @@ const navigation = [
   ["teachers", "Teachers", "♙"],
   ["classes", "Classes & subjects", "▦"],
   ["profile", "School profile", "⌂"],
+  ["grading", "Grading rules", "A+"],
   ["access", "Portal access", "◈"],
 ];
 
@@ -60,6 +66,20 @@ const accessOptions = [
 const API_BASE_URL = (import.meta.env.VITE_API_URL || "").replace(/\/+$/, "");
 const apiUrl = (path) => `${API_BASE_URL}${path}`;
 const schoolSlugFromPath = () => window.location.pathname.match(/^\/school\/([a-z0-9-]+)\/?$/i)?.[1] || "";
+const copyGradingSettings = (settings) => ({
+  ...settings,
+  bands: settings.bands.map((band) => ({ ...band })),
+});
+
+function formatClassPosition(position) {
+  if (!Number.isInteger(Number(position)) || Number(position) < 1) return "—";
+  const value = Number(position);
+  const remainder = value % 100;
+  const suffix = remainder >= 11 && remainder <= 13
+    ? "th"
+    : ({ 1: "st", 2: "nd", 3: "rd" }[value % 10] || "th");
+  return `${value}${suffix}`;
+}
 
 async function apiRequest(path, options = {}) {
   if (!authClient) throw new Error("Authentication is not configured.");
@@ -95,17 +115,20 @@ function StudentReportCard({ schoolName, result, rows }) {
     </header>
     <div className="student-report-summary" aria-label="Report summary">
       <div><small>Overall average</small><strong>{summary.averagePercentage == null ? "—" : `${summary.averagePercentage.toFixed(2)}%`}</strong></div>
+      <div><small>Overall grade</small><strong>{student.overallGrade || "—"}</strong></div>
+      <div><small>Class position</small><strong>{formatClassPosition(student.classPosition)}</strong></div>
       <div><small>Total points</small><strong>{summary.earnedPoints.toLocaleString("en-NG")} / {summary.possiblePoints.toLocaleString("en-NG")}</strong></div>
       <div><small>Graded subjects</small><strong>{summary.gradedSubjectCount} / {summary.subjectCount}</strong></div>
       <div><small>Approved assessments</small><strong>{summary.assessmentCount}</strong></div>
     </div>
-    <div className="table-scroll"><table className="result-sheet-table"><thead><tr><th>SUBJECT</th><th>APPROVED MARKS</th><th>ASSESSMENTS</th><th>TERM PERCENTAGE</th></tr></thead><tbody>{rows.map((row) => <tr key={row.subject}>
+    <div className="table-scroll"><table className="result-sheet-table"><thead><tr><th>SUBJECT</th><th>APPROVED MARKS</th><th>ASSESSMENTS</th><th>TERM PERCENTAGE</th><th>GRADE</th></tr></thead><tbody>{rows.map((row) => <tr key={row.subject}>
       <td><strong>{row.subject}</strong></td>
       <td>{row.percentage == null ? "—" : `${Number(row.earnedPoints).toLocaleString("en-NG", { maximumFractionDigits: 2 })} / ${Number(row.possiblePoints).toLocaleString("en-NG", { maximumFractionDigits: 2 })}`}</td>
       <td>{row.assessmentCount}</td>
       <td><strong className={row.percentage == null ? "ungraded-mark" : "result-percentage"}>{row.percentage == null ? "Not graded" : `${Number(row.percentage).toFixed(2)}%`}</strong></td>
+      <td><strong className={row.grade ? "result-percentage" : "ungraded-mark"}>{row.grade || "—"}</strong></td>
     </tr>)}</tbody></table></div>
-    <p className="student-report-note">This report reflects the school’s published snapshot. Percentages are calculated from approved marks. No letter grade or class position has been assigned.</p>
+    <p className="student-report-note">This report reflects the school’s published grading rules and approved marks. Class position is shown only when the configured completeness rule is satisfied; older published reports may not contain grades or positions.</p>
   </article>;
 }
 
@@ -159,6 +182,11 @@ function App() {
   const [loadingSubjects, setLoadingSubjects] = useState(false);
   const [savingSubjects, setSavingSubjects] = useState(false);
   const [subjectError, setSubjectError] = useState("");
+  const [gradingSettings, setGradingSettings] = useState(null);
+  const [draftGradingSettings, setDraftGradingSettings] = useState(() => copyGradingSettings(defaultGradingSettings));
+  const [loadingGradingSettings, setLoadingGradingSettings] = useState(false);
+  const [savingGradingSettings, setSavingGradingSettings] = useState(false);
+  const [gradingSettingsError, setGradingSettingsError] = useState("");
   const [schoolClasses, setSchoolClasses] = useState([]);
   const [classRefresh, setClassRefresh] = useState(0);
   const [loadingClasses, setLoadingClasses] = useState(false);
@@ -333,6 +361,10 @@ function App() {
   );
   const subjectChangesPending = gradeSavedSubjects.length !== gradeDraftSubjects.length
     || gradeSavedSubjects.some((subject) => !gradeDraftSubjects.includes(subject));
+  const normalizedGradingDraft = normalizeGradingSettingsInput(draftGradingSettings);
+  const gradingSettingsChanged = !gradingSettings
+    || !normalizedGradingDraft
+    || JSON.stringify(normalizedGradingDraft) !== JSON.stringify(gradingSettings);
 
   useEffect(() => {
     let active = true;
@@ -520,6 +552,34 @@ function App() {
       });
     return () => { active = false; };
   }, [school?.id]);
+
+  useEffect(() => {
+    let active = true;
+    if (!school?.id || role !== "admin" || page !== "grading") {
+      setLoadingGradingSettings(false);
+      return () => { active = false; };
+    }
+
+    setLoadingGradingSettings(true);
+    setGradingSettingsError("");
+    setGradingSettings(null);
+    setDraftGradingSettings(copyGradingSettings(defaultGradingSettings));
+    apiRequest(`/api/schools/${school.id}/grading-settings`)
+      .then(({ settings }) => {
+        const normalized = normalizeGradingSettingsInput(settings);
+        if (!normalized) throw new Error("The saved grading rules are invalid. Contact support before publishing results.");
+        if (!active) return;
+        setGradingSettings(normalized);
+        setDraftGradingSettings(copyGradingSettings(normalized));
+      })
+      .catch((requestError) => {
+        if (active) setGradingSettingsError(requestError.message || "Could not load grading rules.");
+      })
+      .finally(() => {
+        if (active) setLoadingGradingSettings(false);
+      });
+    return () => { active = false; };
+  }, [school?.id, role, page]);
 
   useEffect(() => {
     let active = true;
@@ -1055,6 +1115,63 @@ function App() {
     }
   }
 
+  function updateGradingBand(index, field, value) {
+    setDraftGradingSettings((previous) => ({
+      ...previous,
+      bands: previous.bands.map((band, bandIndex) => (
+        bandIndex === index ? { ...band, [field]: value } : band
+      )),
+    }));
+  }
+
+  function addGradingBand() {
+    setDraftGradingSettings((previous) => {
+      if (previous.bands.length >= 12) return previous;
+      const usedLabels = new Set(previous.bands.map((band) => band.label.toUpperCase()));
+      let suffix = 1;
+      while (usedLabels.has(`G${suffix}`)) suffix += 1;
+      const usedMinimums = new Set(previous.bands.map((band) => Number(band.minimum)));
+      const minimum = Array.from({ length: 101 }, (_, score) => score).find((score) => !usedMinimums.has(score));
+      if (minimum === undefined) return previous;
+      return {
+        ...previous,
+        bands: [...previous.bands, { label: `G${suffix}`, minimum }],
+      };
+    });
+  }
+
+  function removeGradingBand(index) {
+    setDraftGradingSettings((previous) => ({
+      ...previous,
+      bands: previous.bands.filter((_band, bandIndex) => bandIndex !== index),
+    }));
+  }
+
+  async function saveGradingSettings() {
+    if (!school || !normalizedGradingDraft) {
+      setGradingSettingsError("Use unique grade labels and score thresholds, and keep a band beginning at 0.");
+      return;
+    }
+
+    setSavingGradingSettings(true);
+    setGradingSettingsError("");
+    try {
+      const { settings } = await apiRequest(`/api/schools/${school.id}/grading-settings`, {
+        method: "PUT",
+        body: JSON.stringify(normalizedGradingDraft),
+      });
+      const normalized = normalizeGradingSettingsInput(settings);
+      if (!normalized) throw new Error("The saved grading rules could not be verified.");
+      setGradingSettings(normalized);
+      setDraftGradingSettings(copyGradingSettings(normalized));
+      setToast("Grading rules saved. Published reports keep their original grading snapshot.");
+    } catch (requestError) {
+      setGradingSettingsError(requestError.message || "Could not save grading rules.");
+    } finally {
+      setSavingGradingSettings(false);
+    }
+  }
+
   async function createClass(event) {
     event.preventDefault();
     setCreatingClass(true);
@@ -1371,7 +1488,7 @@ function App() {
       ["Term", resultSheet.term],
       ["Calculation", "Sum of approved marks / sum of possible marks"],
       [],
-      ["Student", "Admission number", "Subject", "Approved marks", "Possible marks", "Percentage", "Approved assessments"],
+      ["Student", "Admission number", "Subject", "Approved marks", "Possible marks", "Percentage", "Grade", "Overall percentage", "Overall grade", "Class position", "Approved assessments"],
       ...resultSheet.rows.map((row) => [
         `${row.firstName} ${row.lastName}`,
         row.admissionNumber,
@@ -1379,6 +1496,10 @@ function App() {
         row.earnedPoints ?? "",
         row.possiblePoints ?? "",
         row.percentage == null ? "" : `${row.percentage}%`,
+        row.grade || "",
+        row.overallPercentage == null ? "" : `${row.overallPercentage}%`,
+        row.overallGrade || "",
+        row.classPosition == null ? "" : formatClassPosition(row.classPosition),
         row.assessmentCount,
       ]),
     ];
@@ -1491,13 +1612,13 @@ function App() {
 
       <main className="main-content">
         <header className="topbar"><button className="mobile-menu" type="button" aria-label={sidebarOpen ? "Close navigation menu" : "Open navigation menu"} aria-expanded={sidebarOpen} onClick={() => setSidebarOpen((open) => !open)}><span aria-hidden="true">{sidebarOpen ? "×" : "☰"}</span></button><div className="breadcrumb"><span>Workspace</span><span className="breadcrumb-slash">/</span><strong>{page}</strong></div><div className="topbar-actions"><button className="topbar-video" type="button" onClick={() => setExplainerOpen(true)}><span aria-hidden="true">▶</span> How it works</button><span className="role-select" aria-label="Your school role">{portalData[role].label}</span><button className="icon-button" type="button" onClick={() => setToast("You’re all caught up on school notifications.")} aria-label="Notifications">♧</button><button className="topbar-avatar" type="button" aria-label={`Sign out ${userName}`} onClick={signOut}>{userInitials}</button></div></header>
-        <div key={page} className={`page-content page-view ${page === "classes" ? "curriculum-page" : page === "students" ? "students-page" : page === "teachers" ? "teachers-page" : page === "results" ? "results-page" : page === "attendance" ? "attendance-page" : ""}`}>
+        <div key={page} className={`page-content page-view ${page === "classes" ? "curriculum-page" : page === "students" ? "students-page" : page === "teachers" ? "teachers-page" : page === "results" ? "results-page" : page === "attendance" ? "attendance-page" : page === "grading" ? "grading-page" : ""}`}>
           <span className="route-sweep" aria-hidden="true" />
           {!school ? <section className="panel onboarding-panel"><span className="auth-kicker">WELCOME TO ASTER</span><h1>Create your school workspace</h1><p className="page-subtitle">Your account is ready. Set up your school profile to begin; only people you invite can join its portal.</p><button className="button button-primary" type="button" onClick={showSetup}>＋ Create school profile</button></section> : <>
           <section className="welcome-row">
-            <div><div className="eyebrow"><span className="live-dot" /> {currentDateLabel} <span className="eyebrow-divider">·</span> SCHOOL WORKSPACE</div><h1>{page === "overview" ? role === "admin" ? `Good morning, ${userName}` : current.title : page === "results" ? role === "student" ? "Results, at a glance" : "Result sheet & assessments" : page === "attendance" ? "Daily attendance" : page === "profile" ? "Your school, your story." : page === "classes" ? "Classes & subjects" : page === "students" ? "Student register" : `${page[0].toUpperCase()}${page.slice(1)}`} <span className="wave">✳</span></h1><p className="page-subtitle">{page === "overview" ? current.subtitle : page === "results" && role === "student" ? "View only the term results your school has published for your linked student record." : page === "results" && role !== "student" ? role === "admin" ? "Calculate term percentages from approved marks, publish frozen result sheets, and review submissions." : "View calculated results and enter marks for your assigned classes." : page === "attendance" ? "Record and review daily attendance for your active class roster." : page === "classes" ? "Configure subjects and organise your classes." : page === "students" ? "Enrol students and keep their school records up to date." : `Keep your ${page} organised for the term ahead.`}</p></div>
+            <div><div className="eyebrow"><span className="live-dot" /> {currentDateLabel} <span className="eyebrow-divider">·</span> SCHOOL WORKSPACE</div><h1>{page === "overview" ? role === "admin" ? `Good morning, ${userName}` : current.title : page === "results" ? role === "student" ? "Results, at a glance" : "Result sheet & assessments" : page === "attendance" ? "Daily attendance" : page === "profile" ? "Your school, your story." : page === "classes" ? "Classes & subjects" : page === "grading" ? "Grading rules" : page === "students" ? "Student register" : `${page[0].toUpperCase()}${page.slice(1)}`} <span className="wave">✳</span></h1><p className="page-subtitle">{page === "overview" ? current.subtitle : page === "results" && role === "student" ? "View only the term results your school has published for your linked student record." : page === "results" && role !== "student" ? role === "admin" ? "Calculate term percentages from approved marks, publish frozen result sheets, and review submissions." : "View calculated results and enter marks for your assigned classes." : page === "attendance" ? "Record and review daily attendance for your active class roster." : page === "classes" ? "Configure subjects and organise your classes." : page === "grading" ? "Set the grade bands and class-position rules used for new result publications." : page === "students" ? "Enrol students and keep their school records up to date." : `Keep your ${page} organised for the term ahead.`}</p></div>
             {page === "overview" && <HeroScene />}
-            {page !== "classes" && page !== "students" && page !== "teachers" && page !== "results" && page !== "attendance" && <div className="welcome-actions"><button className="button button-secondary" type="button" onClick={async () => { try { await navigator.clipboard.writeText(`${window.location.origin}${school.portalUrl || `/school/${school.slug}`}`); setToast("Your school workspace link has been copied. Only invited school members can access it."); } catch { setToast("Could not copy the school link. Please try again."); } }}>↗ Copy school workspace link</button><button className="button button-primary" type="button" onClick={() => page === "profile" ? showSetup() : page === "access" ? document.getElementById("inviteEmail")?.focus() : setPage(role === "admin" ? "students" : "results")}>＋ {page === "access" ? "Invite a member" : role === "teacher" ? "Enter marks" : role === "student" ? "View my results" : "Add a student"}</button></div>}
+            {page !== "classes" && page !== "students" && page !== "teachers" && page !== "results" && page !== "attendance" && page !== "grading" && <div className="welcome-actions"><button className="button button-secondary" type="button" onClick={async () => { try { await navigator.clipboard.writeText(`${window.location.origin}${school.portalUrl || `/school/${school.slug}`}`); setToast("Your school workspace link has been copied. Only invited school members can access it."); } catch { setToast("Could not copy the school link. Please try again."); } }}>↗ Copy school workspace link</button><button className="button button-primary" type="button" onClick={() => page === "profile" ? showSetup() : page === "access" ? document.getElementById("inviteEmail")?.focus() : setPage(role === "admin" ? "students" : "results")}>＋ {page === "access" ? "Invite a member" : role === "teacher" ? "Enter marks" : role === "student" ? "View my results" : "Add a student"}</button></div>}
           </section>
 
           {page === "attendance" && <section className="panel attendance-panel">
@@ -1566,6 +1687,42 @@ function App() {
               </>}
           </section>}
 
+          {role === "admin" && page === "grading" && <section className="panel grading-settings-panel">
+            <div className="panel-heading">
+              <div><h2>School grading policy</h2><p>Set percentage bands, tie handling, and when students can receive class positions.</p></div>
+            </div>
+            {gradingSettingsError && <p className="form-error" role="alert">{gradingSettingsError}</p>}
+            {loadingGradingSettings ? <p className="empty-search">Loading this school’s grading rules…</p>
+              : gradingSettings && <>
+                <p className="curriculum-note">A score receives the highest grade band whose minimum it meets. The lowest band must begin at 0, and all labels and thresholds must be unique.</p>
+                <div className="grading-band-list" aria-label="Grade bands">
+                  {draftGradingSettings.bands.map((band, index) => <div className="grading-band-row" key={`${index}-${band.label}`}>
+                    <label htmlFor={`gradeLabel-${index}`}>Grade label<input className="text-input" id={`gradeLabel-${index}`} maxLength={12} value={band.label} onChange={(event) => updateGradingBand(index, "label", event.target.value)} /></label>
+                    <label htmlFor={`gradeMinimum-${index}`}>Minimum percentage<input className="text-input" id={`gradeMinimum-${index}`} type="number" min="0" max="100" step="0.01" value={band.minimum} onChange={(event) => updateGradingBand(index, "minimum", event.target.value)} /></label>
+                    <button className="quiet-action grading-band-remove" type="button" onClick={() => removeGradingBand(index)} disabled={draftGradingSettings.bands.length <= 2} aria-label={`Remove ${band.label} grade band`}>Remove</button>
+                  </div>)}
+                </div>
+                <button className="button button-secondary button-small" type="button" onClick={addGradingBand} disabled={draftGradingSettings.bands.length >= 12}>＋ Add grade band</button>
+                {!normalizedGradingDraft && <p className="form-error" role="status">Use 2–12 unique labels and thresholds, and include a grade band starting at 0.</p>}
+                <div className="grading-policy-grid">
+                  <label><span>Tied positions</span><select className="text-input" value={draftGradingSettings.tieMethod} onChange={(event) => setDraftGradingSettings((previous) => ({ ...previous, tieMethod: event.target.value }))}>
+                    <option value="competition">Shared positions with gaps (1, 1, 3)</option>
+                    <option value="dense">Shared positions without gaps (1, 1, 2)</option>
+                    <option value="none">Do not show class positions</option>
+                  </select></label>
+                  <label><span>Ungraded subjects</span><select className="text-input" value={draftGradingSettings.incompletePolicy} onChange={(event) => setDraftGradingSettings((previous) => ({ ...previous, incompletePolicy: event.target.value }))}>
+                    <option value="require_all">Wait until all subjects are graded before ranking</option>
+                    <option value="graded_only">Rank using currently graded subjects</option>
+                  </select></label>
+                </div>
+                <p className="result-publication-note">These rules apply to new publications only. Published reports keep the grades and positions they were published with.</p>
+                <div className="curriculum-footer">
+                  <button className="button button-secondary" type="button" onClick={() => setDraftGradingSettings(copyGradingSettings(defaultGradingSettings))} disabled={savingGradingSettings}>Restore A1–F9 defaults</button>
+                  <button className="button button-primary" type="button" onClick={saveGradingSettings} disabled={savingGradingSettings || loadingGradingSettings || !gradingSettingsChanged || !normalizedGradingDraft}>{savingGradingSettings ? "Saving…" : "Save grading rules"}</button>
+                </div>
+              </>}
+          </section>}
+
           {page === "classes" && <section className="panel curriculum-panel">
             <div className="panel-heading curriculum-heading">
               <div><h2>Subject setup</h2><p>Select the subjects taught in each grade. Changes are saved to this school.</p></div>
@@ -1631,7 +1788,7 @@ function App() {
           {page === "results" && role !== "student" && <section className="assessment-workspace">
             <section className="panel result-sheet-panel">
               <div className="panel-heading result-sheet-heading">
-                <div><h2>Term result sheet</h2><p>Only administrator-approved assessments are included. No letter grades or class positions are inferred.</p></div>
+                <div><h2>Term result sheet</h2><p>Only administrator-approved assessments are included. Letter grades and class positions follow this school’s saved grading rules.</p></div>
                 <div className="result-sheet-actions">{role === "admin" && <>{resultSheet?.published && <button className="button button-secondary button-small" type="button" onClick={printClassReportCards} disabled={printingClassReports || !classReportGroups.length}>Print report cards</button>}<button className="button button-primary button-small" type="button" onClick={publishResultSheet} disabled={loadingResultSheet || !resultSheet?.rows.some((row) => row.percentage != null) || Boolean(resultSheet?.published)}>{resultSheet?.published ? "Published" : "Publish results"}</button></>}<button className="button button-secondary button-small" type="button" onClick={printResultSheet} disabled={loadingResultSheet || !resultSheet?.rows.length}>Print</button><button className="button button-secondary button-small" type="button" onClick={exportResultSheet} disabled={loadingResultSheet || !resultSheet?.rows.length}>Export CSV</button></div>
               </div>
               {resultSheet?.schoolClass && <div className="result-sheet-print-heading"><strong>{school.name}</strong><span>{resultSheet.schoolClass.grade} {resultSheet.schoolClass.section} · {resultSheet.schoolClass.academicYear} · {resultSheet.term}</span><small>{resultSheet.published ? "Published result snapshot" : "Calculated from administrator-approved assessments only"}</small></div>}
@@ -1641,18 +1798,20 @@ function App() {
                 {resultSheet?.schoolClass && <span className="result-sheet-summary">{resultSheet.rows.filter((row) => row.percentage !== null).length} graded subject entries</span>}
               </div>
               {resultSheet?.published
-                ? <p className="result-publication-note">Published {new Date(resultSheet.published.publishedAt).toLocaleString("en-NG")} by {resultSheet.published.publishedBy || "a school administrator"}. This snapshot is frozen and released to each linked student account.</p>
-                : <p className="result-calculation-note">Percentage = total points earned across approved assessments ÷ total possible points × 100. Subjects without approved assessments remain ungraded; percentages can change as more assessments are approved.</p>}
+                ? <p className="result-publication-note">Published {new Date(resultSheet.published.publishedAt).toLocaleString("en-NG")} by {resultSheet.published.publishedBy || "a school administrator"}. Grades and positions are frozen with this snapshot and released to each linked student account.</p>
+                : <p className="result-calculation-note">Percentage = total points earned across approved assessments ÷ total possible points × 100. Letter grades use this school’s bands. Class positions follow its tie and completeness rules; positions may change until publication.</p>}
               {resultSheetError && <p className="form-error" role="alert">{resultSheetError}</p>}
               {loadingResultSheet ? <p className="empty-search">Calculating the result sheet…</p>
                 : !resultSheetClassId ? <p className="empty-search">{loadingClasses ? "Loading classes…" : "Create a class and assign a teacher to its subjects to view a result sheet."}</p>
-                  : resultSheet?.rows.length ? <div className="table-scroll"><table className="result-sheet-table"><thead><tr><th>STUDENT</th><th>ADMISSION NO.</th><th>SUBJECT</th><th>APPROVED MARKS</th><th>ASSESSMENTS</th><th>TERM PERCENTAGE</th></tr></thead><tbody>{resultSheet.rows.map((row) => <tr key={`${row.studentId}-${row.subject}`}>
+                  : resultSheet?.rows.length ? <div className="table-scroll"><table className="result-sheet-table"><thead><tr><th>STUDENT</th><th>ADMISSION NO.</th><th>SUBJECT</th><th>APPROVED MARKS</th><th>ASSESSMENTS</th><th>TERM PERCENTAGE</th><th>GRADE</th><th>CLASS POSITION</th></tr></thead><tbody>{resultSheet.rows.map((row) => <tr key={`${row.studentId}-${row.subject}`}>
                     <td><strong>{row.firstName} {row.lastName}</strong></td>
                     <td>{row.admissionNumber}</td>
                     <td>{row.subject}</td>
                     <td>{row.percentage === null ? "—" : `${Number(row.earnedPoints).toLocaleString("en-NG", { maximumFractionDigits: 2 })} / ${Number(row.possiblePoints).toLocaleString("en-NG", { maximumFractionDigits: 2 })}`}</td>
                     <td>{row.assessmentCount}</td>
                     <td><strong className={row.percentage === null ? "ungraded-mark" : "result-percentage"}>{row.percentage === null ? "Not graded" : `${row.percentage.toFixed(2)}%`}</strong></td>
+                    <td><strong className={row.grade ? "result-percentage" : "ungraded-mark"}>{row.grade || "—"}</strong></td>
+                    <td>{formatClassPosition(row.classPosition)}</td>
                   </tr>)}</tbody></table></div>
                     : resultSheet?.schoolClass.studentCount === 0
                       ? <p className="empty-search">This class has no enrolled students for a result sheet yet.</p>
