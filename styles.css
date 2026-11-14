@@ -1731,30 +1731,32 @@ tbody tr:hover { background: rgb(114 210 140 / 7%); }
     linear-gradient(currentColor 1px, transparent 1px),
     linear-gradient(90deg, currentColor 1px, transparent 1px);
   background-size: 56px 56px;
-  opacity: .05;
+  opacity: .09;
   animation: bg-grid-pan 60s linear infinite;
 }
-.education-bg--light { color: #315e40; }
+.education-bg--light { color: #2f7650; }
 .education-bg--dark { color: #bfe0c6; }
-.education-bg--dark .education-bg__grid { opacity: .07; }
+.education-bg--dark .education-bg__grid { opacity: .1; }
 
 .education-bg__item {
   position: absolute;
   display: grid;
   place-items: center;
   color: currentColor;
-  opacity: .14;
+  opacity: .32;
+  filter: drop-shadow(0 6px 14px rgb(0 0 0 / 8%));
   will-change: transform, opacity;
-  animation: edu-float linear infinite;
+  animation: edu-float ease-in-out infinite;
 }
-.education-bg--dark .education-bg__item { opacity: .18; }
+.education-bg--dark .education-bg__item { opacity: .42; filter: drop-shadow(0 6px 16px rgb(0 0 0 / 35%)); }
+/* Alternate a few icons to the gold accent for variety */
+.education-bg__item:nth-child(4n) { color: #d9b66e; }
+.education-bg__item:nth-child(7n) { color: #e3a857; }
 
 @keyframes edu-float {
-  0%   { transform: translate3d(0, 0, 0) rotate(calc(var(--rot, 0deg) * -1)); opacity: 0; }
-  10%  { opacity: .16; }
-  50%  { transform: translate3d(var(--drift, 24px), calc(var(--drift, 24px) * -1), 0) rotate(var(--rot, 0deg)); opacity: .22; }
-  90%  { opacity: .14; }
-  100% { transform: translate3d(0, 0, 0) rotate(calc(var(--rot, 0deg) * -1)); opacity: 0; }
+  0%   { transform: translate3d(0, 0, 0) rotate(calc(var(--rot, 0deg) * -1)); opacity: .3; }
+  50%  { transform: translate3d(var(--drift, 24px), calc(var(--drift, 24px) * -1), 0) rotate(var(--rot, 0deg)); opacity: .48; }
+  100% { transform: translate3d(0, 0, 0) rotate(calc(var(--rot, 0deg) * -1)); opacity: .3; }
 }
 @keyframes bg-grid-pan {
   from { background-position: 0 0, 0 0; }
@@ -1763,4 +1765,5 @@ tbody tr:hover { background: rgb(114 210 140 / 7%); }
 
 @media (prefers-reduced-motion: reduce) {
   .education-bg__item, .education-bg__grid { animation: none !important; }
+  .education-bg__item { opacity: .28; }
 }
