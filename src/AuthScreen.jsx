@@ -15,6 +15,12 @@ function AuthIllustration() {
       </div>
       <div className="auth-art" aria-hidden="true">
         <div className="auth-art-glow" />
+        <div className="auth-emblem-3d">
+          <span className="ae-ring ae-ring-1" />
+          <span className="ae-ring ae-ring-2" />
+          <span className="ae-orb" />
+          <span className="ae-core"><AsterLogoMark className="ae-logo" /></span>
+        </div>
         <svg className="auth-art-image" viewBox="0 0 560 390" fill="none" xmlns="http://www.w3.org/2000/svg">
           <path d="M92 302C76 209 139 120 231 102C316 85 404 130 457 209C489 257 487 307 459 337H122C106 329 97 317 92 302Z" fill="#163D2C" />
           <circle cx="414" cy="93" r="44" fill="#D9B66E" fillOpacity=".15" />
@@ -69,7 +75,7 @@ function AuthIllustration() {
   );
 }
 
-export default function AuthScreen({ authClient, notice, initialEmail = "", verificationRequired = false, onAuthenticated }) {
+export default function AuthScreen({ authClient, notice, initialEmail = "", verificationRequired = false, onAuthenticated, onWatchVideo }) {
   const [mode, setMode] = useState("sign-in");
   const [name, setName] = useState("");
   const [schoolName, setSchoolName] = useState("");
@@ -168,7 +174,7 @@ export default function AuthScreen({ authClient, notice, initialEmail = "", veri
     return (
       <main className="auth-shell">
         <AuthIllustration />
-        <section className="auth-card">
+        <section className="auth-card tilt-3d">
           <a className="brand auth-brand" href="/" aria-label="Aster home"><AsterLogoMark /><span className="brand-name">aster<span>.</span></span></a>
           <h1>Authentication setup needed</h1>
           <p className="auth-description">Set VITE_NEON_AUTH_URL to your Neon Auth Base URL to continue.</p>
@@ -180,7 +186,7 @@ export default function AuthScreen({ authClient, notice, initialEmail = "", veri
   return (
     <main className="auth-shell">
       <AuthIllustration />
-      <section className="auth-card">
+      <section className="auth-card tilt-3d">
         <a className="brand auth-brand" href="/" aria-label="Aster home"><AsterLogoMark /><span className="brand-name">aster<span>.</span></span></a>
         {hasInvitation && <p className="auth-invitation">You’ve been invited to a school. Use the email address that received the invitation.</p>}
         <p className="auth-kicker">YOUR SCHOOL, IN FOCUS</p>
@@ -223,6 +229,11 @@ export default function AuthScreen({ authClient, notice, initialEmail = "", veri
         {message && <p className="auth-message" role="status">{message}</p>}
         {error && <p className="form-error" role="alert">{error}</p>}
         <p className="privacy-note">Your school data is private to your verified account.</p>
+        {onWatchVideo && (
+          <button className="auth-text-button auth-video-button" type="button" onClick={onWatchVideo}>
+            <span aria-hidden="true">▶</span> Watch how Aster works
+          </button>
+        )}
       </section>
     </main>
   );

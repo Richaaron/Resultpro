@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import AuthScreen from "./AuthScreen.jsx";
 import AsterLogoMark from "./AsterLogo.jsx";
+import ExplainerVideo from "./ExplainerVideo.jsx";
 import { authClient, pendingSchoolNameKey } from "./auth.js";
 import { curriculumByGrade, curriculumGrades } from "../shared/curriculum.js";
 import { groupPublishedResultRowsByStudent, summarizePublishedResultRows } from "../shared/school-data.js";
@@ -107,6 +108,18 @@ function StudentReportCard({ schoolName, result, rows }) {
   </article>;
 }
 
+function HeroScene() {
+  return <div className="hero-scene" aria-hidden="true">
+    <span className="hs-glow" />
+    <span className="hs-ring hs-ring-1" />
+    <span className="hs-ring hs-ring-2" />
+    <span className="hs-cube hs-cube-1"><i /><i /><i /><i /><i /><i /></span>
+    <span className="hs-cube hs-cube-2"><i /><i /><i /><i /><i /><i /></span>
+    <span className="hs-orb" />
+    <span className="hs-core"><AsterLogoMark className="hs-logo" /></span>
+  </div>;
+}
+
 function App() {
   const [session, setSession] = useState(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -118,6 +131,7 @@ function App() {
   const [schools, setSchools] = useState([]);
   const [loadingSchools, setLoadingSchools] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
+  const [explainerOpen, setExplainerOpen] = useState(false);
   const [step, setStep] = useState(1);
   const [toast, setToast] = useState("");
   const [saving, setSaving] = useState(false);
@@ -776,6 +790,40 @@ function App() {
     return () => window.clearTimeout(timer);
   }, [toast]);
 
+  // Pointer-tracked 3D tilt: one delegated listener drives every .tilt-3d surface.
+  useEffect(() => {
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return undefined;
+    if (!window.matchMedia("(hover: hover) and (pointer: fine)").matches) return undefined;
+    let active = null;
+    const reset = (element) => {
+      element.style.removeProperty("--tilt-x");
+      element.style.removeProperty("--tilt-y");
+      element.style.removeProperty("--glare-x");
+      element.style.removeProperty("--glare-y");
+      element.classList.remove("is-live");
+    };
+    const onMove = (event) => {
+      if (event.pointerType && event.pointerType !== "mouse") return;
+      const surface = event.target.closest?.(".tilt-3d") || null;
+      if (active && active !== surface) { reset(active); active = null; }
+      if (!surface) return;
+      active = surface;
+      const rect = surface.getBoundingClientRect();
+      const px = (event.clientX - rect.left) / rect.width - 0.5;
+      const py = (event.clientY - rect.top) / rect.height - 0.5;
+      surface.style.setProperty("--tilt-x", `${(-py * 7).toFixed(2)}deg`);
+      surface.style.setProperty("--tilt-y", `${(px * 9).toFixed(2)}deg`);
+      surface.style.setProperty("--glare-x", `${((px + 0.5) * 100).toFixed(1)}%`);
+      surface.style.setProperty("--glare-y", `${((py + 0.5) * 100).toFixed(1)}%`);
+      surface.classList.add("is-live");
+    };
+    document.addEventListener("pointermove", onMove, { passive: true });
+    return () => {
+      document.removeEventListener("pointermove", onMove);
+      if (active) reset(active);
+    };
+  }, []);
+
   function showSetup() {
     setError("");
     setStep(1);
@@ -1324,7 +1372,19 @@ function App() {
     return <main className="auth-shell"><p className="auth-description">Restoring your secure session…</p></main>;
   }
   if (!session?.user || session.user.emailVerified !== true) {
-    return <AuthScreen authClient={authClient} notice={authNotice} initialEmail={session?.user?.email} verificationRequired={Boolean(session?.user && !session.user.emailVerified)} onAuthenticated={restoreSession} />;
+    return (
+      <>
+        <AuthScreen
+          authClient={authClient}
+          notice={authNotice}
+          initialEmail={session?.user?.email}
+          verificationRequired={Boolean(session?.user && !session.user.emailVerified)}
+          onAuthenticated={restoreSession}
+          onWatchVideo={() => setExplainerOpen(true)}
+        />
+        <ExplainerVideo open={explainerOpen} onClose={() => setExplainerOpen(false)} />
+      </>
+    );
   }
   if (loadingSchools) {
     return <main className="auth-shell"><p className="auth-description">Loading your school workspace…</p></main>;
@@ -1375,17 +1435,19 @@ function App() {
           </nav>
         </>}
         <div className="sidebar-bottom">
-          <div className="help-card"><span className="help-spark">✳</span><strong>A little help goes a long way.</strong><span>Visit the Aster help desk</span><button type="button" onClick={() => setToast("Aster Help Desk — support@aster.school")}>Get help ↗</button></div>
+          <div className="help-card"><span className="help-spark">✳</span><strong>A little help goes a long way.</strong><span>Visit the Aster help desk</span><button type="button" onClick={() => setToast("Aster Help Desk — support@aster.school")}>Get help ↗</button><button className="help-video" type="button" onClick={() => setExplainerOpen(true)}><span aria-hidden="true">▶</span> Watch how Aster works</button></div>
           <div className="user-profile"><span className="user-avatar">{userInitials}</span><span className="user-copy"><strong>{userName}</strong><small>{portalData[role].label}</small></span></div>
         </div>
       </aside>
 
       <main className="main-content">
-        <header className="topbar"><button className="mobile-menu" type="button" aria-label={sidebarOpen ? "Close navigation menu" : "Open navigation menu"} aria-expanded={sidebarOpen} onClick={() => setSidebarOpen((open) => !open)}><span aria-hidden="true">{sidebarOpen ? "×" : "☰"}</span></button><div className="breadcrumb"><span>Workspace</span><span className="breadcrumb-slash">/</span><strong>{page}</strong></div><div className="topbar-actions"><span className="role-select" aria-label="Your school role">{portalData[role].label}</span><button className="icon-button" type="button" onClick={() => setToast("You’re all caught up on school notifications.")} aria-label="Notifications">♧</button><button className="topbar-avatar" type="button" aria-label={`Sign out ${userName}`} onClick={signOut}>{userInitials}</button></div></header>
-        <div className={`page-content ${page === "classes" ? "curriculum-page" : page === "students" ? "students-page" : page === "teachers" ? "teachers-page" : page === "results" ? "results-page" : page === "attendance" ? "attendance-page" : ""}`}>
+        <header className="topbar"><button className="mobile-menu" type="button" aria-label={sidebarOpen ? "Close navigation menu" : "Open navigation menu"} aria-expanded={sidebarOpen} onClick={() => setSidebarOpen((open) => !open)}><span aria-hidden="true">{sidebarOpen ? "×" : "☰"}</span></button><div className="breadcrumb"><span>Workspace</span><span className="breadcrumb-slash">/</span><strong>{page}</strong></div><div className="topbar-actions"><button className="topbar-video" type="button" onClick={() => setExplainerOpen(true)}><span aria-hidden="true">▶</span> How it works</button><span className="role-select" aria-label="Your school role">{portalData[role].label}</span><button className="icon-button" type="button" onClick={() => setToast("You’re all caught up on school notifications.")} aria-label="Notifications">♧</button><button className="topbar-avatar" type="button" aria-label={`Sign out ${userName}`} onClick={signOut}>{userInitials}</button></div></header>
+        <div key={page} className={`page-content page-view ${page === "classes" ? "curriculum-page" : page === "students" ? "students-page" : page === "teachers" ? "teachers-page" : page === "results" ? "results-page" : page === "attendance" ? "attendance-page" : ""}`}>
+          <span className="route-sweep" aria-hidden="true" />
           {!school ? <section className="panel onboarding-panel"><span className="auth-kicker">WELCOME TO ASTER</span><h1>Create your school workspace</h1><p className="page-subtitle">Your account is ready. Set up your school profile to begin; only people you invite can join its portal.</p><button className="button button-primary" type="button" onClick={showSetup}>＋ Create school profile</button></section> : <>
           <section className="welcome-row">
             <div><div className="eyebrow"><span className="live-dot" /> {currentDateLabel} <span className="eyebrow-divider">·</span> SCHOOL WORKSPACE</div><h1>{page === "overview" ? role === "admin" ? `Good morning, ${userName}` : current.title : page === "results" ? role === "student" ? "Results, at a glance" : "Result sheet & assessments" : page === "attendance" ? "Daily attendance" : page === "profile" ? "Your school, your story." : page === "classes" ? "Classes & subjects" : page === "students" ? "Student register" : `${page[0].toUpperCase()}${page.slice(1)}`} <span className="wave">✳</span></h1><p className="page-subtitle">{page === "overview" ? current.subtitle : page === "results" && role === "student" ? "View only the term results your school has published for your linked student record." : page === "results" && role !== "student" ? role === "admin" ? "Calculate term percentages from approved marks, publish frozen result sheets, and review submissions." : "View calculated results and enter marks for your assigned classes." : page === "attendance" ? "Record and review daily attendance for your active class roster." : page === "classes" ? "Configure subjects and organise your classes." : page === "students" ? "Enrol students and keep their school records up to date." : `Keep your ${page} organised for the term ahead.`}</p></div>
+            {page === "overview" && <HeroScene />}
             {page !== "classes" && page !== "students" && page !== "teachers" && page !== "results" && page !== "attendance" && <div className="welcome-actions"><button className="button button-secondary" type="button" onClick={async () => { try { await navigator.clipboard.writeText(`${window.location.origin}${school.portalUrl || `/school/${school.slug}`}`); setToast("Your school workspace link has been copied. Only invited school members can access it."); } catch { setToast("Could not copy the school link. Please try again."); } }}>↗ Copy school workspace link</button><button className="button button-primary" type="button" onClick={() => page === "profile" ? showSetup() : page === "access" ? document.getElementById("inviteEmail")?.focus() : setPage(role === "admin" ? "students" : "results")}>＋ {page === "access" ? "Invite a member" : role === "teacher" ? "Enter marks" : role === "student" ? "View my results" : "Add a student"}</button></div>}
           </section>
 
@@ -1487,7 +1549,7 @@ function App() {
               </form>}
               {classError && <p className="form-error" role="alert">{classError}</p>}
               {loadingClasses ? <p className="empty-search">Loading classes…</p> : schoolClasses.length === 0 ? <p className="empty-search">No classes yet. Save subjects for a grade, then create its first class.</p> : <div className="class-list">
-                {schoolClasses.map((schoolClass) => <article className="class-card" key={schoolClass.id}>
+                {schoolClasses.map((schoolClass) => <article className="class-card tilt-3d" key={schoolClass.id}>
                   <div className="class-card-top"><span className="class-card-grade">{schoolClass.grade}</span>{role === "admin" && <button className="quiet-action" type="button" onClick={() => removeClass(schoolClass)} disabled={schoolClass.studentCount > 0}>Delete</button>}</div>
                   <h3>{schoolClass.section}</h3>
                   <p>{schoolClass.academicYear} · {schoolClass.studentCount} student{schoolClass.studentCount === 1 ? "" : "s"}</p>
@@ -1663,7 +1725,7 @@ function App() {
             <section className="panel teacher-assignment-panel">
               <div className="panel-heading"><div><h2>Your teaching assignments</h2><p>These are the classes and subjects assigned to your teacher account.</p></div></div>
               {assignmentError && <p className="form-error" role="alert">{assignmentError}</p>}
-              {loadingAssignments ? <p className="empty-search">Loading your assignments…</p> : teachingAssignments.length === 0 ? <p className="empty-search">No classes or subjects are assigned to you yet. Ask your school administrator to assign them.</p> : <div className="class-list teacher-assignment-cards">{teachingAssignments.map((assignment) => <article className="class-card" key={assignment.id}><div className="class-card-top"><span className="class-card-grade">{assignment.grade}</span><span className="class-year-pill">{assignment.academicYear}</span></div><h3>{assignment.section}</h3><p>{assignment.subject}</p></article>)}</div>}
+              {loadingAssignments ? <p className="empty-search">Loading your assignments…</p> : teachingAssignments.length === 0 ? <p className="empty-search">No classes or subjects are assigned to you yet. Ask your school administrator to assign them.</p> : <div className="class-list teacher-assignment-cards">{teachingAssignments.map((assignment) => <article className="class-card tilt-3d" key={assignment.id}><div className="class-card-top"><span className="class-card-grade">{assignment.grade}</span><span className="class-year-pill">{assignment.academicYear}</span></div><h3>{assignment.section}</h3><p>{assignment.subject}</p></article>)}</div>}
             </section>
           </section>}
 
@@ -1729,18 +1791,18 @@ function App() {
           {page === "overview" && dashboardErrorForCurrentSchool && <section className="panel dashboard-message dashboard-error" role="alert"><span>{dashboardErrorForCurrentSchool}</span><button className="button button-secondary button-small" type="button" onClick={() => setDashboardRefresh((previous) => previous + 1)}>Retry</button></section>}
           {page === "overview" && !dashboardPending && !dashboardErrorForCurrentSchool && dashboardForCurrentSchool && <>
             <section className="stats-grid" aria-label="School summary">
-              {dashboardStats.map(([label, value, detail], index) => <article className="stat-card" key={label}>
-                <div className="stat-top"><span className="stat-label">{label}</span><span className={`stat-icon ${["student-stat-icon", "teacher-stat-icon", "average-stat-icon", "review-stat-icon"][index]}`}>{["♧", "♙", "↗", "▤"][index]}</span></div>
+              {dashboardStats.map(([label, value, detail], index) => <article className="stat-card tilt-3d" key={label}>
+                <div className="stat-top"><span className="stat-label">{label}</span><span className={`stat-icon tilt-pop ${["student-stat-icon", "teacher-stat-icon", "average-stat-icon", "review-stat-icon"][index]}`}>{["♧", "♙", "↗", "▤"][index]}</span></div>
                 <div className="stat-number">{value}</div><div className="stat-foot"><span>{detail}</span></div>
               </article>)}
             </section>
             <section className="main-grid">
-              <article className="panel performance-panel">
+              <article className="panel performance-panel tilt-3d">
                 <div className="panel-heading"><div><h2>{role === "student" ? "My latest published results" : "Published results average"}</h2><p>{role === "student" ? "Only your most recently published report is included." : role === "teacher" ? "Based on published results for your assigned classes and subjects." : "Based on saved result snapshots for this school."}</p></div></div>
                 <div className="chart-summary"><strong>{dashboardAverage}</strong><small>{role === "student" ? "latest report average" : "average percentage"}</small></div>
                 {dashboardAverage === "—" && <p className="sample-chart-copy">No published result percentages are available yet.</p>}
               </article>
-              <article className="panel activity-panel">
+              <article className="panel activity-panel tilt-3d">
                 <div className="panel-heading"><div><h2>{role === "student" ? "Published report activity" : "Recent assessment activity"}</h2><p>{role === "admin" ? "Latest assessments across your school." : role === "teacher" ? "Latest assessments for your assignments." : "Your latest published result sheets."}</p></div></div>
                 <div className="attention-list">
                   {dashboardForCurrentSchool.activity.map((item) => {
@@ -1767,6 +1829,7 @@ function App() {
 
       {modalOpen && <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setModalOpen(false); }}><section className="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle"><button className="modal-close" type="button" onClick={() => setModalOpen(false)} aria-label="Close setup">×</button><div className="modal-kicker"><AsterLogoMark className="mini-brand" /> LET’S MAKE THIS YOURS</div><h2 id="modalTitle">Tell us about your school</h2><p className="modal-intro">A few details help us set up the right home for your school community.</p><div className="step-indicator"><span className={`step ${step === 1 ? "active" : ""}`}>01</span><i /><span className={`step ${step === 2 ? "active" : ""}`}>02</span><span className="step-caption">{step === 1 ? "School basics" : "Portal access"}</span></div><form onSubmit={createSchool} noValidate>{step === 1 ? <div className="form-step"><label className="field-label" htmlFor="schoolName">School name</label><input className="text-input" id="schoolName" required maxLength={120} value={form.name} onChange={(event) => updateForm("name", event.target.value)} placeholder="e.g. Harborview Academy" /><div className="field-row"><div><label className="field-label" htmlFor="schoolType">School type</label><select className="text-input" id="schoolType" required value={form.schoolType} onChange={(event) => updateForm("schoolType", event.target.value)}><option value="">Select school type</option>{schoolTypes.map((type) => <option key={type}>{type}</option>)}</select></div><div><label className="field-label" htmlFor="schoolCountry">Country</label><input className="text-input" id="schoolCountry" required maxLength={80} value={form.country} onChange={(event) => updateForm("country", event.target.value)} placeholder="e.g. Nigeria" /></div></div><label className="field-label" htmlFor="schoolEmail">School email</label><input className="text-input" id="schoolEmail" required type="email" value={form.email} onChange={(event) => updateForm("email", event.target.value)} placeholder="hello@yourschool.edu" /><button className="button button-primary modal-continue" type="button" onClick={() => { const fields = [...document.querySelectorAll("#schoolName, #schoolType, #schoolCountry, #schoolEmail")]; const invalid = fields.find((field) => !field.checkValidity()); if (invalid) invalid.reportValidity(); else { setError(""); setStep(2); } }}>Continue →</button></div> : <div className="form-step"><label className="field-label">How should your community access the school?</label><p className="field-hint">Choose how your school community will join. You can update this later.</p>{accessOptions.map(([value, title, description]) => <label className="access-option" key={value}><input type="radio" name="accessMode" checked={form.accessMode === value} onChange={() => updateForm("accessMode", value)} /><span className="access-option-icon">{value === "invite" ? "✉" : value === "school-code" ? "⌗" : "◎"}</span><span><strong>{title}</strong><small>{description}</small></span><span className="radio-mark" /></label>)}{error && <p className="form-error" role="alert">{error}</p>}<div className="form-row-actions"><button className="button button-secondary" type="button" onClick={() => { setError(""); setStep(1); }}>← Back</button><button className="button button-primary" type="submit" disabled={saving}>{saving ? "Creating…" : "Create school profile →"}</button></div><p className="privacy-note">School profiles are saved to the local database.</p></div>}</form></section></div>}
       {toast && <div className="toast show" role="status">{toast}</div>}
+      <ExplainerVideo open={explainerOpen} onClose={() => setExplainerOpen(false)} />
     </div>
   );
 }
