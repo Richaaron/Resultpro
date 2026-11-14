@@ -1704,6 +1704,12 @@ export async function setSchoolStudentActive(schoolId, studentId, isActive) {
 
 export async function createInvitation({ schoolId, email, role, userId, studentId = null, teacherName = null }) {
   const sql = await getReadyDatabase();
+  const [school] = await sql`
+    SELECT name AS "schoolName", slug AS "schoolSlug"
+    FROM schools
+    WHERE id = ${schoolId}
+  `;
+  if (!school) return null;
   const token = randomBytes(32).toString("base64url");
   const tokenHash = createHash("sha256").update(token).digest("hex");
   let invitation;
@@ -1778,7 +1784,7 @@ export async function createInvitation({ schoolId, email, role, userId, studentI
     `;
   }
   if (!invitation) return null;
-  return { ...invitation, token };
+  return { ...invitation, ...school, token };
 }
 
 export async function listSchoolInvitations(schoolId) {
@@ -1803,6 +1809,12 @@ export async function listSchoolInvitations(schoolId) {
 
 export async function renewSchoolInvitation(schoolId, invitationId) {
   const sql = await getReadyDatabase();
+  const [school] = await sql`
+    SELECT name AS "schoolName", slug AS "schoolSlug"
+    FROM schools
+    WHERE id = ${schoolId}
+  `;
+  if (!school) return null;
   const token = randomBytes(32).toString("base64url");
   const tokenHash = createHash("sha256").update(token).digest("hex");
   const [invitation] = await sql`
@@ -1829,7 +1841,8 @@ export async function renewSchoolInvitation(schoolId, invitationId) {
     RETURNING i.id, i.email, i.role, i.teacher_name AS "teacherName",
               i.teacher_code AS "teacherCode", i.expires_at AS "expiresAt"
   `;
-  return invitation ? { ...invitation, token } : null;
+  if (!invitation) return null;
+  return { ...invitation, ...school, token };
 }
 
 export async function revokeSchoolInvitation(schoolId, invitationId) {

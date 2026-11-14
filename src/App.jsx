@@ -147,6 +147,7 @@ function App() {
   const [inviting, setInviting] = useState(false);
   const [invitationUrl, setInvitationUrl] = useState("");
   const [invitationLabel, setInvitationLabel] = useState("");
+  const [invitationEmailDelivery, setInvitationEmailDelivery] = useState(null);
   const [invitationData, setInvitationData] = useState(null);
   const [loadingInvitations, setLoadingInvitations] = useState(false);
   const [invitationError, setInvitationError] = useState(null);
@@ -882,13 +883,18 @@ function App() {
         method: "POST",
         body: JSON.stringify({ email: inviteEmail, role: "teacher", teacherName }),
       });
+      const emailDelivery = payload.emailDelivery || {
+        status: "unavailable",
+        message: "Email delivery status is unavailable. Copy the activation link and send it manually.",
+      };
       setTeacherRegistration({
         ...payload.invitation,
+        emailDelivery,
         activationUrl: `${window.location.origin}${school.portalUrl || `/school/${school.slug}`}#invite=${encodeURIComponent(payload.invitation.token)}`,
       });
       setTeacherName("");
       setInviteEmail("");
-      setToast(`Teacher registration created for ${payload.invitation.teacherName}.`);
+      setToast(emailDelivery.message);
     } catch (requestError) {
       setTeacherRegistrationError(requestError.message || "Could not register this teacher.");
     } finally {
@@ -899,9 +905,13 @@ function App() {
   async function copyTeacherActivationLink() {
     try {
       await navigator.clipboard.writeText(teacherRegistration.activationUrl);
-      setToast("Teacher activation link copied. Send it to the teacher’s registered email.");
+      setToast(teacherRegistration.emailDelivery.status === "sent"
+        ? "Teacher activation link copied as a backup."
+        : "Teacher activation link copied. Send it to the teacher’s registered email.");
     } catch {
-      setToast("Copy the activation link and send it to the teacher’s registered email.");
+      setToast(teacherRegistration.emailDelivery.status === "sent"
+        ? "The teacher was emailed. You can copy the activation link from the field as a backup."
+        : "Copy the activation link and send it to the teacher’s registered email.");
     }
   }
 
@@ -921,15 +931,21 @@ function App() {
     setStudentError("");
     setError("");
     setInvitationUrl("");
+    setInvitationEmailDelivery(null);
     try {
       const payload = await apiRequest(`/api/schools/${school.id}/invitations`, {
         method: "POST",
         body: JSON.stringify({ email, role: "student", studentId: student.id }),
       });
+      const emailDelivery = payload.emailDelivery || {
+        status: "unavailable",
+        message: "Email delivery status is unavailable. Copy the activation link and send it manually.",
+      };
       setInvitationUrl(`${window.location.origin}${school.portalUrl || `/school/${school.slug}`}#invite=${encodeURIComponent(payload.invitation.token)}`);
       setInvitationLabel(`Student portal access for ${student.firstName} ${student.lastName} · ${payload.invitation.email}`);
+      setInvitationEmailDelivery(emailDelivery);
       setPage("access");
-      setToast(`Student portal invitation created for ${payload.invitation.email}.`);
+      setToast(emailDelivery.message);
     } catch (requestError) {
       setStudentError(requestError.message || "Could not create student portal access.");
     } finally {
@@ -1241,9 +1257,13 @@ function App() {
   async function copyInvitation() {
     try {
       await navigator.clipboard.writeText(invitationUrl);
-      setToast("Invitation link copied. Send it to the invited email address.");
+      setToast(invitationEmailDelivery?.status === "sent"
+        ? "Invitation link copied as a backup."
+        : "Invitation link copied. Send it to the invited email address.");
     } catch {
-      setToast("Copy the invitation link from the field and send it to the invited email address.");
+      setToast(invitationEmailDelivery?.status === "sent"
+        ? "The invitation was emailed. You can copy the link from the field as a backup."
+        : "Copy the invitation link from the field and send it to the invited email address.");
     }
   }
 
@@ -1252,15 +1272,20 @@ function App() {
     setBusyInvitationId(invitation.id);
     setInvitationError(null);
     try {
-      const { invitation: renewed } = await apiRequest(
+      const { invitation: renewed, emailDelivery } = await apiRequest(
         `/api/schools/${school.id}/invitations/${invitation.id}/resend`,
         { method: "POST" },
       );
+      const delivery = emailDelivery || {
+        status: "unavailable",
+        message: "Email delivery status is unavailable. Copy the new activation link and send it manually.",
+      };
       const invitee = renewed.teacherName || invitation.inviteeName || invitation.email;
       setInvitationLabel(`${renewed.role === "teacher" ? "Teacher" : "Student"} activation for ${invitee} · ${renewed.email}`);
       setInvitationUrl(`${window.location.origin}${school.portalUrl || `/school/${school.slug}`}#invite=${encodeURIComponent(renewed.token)}`);
+      setInvitationEmailDelivery(delivery);
       setInvitationRefresh((previous) => previous + 1);
-      setToast(`A new seven-day link is ready for ${renewed.email}. The previous link no longer works.`);
+      setToast(delivery.message);
     } catch (requestError) {
       setInvitationError({
         schoolId: school.id,
@@ -1279,6 +1304,7 @@ function App() {
       await apiRequest(`/api/schools/${school.id}/invitations/${invitation.id}`, { method: "DELETE" });
       setInvitationUrl("");
       setInvitationLabel("");
+      setInvitationEmailDelivery(null);
       setInvitationRefresh((previous) => previous + 1);
       setToast(`Invitation for ${invitation.email} revoked.`);
     } catch (requestError) {
@@ -1707,11 +1733,12 @@ function App() {
               {teacherRegistration && <div className="invitation-link teacher-activation">
                 <p className="auth-kicker">TEACHER ACCOUNT READY TO ACTIVATE</p>
                 <p><strong>{teacherRegistration.teacherName}</strong> · {teacherRegistration.email}</p>
+                <p className={teacherRegistration.emailDelivery.status === "sent" ? "field-hint" : "form-error"} role="status">{teacherRegistration.emailDelivery.message}</p>
                 <label className="field-label" htmlFor="teacherCode">Generated teacher code</label>
                 <input className="text-input" id="teacherCode" readOnly value={teacherRegistration.teacherCode} />
                 <label className="field-label" htmlFor="teacherActivationUrl">One-time activation link</label>
                 <div><input className="text-input" id="teacherActivationUrl" readOnly value={teacherRegistration.activationUrl} /><button className="button button-secondary" type="button" onClick={copyTeacherActivationLink}>Copy link</button></div>
-                <p className="field-hint">Share this link only with the registered teacher. It expires in seven days. The teacher verifies their email and creates their own password. Aster does not send invitation emails automatically yet.</p>
+                <p className="field-hint">This seven-day link is a backup. Share it only with the registered teacher; they verify their email and create their own password.</p>
               </div>}
             </section>
             {teacherRoster.length > 0 && <section className="panel teacher-roster-panel">
@@ -1785,7 +1812,7 @@ function App() {
           {role === "admin" && page === "access" && <>
             <section className="panel invite-panel">
               <div className="panel-heading"><div><h2>Portal access</h2><p>Register teachers from the Teachers page to generate their staff code and activation link. Student invitations are tied to the selected student record.</p></div><button className="button button-secondary button-small" type="button" onClick={() => setPage("teachers")}>Go to Teachers</button></div>
-              {invitationUrl && <div className="invitation-link"><label className="field-label" htmlFor="invitationUrl">{invitationLabel || "One-time invitation link"}</label><div><input className="text-input" id="invitationUrl" readOnly value={invitationUrl} /><button className="button button-secondary" type="button" onClick={copyInvitation}>Copy</button></div><p className="field-hint">Send this link directly to the invited email address. Aster does not email invitations yet.</p></div>}
+              {invitationUrl && <div className="invitation-link"><p className={invitationEmailDelivery?.status === "sent" ? "field-hint" : "form-error"} role="status">{invitationEmailDelivery?.message || "Email delivery status is unavailable."}</p><label className="field-label" htmlFor="invitationUrl">{invitationLabel || "One-time invitation link"}</label><div><input className="text-input" id="invitationUrl" readOnly value={invitationUrl} /><button className="button button-secondary" type="button" onClick={copyInvitation}>Copy</button></div><p className="field-hint">This seven-day link is a backup. Share it only with the invited email address.</p></div>}
             </section>
             <section className="panel invitation-manager-panel">
               <div className="panel-heading"><div><h2>Outstanding invitations</h2><p>Review and manage links for people who have not activated their school access yet.</p></div><button className="button button-secondary button-small" type="button" onClick={() => setInvitationRefresh((previous) => previous + 1)} disabled={loadingInvitations}>Refresh</button></div>
@@ -1806,7 +1833,7 @@ function App() {
                   })}
                 </tbody></table></div>
                   : <p className="empty-search">There are no outstanding invitations. Create one from the Teachers page or a student record.</p>}
-              <p className="field-hint">Creating a new link invalidates the previous one and gives it a fresh seven-day expiry. Share links manually with the invited email address; automatic email delivery is not configured.</p>
+              <p className="field-hint">Creating a new link invalidates the old one and sends a fresh seven-day invitation email when email delivery is configured. Otherwise, copy the link and share it with the invited email address.</p>
             </section>
           </>}
 

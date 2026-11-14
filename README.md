@@ -35,7 +35,10 @@ The production frontend can be built with `npm run build`; `npm start` serves th
 2. Set `DATABASE_URL` to the Neon **pooled** connection string when Render prompts for it.
 3. Set `NEON_AUTH_BASE_URL` to the Managed Auth Base URL shown by `neon env pull` (or in the Neon Auth configuration tab).
 4. Set `FRONTEND_ORIGINS` to the exact Vercel frontend origin, such as `https://your-app.vercel.app` (no trailing slash). Include additional trusted origins as a comma-separated list.
-5. Deploy the service and verify `https://<your-render-service>.onrender.com/api/health` returns `{"status":"ok"}`.
+5. In Resend, verify a sender domain. Set `RESEND_API_KEY`, `EMAIL_FROM` (for example, `Aster <invites@yourdomain.com>`), and `APP_BASE_URL` to your Vercel origin in the Render service environment.
+6. Deploy the service and verify `https://<your-render-service>.onrender.com/api/health` returns `{"status":"ok"}`.
+
+Invitation emails are sent by the API through Resend. Keep the Resend API key only in Render or a private local `.env` file; never add it to the frontend or commit it. Until all three email settings are configured, Aster reports that delivery is unavailable and provides the activation link for manual sharing.
 
 ## School account setup
 
@@ -92,7 +95,7 @@ The browser calls the Render API directly. The API only allows origins listed in
 - `DELETE /api/schools/:schoolId/invitations/:invitationId` — revoke an unaccepted invitation
 - `POST /api/invitations/accept` — accept an invitation for the signed-in, verified email address
 
-School membership is checked on the server for every school API request; CORS is not an authorization boundary. School administrators register teachers by name and verified email on the **Teachers** page. The API generates a unique school staff code and a seven-day activation link; admins must share the link with the named teacher themselves because invitation email delivery is not configured. The **Portal access** page lists pending and expired invitations; admins can rotate a link (which invalidates the previous one) or revoke an invitation before it is accepted. Teachers create their own password during account activation; the generated staff code identifies the teacher but is not a login credential. The account must use the invited email address. A teacher becomes an active school member after verifying that email and accepting the link. Student invitations are created from the corresponding student register row; accepting one atomically connects the verified account to exactly one student record in that school.
+School membership is checked on the server for every school API request; CORS is not an authorization boundary. School administrators register teachers by name and verified email on the **Teachers** page. The API generates a unique school staff code and seven-day activation link, then emails the invitation through Resend when email delivery is configured. If delivery is unavailable or fails, admins see the status and can share the displayed link themselves. The **Portal access** page lists pending and expired invitations; admins can rotate a link (which invalidates the previous one and attempts to email the new link) or revoke an invitation before it is accepted. Teachers create their own password during account activation; the generated staff code identifies the teacher but is not a login credential. The account must use the invited email address. A teacher becomes an active school member after verifying that email and accepting the link. Student invitations are created from the corresponding student register row; accepting one atomically connects the verified account to exactly one student record in that school.
 
 ## Curriculum subjects
 

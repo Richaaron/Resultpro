@@ -53,6 +53,7 @@ import {
 } from "../shared/school-data.js";
 import { createCorsMiddleware } from "./cors.js";
 import { requireAuth } from "./auth.js";
+import { sendInvitationEmail } from "./invitation-email.js";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -737,7 +738,8 @@ app.post("/api/schools/:schoolId/invitations", requireAuth, async (request, resp
           : "That student record is unavailable or already linked to a portal account.",
       });
     }
-    return response.status(201).json({ invitation });
+    const emailDelivery = await sendInvitationEmail(invitation);
+    return response.status(201).json({ invitation, emailDelivery });
   } catch (error) {
     return handleDatabaseError(error, response);
   }
@@ -776,7 +778,8 @@ app.post("/api/schools/:schoolId/invitations/:invitationId/resend", requireAuth,
     if (!invitation) {
       return response.status(404).json({ error: "This invitation is no longer available to renew." });
     }
-    return response.json({ invitation });
+    const emailDelivery = await sendInvitationEmail(invitation);
+    return response.json({ invitation, emailDelivery });
   } catch (error) {
     return handleDatabaseError(error, response);
   }
