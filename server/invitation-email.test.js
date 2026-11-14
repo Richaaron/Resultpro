@@ -68,6 +68,26 @@ test("sends student invitations to the verified student or guardian email", asyn
   assert.match(payload.text, /student portal/);
 });
 
+test("sends parent invitations as parent portal access", async () => {
+  let payload;
+  const result = await sendInvitationEmail({
+    ...invitation,
+    email: "guardian@example.com",
+    role: "parent",
+    teacherName: undefined,
+  }, {
+    ...configuration,
+    fetchImpl: async (_url, options) => {
+      payload = JSON.parse(options.body);
+      return { ok: true };
+    },
+  });
+
+  assert.equal(result.status, "sent");
+  assert.deepEqual(payload.to, ["guardian@example.com"]);
+  assert.match(payload.text, /parent\/guardian portal/);
+});
+
 test("escapes untrusted school and teacher names in invitation HTML", async () => {
   let payload;
   await sendInvitationEmail({

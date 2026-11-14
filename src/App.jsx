@@ -40,6 +40,11 @@ const portalData = {
     title: "Your learning, in focus.",
     subtitle: "A current view of the results your school has published for you.",
   },
+  parent: {
+    label: "Parent / guardian",
+    title: "Your child’s progress, in focus.",
+    subtitle: "A private view of published reports for the students linked to your account.",
+  },
 };
 
 const schoolTypes = ["Primary school", "Secondary school", "All-through school", "College / sixth form"];
@@ -247,6 +252,7 @@ function App() {
   const [resultSheetClassId, setResultSheetClassId] = useState("");
   const [resultSheetTerm, setResultSheetTerm] = useState("Term 1");
   const [studentResultData, setStudentResultData] = useState(null);
+  const [selectedParentStudentId, setSelectedParentStudentId] = useState("");
   const [selectedStudentResultId, setSelectedStudentResultId] = useState("");
   const [loadingStudentResults, setLoadingStudentResults] = useState(false);
   const [studentResultError, setStudentResultError] = useState("");
@@ -275,7 +281,7 @@ function App() {
   const [form, setForm] = useState({ name: "", schoolType: "", country: "", email: "", accessMode: "invite" });
   const role = school?.role || "admin";
   const current = portalData[role];
-  const visibleNavigation = navigation.filter(([id]) => role === "admin" || (role === "teacher" && ["overview", "results", "attendance", "classes"].includes(id)) || (role === "student" && ["overview", "results"].includes(id)));
+  const visibleNavigation = navigation.filter(([id]) => role === "admin" || (role === "teacher" && ["overview", "results", "attendance", "classes"].includes(id)) || (["student", "parent"].includes(role) && ["overview", "results"].includes(id)));
   const dashboardForCurrentSchool = dashboardData && dashboardData.schoolId === school?.id ? dashboardData : null;
   const dashboardErrorForCurrentSchool = dashboardError && dashboardError.schoolId === school?.id
     ? dashboardError.message
@@ -288,7 +294,11 @@ function App() {
     ? invitationError.message
     : "";
   const invitationsPending = loadingInvitations || (!invitationsForCurrentSchool && !invitationErrorForCurrentSchool);
-  const selectedStudentResult = studentResultData?.sheets.find((sheet) => sheet.id === selectedStudentResultId) || null;
+  const selectedParentStudent = studentResultData?.children?.find((child) => child.studentId === selectedParentStudentId) || null;
+  const availableStudentSheets = role === "parent"
+    ? selectedParentStudent?.sheets || []
+    : studentResultData?.sheets || [];
+  const selectedStudentResult = availableStudentSheets.find((sheet) => sheet.id === selectedStudentResultId) || null;
   const attendanceReportForSelection = attendanceReportData
     && attendanceReportData.schoolId === school?.id
     && attendanceReportData.classId === attendanceClassId
@@ -650,7 +660,7 @@ function App() {
   }, [school?.id, page, role, attendanceClassId, attendanceDate, attendanceRefresh]);
 
   useEffect(() => {
-    if (page !== "results" || role === "student" || loadingClasses) return;
+    if (page !== "results" || ["student", "parent"].includes(role) || loadingClasses) return;
     if (!schoolClasses.some((item) => item.id === resultSheetClassId)) {
       setResultSheetClassId(schoolClasses[0]?.id || "");
     }
@@ -658,7 +668,7 @@ function App() {
 
   useEffect(() => {
     let active = true;
-    if (!school?.id || page !== "results" || role === "student" || !resultSheetClassId) {
+    if (!school?.id || page !== "results" || ["student", "parent"].includes(role) || !resultSheetClassId) {
       setResultSheet(null);
       setLoadingResultSheet(false);
       return () => { active = false; };
@@ -684,8 +694,9 @@ function App() {
 
   useEffect(() => {
     let active = true;
-    if (!school?.id || page !== "results" || role !== "student") {
+    if (!school?.id || page !== "results" || !["student", "parent"].includes(role)) {
       setStudentResultData(null);
+      setSelectedParentStudentId("");
       setSelectedStudentResultId("");
       setLoadingStudentResults(false);
       return () => { active = false; };
@@ -697,11 +708,21 @@ function App() {
       .then((data) => {
         if (!active) return;
         setStudentResultData(data);
-        setSelectedStudentResultId((previous) => (
-          data.sheets.some((sheet) => sheet.id === previous)
-            ? previous
-            : data.sheets[0]?.id || ""
-        ));
+        if (role === "parent") {
+          const child = data.children[0];
+          setSelectedParentStudentId(child?.studentId || "");
+          setSelectedStudentResultId((previous) => (
+            child?.sheets.some((sheet) => sheet.id === previous)
+              ? previous
+              : child?.sheets[0]?.id || ""
+          ));
+        } else {
+          setSelectedStudentResultId((previous) => (
+            data.sheets.some((sheet) => sheet.id === previous)
+              ? previous
+              : data.sheets[0]?.id || ""
+          ));
+        }
       })
       .catch((requestError) => {
         if (!active) return;
@@ -718,7 +739,7 @@ function App() {
     let active = true;
     const shouldLoadAssignments = (page === "teachers" && role === "admin")
       || (page === "classes" && role === "teacher")
-      || (page === "results" && role !== "student");
+      || (page === "results" && !["student", "parent"].includes(role));
     if (!school?.id || !shouldLoadAssignments) {
       setTeacherRoster([]);
       setTeachingAssignments([]);
@@ -750,7 +771,7 @@ function App() {
 
   useEffect(() => {
     let active = true;
-    if (!school?.id || page !== "results" || role === "student") {
+    if (!school?.id || page !== "results" || ["student", "parent"].includes(role)) {
       setAssessments([]);
       setLoadingAssessments(false);
       setAssessmentDetail(null);
@@ -776,7 +797,7 @@ function App() {
 
   useEffect(() => {
     let active = true;
-    if (!school?.id || page !== "results" || role === "student" || !selectedAssessmentId) {
+    if (!school?.id || page !== "results" || ["student", "parent"].includes(role) || !selectedAssessmentId) {
       setAssessmentDetail(null);
       setAssessmentMarks([]);
       setAssessmentDetailLoading(false);
@@ -1371,6 +1392,37 @@ function App() {
     }
   }
 
+  async function inviteParent(student) {
+    if (!school || !student.guardianEmail || student.isParentPortalLinked || student.parentInvitationPending) return;
+    setLinkingStudentId(student.id);
+    setStudentError("");
+    setInvitationUrl("");
+    setInvitationEmailDelivery(null);
+    try {
+      const payload = await apiRequest(`/api/schools/${school.id}/invitations`, {
+        method: "POST",
+        body: JSON.stringify({
+          email: student.guardianEmail,
+          role: "parent",
+          studentId: student.id,
+        }),
+      });
+      const emailDelivery = payload.emailDelivery || {
+        status: "unavailable",
+        message: "Email delivery status is unavailable. Copy the activation link and send it manually.",
+      };
+      setInvitationUrl(`${window.location.origin}${school.portalUrl || `/school/${school.slug}`}#invite=${encodeURIComponent(payload.invitation.token)}`);
+      setInvitationLabel(`Parent portal access for ${student.firstName} ${student.lastName} · ${payload.invitation.email}`);
+      setInvitationEmailDelivery(emailDelivery);
+      setPage("access");
+      setToast(emailDelivery.message);
+    } catch (requestError) {
+      setStudentError(requestError.message || "Could not create parent portal access.");
+    } finally {
+      setLinkingStudentId("");
+    }
+  }
+
   async function copyInvitation() {
     try {
       await navigator.clipboard.writeText(invitationUrl);
@@ -1616,9 +1668,9 @@ function App() {
           <span className="route-sweep" aria-hidden="true" />
           {!school ? <section className="panel onboarding-panel"><span className="auth-kicker">WELCOME TO ASTER</span><h1>Create your school workspace</h1><p className="page-subtitle">Your account is ready. Set up your school profile to begin; only people you invite can join its portal.</p><button className="button button-primary" type="button" onClick={showSetup}>＋ Create school profile</button></section> : <>
           <section className="welcome-row">
-            <div><div className="eyebrow"><span className="live-dot" /> {currentDateLabel} <span className="eyebrow-divider">·</span> SCHOOL WORKSPACE</div><h1>{page === "overview" ? role === "admin" ? `Good morning, ${userName}` : current.title : page === "results" ? role === "student" ? "Results, at a glance" : "Result sheet & assessments" : page === "attendance" ? "Daily attendance" : page === "profile" ? "Your school, your story." : page === "classes" ? "Classes & subjects" : page === "grading" ? "Grading rules" : page === "students" ? "Student register" : `${page[0].toUpperCase()}${page.slice(1)}`} <span className="wave">✳</span></h1><p className="page-subtitle">{page === "overview" ? current.subtitle : page === "results" && role === "student" ? "View only the term results your school has published for your linked student record." : page === "results" && role !== "student" ? role === "admin" ? "Calculate term percentages from approved marks, publish frozen result sheets, and review submissions." : "View calculated results and enter marks for your assigned classes." : page === "attendance" ? "Record and review daily attendance for your active class roster." : page === "classes" ? "Configure subjects and organise your classes." : page === "grading" ? "Set the grade bands and class-position rules used for new result publications." : page === "students" ? "Enrol students and keep their school records up to date." : `Keep your ${page} organised for the term ahead.`}</p></div>
+            <div><div className="eyebrow"><span className="live-dot" /> {currentDateLabel} <span className="eyebrow-divider">·</span> SCHOOL WORKSPACE</div><h1>{page === "overview" ? role === "admin" ? `Good morning, ${userName}` : current.title : page === "results" ? role === "student" ? "Results, at a glance" : role === "parent" ? "Your children’s results" : "Result sheet & assessments" : page === "attendance" ? "Daily attendance" : page === "profile" ? "Your school, your story." : page === "classes" ? "Classes & subjects" : page === "grading" ? "Grading rules" : page === "students" ? "Student register" : `${page[0].toUpperCase()}${page.slice(1)}`} <span className="wave">✳</span></h1><p className="page-subtitle">{page === "overview" ? current.subtitle : page === "results" && role === "student" ? "View only the term results your school has published for your linked student record." : page === "results" && role === "parent" ? "View only published reports for children linked to your verified parent account." : page === "results" && role !== "student" && role !== "parent" ? role === "admin" ? "Calculate term percentages from approved marks, publish frozen result sheets, and review submissions." : "View calculated results and enter marks for your assigned classes." : page === "attendance" ? "Record and review daily attendance for your active class roster." : page === "classes" ? "Configure subjects and organise your classes." : page === "grading" ? "Set the grade bands and class-position rules used for new result publications." : page === "students" ? "Enrol students and keep their school records up to date." : `Keep your ${page} organised for the term ahead.`}</p></div>
             {page === "overview" && <HeroScene />}
-            {page !== "classes" && page !== "students" && page !== "teachers" && page !== "results" && page !== "attendance" && page !== "grading" && <div className="welcome-actions"><button className="button button-secondary" type="button" onClick={async () => { try { await navigator.clipboard.writeText(`${window.location.origin}${school.portalUrl || `/school/${school.slug}`}`); setToast("Your school workspace link has been copied. Only invited school members can access it."); } catch { setToast("Could not copy the school link. Please try again."); } }}>↗ Copy school workspace link</button><button className="button button-primary" type="button" onClick={() => page === "profile" ? showSetup() : page === "access" ? document.getElementById("inviteEmail")?.focus() : setPage(role === "admin" ? "students" : "results")}>＋ {page === "access" ? "Invite a member" : role === "teacher" ? "Enter marks" : role === "student" ? "View my results" : "Add a student"}</button></div>}
+            {page !== "classes" && page !== "students" && page !== "teachers" && page !== "results" && page !== "attendance" && page !== "grading" && !(page === "overview" && role === "parent") && <div className="welcome-actions"><button className="button button-secondary" type="button" onClick={async () => { try { await navigator.clipboard.writeText(`${window.location.origin}${school.portalUrl || `/school/${school.slug}`}`); setToast("Your school workspace link has been copied. Only invited school members can access it."); } catch { setToast("Could not copy the school link. Please try again."); } }}>↗ Copy school workspace link</button><button className="button button-primary" type="button" onClick={() => page === "profile" ? showSetup() : page === "access" ? document.getElementById("inviteEmail")?.focus() : setPage(role === "admin" ? "students" : "results")}>＋ {page === "access" ? "Invite a member" : role === "teacher" ? "Enter marks" : ["student", "parent"].includes(role) ? role === "parent" ? "View child results" : "View my results" : "Add a student"}</button></div>}
           </section>
 
           {page === "attendance" && <section className="panel attendance-panel">
@@ -1766,26 +1818,32 @@ function App() {
             </div>
           </section>}
 
-          {page === "results" && role === "student" && <section className="panel student-results-panel">
-            <div className="panel-heading"><div><h2>Published term results</h2><p>Your school releases results after administrator approval. Only your linked student record is shown here.</p></div></div>
+          {page === "results" && ["student", "parent"].includes(role) && <section className="panel student-results-panel">
+            <div className="panel-heading"><div><h2>{role === "parent" ? "Your children’s published results" : "Published term results"}</h2><p>{role === "parent" ? "Only reports for students explicitly linked to your verified parent account are shown." : "Your school releases results after administrator approval. Only your linked student record is shown here."}</p></div></div>
             {studentResultError && <p className="form-error" role="alert">{studentResultError}</p>}
             {loadingStudentResults ? <p className="empty-search">Loading your published results…</p>
               : !studentResultData ? <p className="empty-search">Your results could not be loaded. Please try again.</p>
-                : !studentResultData.linked ? <p className="empty-search">Your school administrator needs to link your verified portal email to your student record before results can appear.</p>
-                  : studentResultData.sheets.length === 0 ? <p className="empty-search">No term results have been published for your student record yet.</p>
+                : role === "parent" && !studentResultData.linked ? <p className="empty-search">Ask your school to link your verified email to your child’s guardian contact to enable parent access.</p>
+                  : role === "student" && !studentResultData.linked ? <p className="empty-search">Your school administrator needs to link your verified portal email to your student record before results can appear.</p>
+                    : role === "student" && studentResultData.sheets.length === 0 ? <p className="empty-search">No term results have been published for your student record yet.</p>
                     : <>
                       <div className="result-sheet-filters">
-                        <label><span>Published result sheet</span><select className="text-input" value={selectedStudentResultId} onChange={(event) => setSelectedStudentResultId(event.target.value)}><option value="">Select a result sheet</option>{studentResultData.sheets.map((sheet) => <option key={sheet.id} value={sheet.id}>{sheet.grade} {sheet.section} · {sheet.academicYear} · {sheet.term}</option>)}</select></label>
+                        {role === "parent" && <label><span>Student</span><select className="text-input" value={selectedParentStudentId} onChange={(event) => {
+                          const child = studentResultData.children.find((item) => item.studentId === event.target.value);
+                          setSelectedParentStudentId(event.target.value);
+                          setSelectedStudentResultId(child?.sheets[0]?.id || "");
+                        }}><option value="">Select a student</option>{studentResultData.children.map((child) => <option key={child.studentId} value={child.studentId}>{child.firstName} {child.lastName} · {child.admissionNumber}</option>)}</select></label>}
+                        <label><span>Published result sheet</span><select className="text-input" value={selectedStudentResultId} onChange={(event) => setSelectedStudentResultId(event.target.value)} disabled={!availableStudentSheets.length}><option value="">Select a result sheet</option>{availableStudentSheets.map((sheet) => <option key={sheet.id} value={sheet.id}>{sheet.grade} {sheet.section} · {sheet.academicYear} · {sheet.term}</option>)}</select></label>
                         {selectedStudentResult?.publishedAt && <span className="result-sheet-summary">Published {new Date(selectedStudentResult.publishedAt).toLocaleDateString("en-NG")}</span>}
                         <button className="button button-secondary button-small report-print-button" type="button" onClick={printStudentReport} disabled={!selectedStudentResult?.rows.length}>Print report card</button>
                       </div>
                       {selectedStudentResult?.rows.length
                         ? <StudentReportCard schoolName={school.name} result={selectedStudentResult} rows={selectedStudentResult.rows} />
-                        : <p className="empty-search">Select one of your published result sheets to view its subjects.</p>}
+                        : <p className="empty-search">{role === "parent" ? "No result sheets have been published for this student yet." : "Select one of your published result sheets to view its subjects."}</p>}
                     </>}
           </section>}
 
-          {page === "results" && role !== "student" && <section className="assessment-workspace">
+          {page === "results" && role !== "student" && role !== "parent" && <section className="assessment-workspace">
             <section className="panel result-sheet-panel">
               <div className="panel-heading result-sheet-heading">
                 <div><h2>Term result sheet</h2><p>Only administrator-approved assessments are included. Letter grades and class positions follow this school’s saved grading rules.</p></div>
@@ -1958,8 +2016,8 @@ function App() {
                   <select className="text-input" value={studentClassFilter} aria-label="Filter by class" onChange={(event) => { setStudentClassFilter(event.target.value); setStudentPage(1); }}><option value="">All classes</option>{schoolClasses.map((schoolClass) => <option key={schoolClass.id} value={schoolClass.id}>{schoolClass.grade} {schoolClass.section}</option>)}</select>
                 </div>
               </div>
-              <div className="table-scroll"><table><thead><tr><th>STUDENT</th><th>ADMISSION NO.</th><th>CLASS</th><th>GUARDIAN CONTACT</th><th>STATUS</th><th>PORTAL</th><th>ACTIONS</th></tr></thead><tbody>
-                {studentRows.map((student) => <tr key={student.id}><td><strong>{student.firstName} {student.lastName}</strong></td><td>{student.admissionNumber}</td><td>{student.grade} {student.section}</td><td>{student.guardianEmail || student.guardianPhone || "—"}</td><td><span className={`status-pill ${student.isActive ? "approved" : "draft"}`}><i />{student.isActive ? "Active" : "Archived"}</span></td><td>{student.isPortalLinked ? <span className="student-portal-linked" title={student.portalEmail || "Portal account linked"}>Linked{student.portalEmail ? ` · ${student.portalEmail}` : ""}</span> : <button className="quiet-action" type="button" onClick={() => inviteStudent(student)} disabled={linkingStudentId === student.id}>{linkingStudentId === student.id ? "Creating…" : "Invite"}</button>}</td><td><div className="student-row-actions"><button className="quiet-action" type="button" onClick={() => editStudent(student)}>Edit</button><button className="quiet-action" type="button" onClick={() => toggleStudentStatus(student)}>{student.isActive ? "Archive" : "Reactivate"}</button></div></td></tr>)}
+              <div className="table-scroll"><table><thead><tr><th>STUDENT</th><th>ADMISSION NO.</th><th>CLASS</th><th>GUARDIAN CONTACT</th><th>STATUS</th><th>STUDENT PORTAL</th><th>PARENT PORTAL</th><th>ACTIONS</th></tr></thead><tbody>
+                {studentRows.map((student) => <tr key={student.id}><td><strong>{student.firstName} {student.lastName}</strong></td><td>{student.admissionNumber}</td><td>{student.grade} {student.section}</td><td>{student.guardianEmail || student.guardianPhone || "—"}</td><td><span className={`status-pill ${student.isActive ? "approved" : "draft"}`}><i />{student.isActive ? "Active" : "Archived"}</span></td><td>{student.isPortalLinked ? <span className="student-portal-linked" title={student.portalEmail || "Portal account linked"}>Linked{student.portalEmail ? ` · ${student.portalEmail}` : ""}</span> : <button className="quiet-action" type="button" onClick={() => inviteStudent(student)} disabled={linkingStudentId === student.id}>{linkingStudentId === student.id ? "Creating…" : "Invite"}</button>}</td><td>{student.isParentPortalLinked ? <span className="student-portal-linked">Linked</span> : student.parentInvitationPending ? <span className="field-hint">Invited</span> : <button className="quiet-action" type="button" onClick={() => inviteParent(student)} disabled={!student.isActive || !student.guardianEmail || linkingStudentId === student.id}>{linkingStudentId === student.id ? "Creating…" : student.guardianEmail ? "Invite guardian" : "Add guardian email"}</button>}</td><td><div className="student-row-actions"><button className="quiet-action" type="button" onClick={() => editStudent(student)}>Edit</button><button className="quiet-action" type="button" onClick={() => toggleStudentStatus(student)}>{student.isActive ? "Archive" : "Reactivate"}</button></div></td></tr>)}
               </tbody></table>
                 {loadingStudents && <div className="empty-search">Loading student records…</div>}
                 {!loadingStudents && studentRows.length === 0 && <div className="empty-search">No students found. Add your first student above or adjust the filters.</div>}
@@ -1970,7 +2028,7 @@ function App() {
 
           {role === "admin" && page === "access" && <>
             <section className="panel invite-panel">
-              <div className="panel-heading"><div><h2>Portal access</h2><p>Register teachers from the Teachers page to generate their staff code and activation link. Student invitations are tied to the selected student record.</p></div><button className="button button-secondary button-small" type="button" onClick={() => setPage("teachers")}>Go to Teachers</button></div>
+              <div className="panel-heading"><div><h2>Portal access</h2><p>Register teachers from the Teachers page, or invite students and guardians from the student register. Parent access is limited to the invited student’s published reports.</p></div><button className="button button-secondary button-small" type="button" onClick={() => setPage("teachers")}>Go to Teachers</button></div>
               {invitationUrl && <div className="invitation-link"><p className={invitationEmailDelivery?.status === "sent" ? "field-hint" : "form-error"} role="status">{invitationEmailDelivery?.message || "Email delivery status is unavailable."}</p><label className="field-label" htmlFor="invitationUrl">{invitationLabel || "One-time invitation link"}</label><div><input className="text-input" id="invitationUrl" readOnly value={invitationUrl} /><button className="button button-secondary" type="button" onClick={copyInvitation}>Copy</button></div><p className="field-hint">This seven-day link is a backup. Share it only with the invited email address.</p></div>}
             </section>
             <section className="panel invitation-manager-panel">
@@ -2007,16 +2065,16 @@ function App() {
             </section>
             <section className="main-grid">
               <article className="panel performance-panel tilt-3d">
-                <div className="panel-heading"><div><h2>{role === "student" ? "My latest published results" : "Published results average"}</h2><p>{role === "student" ? "Only your most recently published report is included." : role === "teacher" ? "Based on published results for your assigned classes and subjects." : "Based on saved result snapshots for this school."}</p></div></div>
-                <div className="chart-summary"><strong>{dashboardAverage}</strong><small>{role === "student" ? "latest report average" : "average percentage"}</small></div>
+                <div className="panel-heading"><div><h2>{role === "student" ? "My latest published results" : role === "parent" ? "Children’s latest published results" : "Published results average"}</h2><p>{role === "student" ? "Only your most recently published report is included." : role === "parent" ? "Based only on published reports for your linked children." : role === "teacher" ? "Based on published results for your assigned classes and subjects." : "Based on saved result snapshots for this school."}</p></div></div>
+                <div className="chart-summary"><strong>{dashboardAverage}</strong><small>{["student", "parent"].includes(role) ? "latest report average" : "average percentage"}</small></div>
                 {dashboardAverage === "—" && <p className="sample-chart-copy">No published result percentages are available yet.</p>}
               </article>
               <article className="panel activity-panel tilt-3d">
-                <div className="panel-heading"><div><h2>{role === "student" ? "Published report activity" : "Recent assessment activity"}</h2><p>{role === "admin" ? "Latest assessments across your school." : role === "teacher" ? "Latest assessments for your assignments." : "Your latest published result sheets."}</p></div></div>
+                <div className="panel-heading"><div><h2>{["student", "parent"].includes(role) ? "Published report activity" : "Recent assessment activity"}</h2><p>{role === "admin" ? "Latest assessments across your school." : role === "teacher" ? "Latest assessments for your assignments." : role === "parent" ? "Published reports for your linked children." : "Your latest published result sheets."}</p></div></div>
                 <div className="attention-list">
                   {dashboardForCurrentSchool.activity.map((item) => {
-                    const status = role === "student" ? "Published" : `${item.status[0].toUpperCase()}${item.status.slice(1)}`;
-                    const detail = role === "student"
+                    const status = ["student", "parent"].includes(role) ? "Published" : `${item.status[0].toUpperCase()}${item.status.slice(1)}`;
+                    const detail = ["student", "parent"].includes(role)
                       ? `${item.academicYear} · ${item.subjectCount} subjects${item.averagePercentage == null ? "" : ` · ${Number(item.averagePercentage).toFixed(1)}% average`}`
                       : `${item.detail} · ${item.markedCount} of ${item.studentCount} marks entered`;
                     return <button className="attention-item" type="button" key={item.id} onClick={() => setPage("results")}>
@@ -2025,9 +2083,9 @@ function App() {
                       <span className={`status-pill ${status === "Approved" || status === "Published" ? "approved" : status === "Submitted" ? "pending" : "draft"}`}><i />{status}</span>
                     </button>;
                   })}
-                  {dashboardForCurrentSchool.activity.length === 0 && <p className="empty-search">{role === "student" ? "Your school has not published a result sheet for you yet." : "There is no assessment activity to show yet."}</p>}
+                  {dashboardForCurrentSchool.activity.length === 0 && <p className="empty-search">{["student", "parent"].includes(role) ? "Your school has not published a result sheet for you yet." : "There is no assessment activity to show yet."}</p>}
                 </div>
-                <button className="view-all-link" type="button" onClick={() => setPage("results")}>{role === "student" ? "View my results" : "Open results & assessments"} →</button>
+                <button className="view-all-link" type="button" onClick={() => setPage("results")}>{role === "student" ? "View my results" : role === "parent" ? "View child results" : "Open results & assessments"} →</button>
               </article>
             </section>
           </>}

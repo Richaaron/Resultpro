@@ -50,7 +50,9 @@ export async function sendInvitationEmail(invitation, {
   const schoolName = escapeHtml(invitation.schoolName);
   const safeGreeting = escapeHtml(greeting);
   const safeUrl = escapeHtml(activationUrl);
-  const roleLabel = invitation.role === "teacher" ? "teacher" : "student";
+  const roleLabel = invitation.role === "teacher"
+    ? "teacher"
+    : invitation.role === "parent" ? "parent/guardian" : "student";
   const subject = `You are invited to join ${invitation.schoolName} on Aster`;
   const text = `${greeting}\n\nYou have been invited to join ${invitation.schoolName}'s ${roleLabel} portal on Aster. Accept this invitation within seven days:\n\n${activationUrl}\n\nIf you were not expecting this invitation, you can ignore this email.`;
   const html = `<p>${safeGreeting}</p><p>You have been invited to join ${schoolName}'s ${roleLabel} portal on Aster. Accept this invitation within seven days:</p><p><a href="${safeUrl}">Accept invitation</a></p><p>If you were not expecting this invitation, you can ignore this email.</p>`;

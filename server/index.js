@@ -24,6 +24,7 @@ import {
   listSchoolAssessments,
   listSchoolResultSheet,
   listStudentPublishedResultSheets,
+  listParentPublishedResultSheets,
   listTeachingAssignments,
   getSchoolAssessment,
   removeTeachingAssignment,
@@ -162,8 +163,8 @@ app.get("/api/schools/:schoolId/classes", requireAuth, async (request, response)
   try {
     const membershipRole = await getSchoolRole(schoolId, request.auth.userId);
     if (!membershipRole) return response.status(404).json({ error: "School not found." });
-    if (membershipRole === "student") {
-      return response.status(403).json({ error: "Student class access is not available yet." });
+    if (["student", "parent"].includes(membershipRole)) {
+      return response.status(403).json({ error: "Class access is not available to student or parent accounts." });
     }
     const classes = await listSchoolClasses(
       schoolId,
@@ -183,8 +184,8 @@ app.get("/api/schools/:schoolId/teaching-assignments", requireAuth, async (reque
   try {
     const membershipRole = await getSchoolRole(schoolId, request.auth.userId);
     if (!membershipRole) return response.status(404).json({ error: "School not found." });
-    if (membershipRole === "student") {
-      return response.status(403).json({ error: "Teacher assignments are not available to student accounts." });
+    if (["student", "parent"].includes(membershipRole)) {
+      return response.status(403).json({ error: "Teacher assignments are not available to student or parent accounts." });
     }
 
     const isAdmin = membershipRole === "admin";
@@ -374,8 +375,8 @@ app.get("/api/schools/:schoolId/result-sheet", requireAuth, async (request, resp
   try {
     const membershipRole = await getSchoolRole(schoolId, request.auth.userId);
     if (!membershipRole) return response.status(404).json({ error: "School not found." });
-    if (membershipRole === "student") {
-      return response.status(403).json({ error: "Student accounts can only view their own published result sheets." });
+    if (["student", "parent"].includes(membershipRole)) {
+      return response.status(403).json({ error: "Only school staff can view class result sheets." });
     }
 
     const teacherUserId = membershipRole === "teacher" ? request.auth.userId : null;
@@ -451,10 +452,12 @@ app.get("/api/schools/:schoolId/my-results", requireAuth, async (request, respon
   try {
     const membershipRole = await getSchoolRole(schoolId, request.auth.userId);
     if (!membershipRole) return response.status(404).json({ error: "School not found." });
-    if (membershipRole !== "student") {
-      return response.status(403).json({ error: "Only student accounts can view student results." });
+    if (!["student", "parent"].includes(membershipRole)) {
+      return response.status(403).json({ error: "Only student and parent accounts can view linked student results." });
     }
-    const results = await listStudentPublishedResultSheets(schoolId, request.auth.userId);
+    const results = membershipRole === "parent"
+      ? await listParentPublishedResultSheets(schoolId, request.auth.userId)
+      : await listStudentPublishedResultSheets(schoolId, request.auth.userId);
     return response.json(results);
   } catch (error) {
     return handleDatabaseError(error, response);
@@ -468,8 +471,8 @@ app.get("/api/schools/:schoolId/assessments", requireAuth, async (request, respo
   try {
     const membershipRole = await getSchoolRole(schoolId, request.auth.userId);
     if (!membershipRole) return response.status(404).json({ error: "School not found." });
-    if (membershipRole === "student") {
-      return response.status(403).json({ error: "Assessment access is not available to student accounts yet." });
+    if (["student", "parent"].includes(membershipRole)) {
+      return response.status(403).json({ error: "Assessment access is not available to student or parent accounts." });
     }
     const assessments = await listSchoolAssessments(
       schoolId,
@@ -522,8 +525,8 @@ app.get("/api/schools/:schoolId/assessments/:assessmentId/marks", requireAuth, a
   try {
     const membershipRole = await getSchoolRole(schoolId, request.auth.userId);
     if (!membershipRole) return response.status(404).json({ error: "School not found." });
-    if (membershipRole === "student") {
-      return response.status(403).json({ error: "Assessment marks are not available to student accounts yet." });
+    if (["student", "parent"].includes(membershipRole)) {
+      return response.status(403).json({ error: "Assessment marks are not available to student or parent accounts." });
     }
     const result = await getSchoolAssessment(
       schoolId,
@@ -758,14 +761,14 @@ app.post("/api/schools/:schoolId/invitations", requireAuth, async (request, resp
     ? teacher?.email
     : typeof request.body?.email === "string" ? request.body.email.trim().toLowerCase() : "";
   if (!isUuid(schoolId) || !email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254
-    || !["teacher", "student"].includes(role)
+    || !["teacher", "student", "parent"].includes(role)
     || (role === "teacher" && !teacher)
-    || (studentId !== undefined && (!isUuid(studentId) || role !== "student"))
-    || (role === "student" && !studentId)) {
+    || (studentId !== undefined && (!isUuid(studentId) || !["student", "parent"].includes(role)))
+    || (["student", "parent"].includes(role) && !studentId)) {
     return response.status(400).json({
       error: role === "teacher"
         ? "Enter the teacher’s full name and a valid email address."
-        : "Enter a valid email address; student invitations must target a student record.",
+        : "Enter a valid email address; student and parent invitations must target a student record.",
     });
   }
 
@@ -786,6 +789,8 @@ app.post("/api/schools/:schoolId/invitations", requireAuth, async (request, resp
       return response.status(409).json({
         error: role === "teacher"
           ? "This email already belongs to a teacher or has a pending invitation in this school."
+          : role === "parent"
+            ? "The guardian email must match the active student record, and that guardian must not already be linked or invited."
           : "That student record is unavailable or already linked to a portal account.",
       });
     }
