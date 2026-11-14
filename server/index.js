@@ -93,7 +93,13 @@ app.get("/api/health", (_request, response) => {
 
 app.get("/api/platform/access", requireAuth, (request, response) => {
   response.set("Cache-Control", "no-store");
-  return response.json({ isPlatformAdmin: isPlatformAdminEmail(request.auth.email) });
+  const configuredEmails = process.env.PLATFORM_ADMIN_EMAILS || "";
+  const isPlatformAdmin = isPlatformAdminEmail(request.auth.email, configuredEmails);
+  if (!isPlatformAdmin) {
+    const allowlistConfigured = configuredEmails.split(",").some((email) => email.trim());
+    console.warn("[platform-access] denied", { allowlistConfigured });
+  }
+  return response.json({ isPlatformAdmin });
 });
 
 app.get("/api/platform/overview", requireAuth, async (request, response) => {
