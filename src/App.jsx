@@ -178,6 +178,8 @@ function App() {
   const [platformBillingDrafts, setPlatformBillingDrafts] = useState({});
   const [platformBillingSaving, setPlatformBillingSaving] = useState("");
   const [platformBillingFeedback, setPlatformBillingFeedback] = useState({});
+  const [platformSchoolStatusSaving, setPlatformSchoolStatusSaving] = useState("");
+  const [platformSchoolStatusFeedback, setPlatformSchoolStatusFeedback] = useState({});
   const [modalOpen, setModalOpen] = useState(false);
   const [explainerOpen, setExplainerOpen] = useState(false);
   const [step, setStep] = useState(1);
@@ -310,6 +312,7 @@ function App() {
   const platformDirectoryLastRow = platformDirectory
     ? Math.min(platformDirectory.page * platformDirectory.pageSize, platformDirectory.totalCount)
     : 0;
+  const platformSchoolActionBusy = Boolean(platformBillingSaving || platformSchoolStatusSaving);
   const current = portalData[role];
   const visibleNavigation = navigation.filter(([id]) => role === "admin" || (role === "teacher" && ["overview", "results", "attendance", "classes"].includes(id)) || (["student", "parent"].includes(role) && ["overview", "results"].includes(id)));
   const dashboardForCurrentSchool = dashboardData && dashboardData.schoolId === school?.id ? dashboardData : null;
@@ -550,6 +553,7 @@ function App() {
   useEffect(() => {
     setPlatformBillingDrafts({});
     setPlatformBillingFeedback({});
+    setPlatformSchoolStatusFeedback({});
     setPlatformSchoolSearchDraft("");
     setPlatformSchoolSearch("");
     setPlatformSchoolPage(1);
@@ -1094,10 +1098,74 @@ function App() {
     }
   }
 
+  async function setPlatformSchoolArchived(schoolRow, archived) {
+    if (archived && !window.confirm(
+      `Archive ${schoolRow.name}? School access will stop, but all records will be preserved and can be restored.`,
+    )) return;
+
+    setPlatformSchoolStatusSaving(schoolRow.id);
+    setPlatformSchoolStatusFeedback((previous) => ({ ...previous, [schoolRow.id]: null }));
+    try {
+      const { schoolStatus } = await apiRequest(`/api/platform/schools/${schoolRow.id}/status`, {
+        method: "PATCH",
+        body: JSON.stringify({ archived }),
+      });
+      setPlatformOverview((previous) => previous ? {
+        ...previous,
+        schools: previous.schools.map((row) => row.id === schoolRow.id
+          ? { ...row, archivedAt: schoolStatus.archivedAt }
+          : row),
+      } : previous);
+
+      if (archived) {
+        setSchools((previous) => previous.filter((item) => item.id !== schoolRow.id));
+        if (school?.id === schoolRow.id) {
+          window.history.replaceState(null, "", "/");
+          setSchool(null);
+        }
+      } else {
+        try {
+          const { schools: memberships } = await apiRequest("/api/schools");
+          setSchools(memberships);
+        } catch (refreshError) {
+          setPlatformSchoolStatusFeedback((previous) => ({
+            ...previous,
+            [schoolRow.id]: {
+              message: `School restored, but your workspace list could not refresh. Reload to update it. ${refreshError.message || ""}`.trim(),
+              error: true,
+            },
+          }));
+          return;
+        }
+      }
+
+      setPlatformSchoolStatusFeedback((previous) => ({
+        ...previous,
+        [schoolRow.id]: {
+          message: archived
+            ? "School archived. Access is disabled; all records are preserved."
+            : "School restored. Existing members can access it again.",
+          error: false,
+        },
+      }));
+    } catch (requestError) {
+      setPlatformSchoolStatusFeedback((previous) => ({
+        ...previous,
+        [schoolRow.id]: {
+          message: requestError.message || "Could not update this school.",
+          error: true,
+        },
+      }));
+    } finally {
+      setPlatformSchoolStatusSaving("");
+    }
+  }
+
   async function createSchool(event) {
     event.preventDefault();
     setSaving(true);
     setError("");
+    const createdFromPlatform = page === "platform";
     try {
       const payload = await apiRequest("/api/schools", {
         method: "POST",
@@ -1107,6 +1175,7 @@ function App() {
       setSchools((previous) => [payload.school, ...previous]);
       window.history.replaceState(null, "", payload.school.portalUrl);
       setSchoolRouteError(false);
+      if (createdFromPlatform) setPage("overview");
       setModalOpen(false);
       setToast(`School profile created for ${payload.school.name}.`);
       setForm({ name: "", schoolType: "", country: "", email: "", accessMode: "invite" });
@@ -1915,7 +1984,7 @@ function App() {
 
           {page === "platform" && platformAdmin && <section className="platform-overview">
             <section className="panel platform-summary-panel">
-              <div className="panel-heading"><div><h2>School network</h2><p>Aggregate operational counts across all Aster schools.</p></div><button className="button button-secondary button-small" type="button" onClick={() => { setPlatformBillingDrafts({}); setPlatformBillingFeedback({}); setPlatformRefresh((previous) => previous + 1); }} disabled={loadingPlatformOverview || Boolean(platformBillingSaving)}>Refresh</button></div>
+              <div className="panel-heading"><div><h2>School network</h2><p>Aggregate operational counts across all Aster schools.</p></div><div className="platform-summary-actions"><button className="button button-primary button-small" type="button" onClick={showSetup}>＋ Add school</button><button className="button button-secondary button-small" type="button" onClick={() => { setPlatformBillingDrafts({}); setPlatformBillingFeedback({}); setPlatformSchoolStatusFeedback({}); setPlatformRefresh((previous) => previous + 1); }} disabled={loadingPlatformOverview || platformSchoolActionBusy}>Refresh</button></div></div>
               {platformOverviewError && <p className="form-error" role="alert">{platformOverviewError}</p>}
               {loadingPlatformOverview && <p className="empty-search" role="status">Loading platform overview…</p>}
               {!loadingPlatformOverview && platformOverviewForUser && <>
@@ -1934,46 +2003,55 @@ function App() {
                   <div><h3>School directory</h3><p>Showing {platformDirectoryFirstRow.toLocaleString("en-NG")}–{platformDirectoryLastRow.toLocaleString("en-NG")} of {platformDirectory?.totalCount.toLocaleString("en-NG")} {platformSchoolSearch ? "matching " : ""}schools; {platformOverviewForUser.summary.schoolCount.toLocaleString("en-NG")} registered. New schools remain pending until you decide.</p></div>
                   <form className="platform-school-search" onSubmit={(event) => { event.preventDefault(); setPlatformSchoolSearch(platformSchoolSearchDraft.trim()); setPlatformSchoolPage(1); }}>
                     <label className="platform-school-search-field"><span>Find a school</span><input className="text-input" type="search" value={platformSchoolSearchDraft} maxLength={100} placeholder="Name, type, or country" onChange={(event) => setPlatformSchoolSearchDraft(event.target.value)} /></label>
-                    <button className="button button-secondary button-small" type="submit" disabled={loadingPlatformOverview}>Search</button>
+                    <button className="button button-secondary button-small" type="submit" disabled={loadingPlatformOverview || platformSchoolActionBusy}>Search</button>
                     {(platformSchoolSearch || platformSchoolSearchDraft) && <button className="button button-secondary button-small" type="button" onClick={() => { setPlatformSchoolSearchDraft(""); setPlatformSchoolSearch(""); setPlatformSchoolPage(1); }}>Clear</button>}
                   </form>
                 </div>
                 {platformOverviewForUser.schools.length === 0
                   ? <p className="empty-search">{platformSchoolSearch ? "No schools match that search. Try another name, type, or country." : "No school workspaces have been created yet."}</p>
-                  : <div className="table-scroll"><table className="platform-directory-table"><thead><tr><th>SCHOOL</th><th>COUNTRY</th><th>TYPE</th><th>STUDENTS</th><th>TEACHERS</th><th>CLASSES</th><th>ADMINS</th><th>CREATED</th><th>BILLING DECISION</th></tr></thead><tbody>
+                  : <div className="table-scroll"><table className="platform-directory-table"><thead><tr><th>SCHOOL</th><th>COUNTRY</th><th>TYPE</th><th>STUDENTS</th><th>TEACHERS</th><th>CLASSES</th><th>ADMINS</th><th>CREATED</th><th>BILLING DECISION</th><th>SCHOOL ACCESS</th></tr></thead><tbody>
                   {platformOverviewForUser.schools.map((schoolRow) => {
                     const billingDraft = platformBillingDrafts[schoolRow.id] || {
                       billingStatus: schoolRow.billingStatus || "pending",
                       planId: schoolRow.planId || "",
                     };
                     const billingFeedback = platformBillingFeedback[schoolRow.id];
+                    const schoolStatusFeedback = platformSchoolStatusFeedback[schoolRow.id];
+                    const isArchived = Boolean(schoolRow.archivedAt);
                     return <tr key={schoolRow.id}>
                       <td><strong>{schoolRow.name}</strong></td><td>{schoolRow.country}</td><td>{schoolRow.schoolType}</td><td>{schoolRow.studentCount.toLocaleString("en-NG")}</td><td>{schoolRow.teacherCount.toLocaleString("en-NG")}</td><td>{schoolRow.classCount.toLocaleString("en-NG")}</td><td>{schoolRow.administratorCount.toLocaleString("en-NG")}</td><td>{new Date(schoolRow.createdAt).toLocaleDateString("en-NG")}</td>
                       <td>
                         <div className="platform-billing-controls">
-                          <label className="platform-billing-field"><span>Status</span><select className="text-input" value={billingDraft.billingStatus} disabled={Boolean(platformBillingSaving)} onChange={(event) => updatePlatformBillingDraft(schoolRow, "billingStatus", event.target.value)}>
+                          <label className="platform-billing-field"><span>Status</span><select className="text-input" value={billingDraft.billingStatus} disabled={platformSchoolActionBusy} onChange={(event) => updatePlatformBillingDraft(schoolRow, "billingStatus", event.target.value)}>
                             <option value="pending">Pending decision</option>
                             <option value="exempt">Exempt / free</option>
                             <option value="paid">Billable plan</option>
                           </select></label>
-                          <label className="platform-billing-field"><span>Plan</span><select className="text-input" value={billingDraft.planId} disabled={billingDraft.billingStatus !== "paid" || Boolean(platformBillingSaving)} onChange={(event) => updatePlatformBillingDraft(schoolRow, "planId", event.target.value)}>
+                          <label className="platform-billing-field"><span>Plan</span><select className="text-input" value={billingDraft.planId} disabled={billingDraft.billingStatus !== "paid" || platformSchoolActionBusy} onChange={(event) => updatePlatformBillingDraft(schoolRow, "planId", event.target.value)}>
                             <option value="">Select a plan</option>
                             {subscriptionPlans.map((plan) => <option key={plan.id} value={plan.id}>{plan.name} · ₦{plan.monthlyPrice.toLocaleString("en-NG")}/mo</option>)}
                           </select></label>
-                          <button className="button button-secondary button-small" type="button" onClick={() => savePlatformBillingDecision(schoolRow)} disabled={Boolean(platformBillingSaving)}>
+                          <button className="button button-secondary button-small" type="button" onClick={() => savePlatformBillingDecision(schoolRow)} disabled={platformSchoolActionBusy}>
                             {platformBillingSaving === schoolRow.id ? "Saving…" : "Save decision"}
                           </button>
                           {billingFeedback && <small className={billingFeedback.error ? "platform-billing-feedback form-error" : "platform-billing-feedback"} role={billingFeedback.error ? "alert" : "status"}>{billingFeedback.message}</small>}
                         </div>
                       </td>
+                      <td><div className="platform-school-status-controls">
+                        <span className={isArchived ? "platform-school-status archived" : "platform-school-status active"}>{isArchived ? "Archived" : "Active"}</span>
+                        <button className="button button-secondary button-small" type="button" onClick={() => setPlatformSchoolArchived(schoolRow, !isArchived)} disabled={platformSchoolActionBusy}>
+                          {platformSchoolStatusSaving === schoolRow.id ? "Saving…" : isArchived ? "Restore" : "Archive"}
+                        </button>
+                        {schoolStatusFeedback && <small className={schoolStatusFeedback.error ? "platform-school-status-feedback form-error" : "platform-school-status-feedback"} role={schoolStatusFeedback.error ? "alert" : "status"}>{schoolStatusFeedback.message}</small>}
+                      </div></td>
                     </tr>;
                   })}
                 </tbody></table></div>}
                 {platformDirectoryPageCount > 1 && <nav className="platform-directory-pagination" aria-label="School directory pages">
                   <span>Page {platformDirectory?.page.toLocaleString("en-NG")} of {platformDirectoryPageCount.toLocaleString("en-NG")}</span>
                   <div>
-                    <button className="button button-secondary button-small" type="button" onClick={() => setPlatformSchoolPage((currentPage) => currentPage - 1)} disabled={loadingPlatformOverview || platformDirectory?.page <= 1}>Previous</button>
-                    <button className="button button-secondary button-small" type="button" onClick={() => setPlatformSchoolPage((currentPage) => currentPage + 1)} disabled={loadingPlatformOverview || platformDirectory?.page >= platformDirectoryPageCount}>Next</button>
+                    <button className="button button-secondary button-small" type="button" onClick={() => setPlatformSchoolPage((currentPage) => currentPage - 1)} disabled={loadingPlatformOverview || platformSchoolActionBusy || platformDirectory?.page <= 1}>Previous</button>
+                    <button className="button button-secondary button-small" type="button" onClick={() => setPlatformSchoolPage((currentPage) => currentPage + 1)} disabled={loadingPlatformOverview || platformSchoolActionBusy || platformDirectory?.page >= platformDirectoryPageCount}>Next</button>
                   </div>
                 </nav>}
               </>}

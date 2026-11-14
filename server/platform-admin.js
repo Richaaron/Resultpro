@@ -42,3 +42,8 @@ export function normalizePlatformSchoolDirectoryQuery(query = {}) {
   if (typeof search !== "string" || search.length > 100) return null;
   return { page, pageSize: platformSchoolPageSize, search: search.trim() };
 }
+
+export function normalizePlatformSchoolArchiveInput(body = {}) {
+  if (!body || typeof body !== "object" || Array.isArray(body)) return null;
+  return typeof body.archived === "boolean" ? { archived: body.archived } : null;
+}

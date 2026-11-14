@@ -12,6 +12,7 @@ import {
   getSchoolDashboard,
   getPlatformOverview,
   setPlatformSchoolBillingDecision,
+  setPlatformSchoolArchived,
   getSchoolClassAttendance,
   getSchoolClassAttendanceReport,
   getSchoolGradingSettings,
@@ -63,6 +64,7 @@ import { createCorsMiddleware } from "./cors.js";
 import { requireAuth } from "./auth.js";
 import {
   isPlatformAdminEmail,
+  normalizePlatformSchoolArchiveInput,
   normalizePlatformSchoolBillingDecision,
   normalizePlatformSchoolDirectoryQuery,
 } from "./platform-admin.js";
@@ -126,6 +128,26 @@ app.put("/api/platform/schools/:schoolId/billing", requireAuth, async (request, 
     if (!billingSetting) return response.status(404).json({ error: "School not found." });
     response.set("Cache-Control", "no-store");
     return response.json({ billingSetting });
+  } catch (error) {
+    return handleDatabaseError(error, response);
+  }
+});
+
+app.patch("/api/platform/schools/:schoolId/status", requireAuth, async (request, response) => {
+  if (!isPlatformAdminEmail(request.auth.email)) {
+    return response.status(403).json({ error: "Platform administrator access is required." });
+  }
+  const { schoolId } = request.params;
+  const status = normalizePlatformSchoolArchiveInput(request.body);
+  if (!isUuid(schoolId) || !status) {
+    return response.status(400).json({ error: "Choose a valid school status." });
+  }
+
+  try {
+    const schoolStatus = await setPlatformSchoolArchived(schoolId, status.archived);
+    if (!schoolStatus) return response.status(404).json({ error: "School not found." });
+    response.set("Cache-Control", "no-store");
+    return response.json({ schoolStatus });
   } catch (error) {
     return handleDatabaseError(error, response);
   }

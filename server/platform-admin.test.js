@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   isPlatformAdminEmail,
+  normalizePlatformSchoolArchiveInput,
   normalizePlatformSchoolBillingDecision,
   normalizePlatformSchoolDirectoryQuery,
 } from "./platform-admin.js";
@@ -53,4 +54,11 @@ test("normalizes school directory search and pagination inputs", () => {
   assert.equal(normalizePlatformSchoolDirectoryQuery({ page: "1e2" }), null);
   assert.equal(normalizePlatformSchoolDirectoryQuery({ search: "x".repeat(101) }), null);
   assert.equal(normalizePlatformSchoolDirectoryQuery({ search: " ".repeat(101) }), null);
+});
+
+test("accepts only explicit boolean school archive decisions", () => {
+  assert.deepEqual(normalizePlatformSchoolArchiveInput({ archived: true }), { archived: true });
+  assert.deepEqual(normalizePlatformSchoolArchiveInput({ archived: false }), { archived: false });
+  assert.equal(normalizePlatformSchoolArchiveInput({ archived: "true" }), null);
+  assert.equal(normalizePlatformSchoolArchiveInput({}), null);
 });

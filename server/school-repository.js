@@ -37,8 +37,12 @@ async function getReadyDatabase() {
             access_mode VARCHAR(20) NOT NULL
               CHECK (access_mode IN ('invite', 'school-code', 'public')),
             slug VARCHAR(64) NOT NULL UNIQUE,
-            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            archived_at TIMESTAMPTZ
           )
+        `,
+        database.sql`
+          ALTER TABLE schools ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ
         `,
         database.sql`
           CREATE TABLE IF NOT EXISTS school_billing_settings (
@@ -462,6 +466,7 @@ export async function listSchools(userId) {
     FROM schools s
     JOIN school_members m ON m.school_id = s.id
     WHERE m.user_id = ${userId}
+      AND s.archived_at IS NULL
     ORDER BY s.created_at DESC
   `;
 }
@@ -484,7 +489,7 @@ export async function getPlatformOverview({ page, pageSize, search }) {
   const offset = (page - 1) * pageSize;
   const schools = await sql`
     WITH filtered_schools AS (
-      SELECT s.id, s.name, s.school_type, s.country, s.created_at
+      SELECT s.id, s.name, s.school_type, s.country, s.created_at, s.archived_at
       FROM schools s
       WHERE ${search} = ''
          OR POSITION(LOWER(${search}) IN LOWER(CONCAT_WS(' ', s.name, s.school_type, s.country))) > 0
@@ -520,7 +525,8 @@ export async function getPlatformOverview({ page, pageSize, search }) {
            COALESCE(c."classCount", 0) AS "classCount",
            COALESCE(bs.billing_status, 'pending') AS "billingStatus",
            bs.plan_id AS "planId",
-           bs.updated_at AS "billingUpdatedAt"
+           bs.updated_at AS "billingUpdatedAt",
+           s.archived_at AS "archivedAt"
     FROM filtered_schools s
     LEFT JOIN member_counts m ON m.school_id = s.id
     LEFT JOIN student_counts st ON st.school_id = s.id
@@ -553,6 +559,20 @@ export async function setPlatformSchoolBillingDecision(schoolId, decision, updat
   return saved ?? null;
 }
 
+export async function setPlatformSchoolArchived(schoolId, archived) {
+  const sql = await getReadyDatabase();
+  const [updated] = await sql`
+    UPDATE schools
+    SET archived_at = CASE
+      WHEN ${archived} THEN COALESCE(archived_at, NOW())
+      ELSE NULL
+    END
+    WHERE id = ${schoolId}
+    RETURNING id, archived_at AS "archivedAt"
+  `;
+  return updated ?? null;
+}
+
 export async function createSchool(school, userId) {
   const sql = await getReadyDatabase();
   const id = randomUUID();
@@ -583,8 +603,12 @@ export async function createSchool(school, userId) {
 export async function getSchoolRole(schoolId, userId) {
   const sql = await getReadyDatabase();
   const [membership] = await sql`
-    SELECT role FROM school_members
-    WHERE school_id = ${schoolId} AND user_id = ${userId}
+    SELECT m.role
+    FROM school_members m
+    JOIN schools s ON s.id = m.school_id
+    WHERE m.school_id = ${schoolId}
+      AND m.user_id = ${userId}
+      AND s.archived_at IS NULL
   `;
   return membership?.role ?? null;
 }
@@ -2517,6 +2541,7 @@ export async function acceptInvitation({ token, email, userId }) {
       SELECT i.id, i.school_id, i.role, i.email, i.student_id,
              i.teacher_name, i.teacher_code
       FROM school_invitations i
+      JOIN schools s ON s.id = i.school_id AND s.archived_at IS NULL
       WHERE i.token_hash = ${tokenHash}
         AND i.email = ${email}
         AND i.accepted_at IS NULL
