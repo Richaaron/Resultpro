@@ -1290,17 +1290,30 @@ function App() {
     }
   }
 
-  async function restoreSession({ schoolName = "" } = {}) {
+  async function restoreSession({ schoolName = "", signInData = null } = {}) {
     const result = await authClient.getSession();
     if (result.error) throw new Error(result.error.message || "Could not load your account.");
-    if (!result.data?.session?.user) throw new Error("Sign in to continue.");
+    let session = result.data?.session || null;
+    if (!session?.user && signInData) {
+      // The sign-in response may already carry the user/session; use it as a
+      // fallback when the session cookie is not yet readable by getSession.
+      const user = signInData.user || signInData.session?.user || null;
+      if (user) {
+        session = {
+          ...(signInData.session || {}),
+          user,
+          token: signInData.session?.token || signInData.token || null,
+        };
+      }
+    }
+    if (!session?.user) throw new Error("Sign in to continue.");
     if (schoolName) {
       setForm((previous) => ({ ...previous, name: schoolName }));
       setStep(1);
       setModalOpen(true);
     }
     setAuthNotice("");
-    setSession(result.data.session);
+    setSession(session);
   }
 
   async function signOut() {

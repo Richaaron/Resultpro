@@ -136,7 +136,7 @@ export default function AuthScreen({ authClient, notice, initialEmail = "", veri
         setMessage(`Enter the verification code sent to your email before continuing.${registeringSchool && !schoolNameSaved ? " Keep this page open so we can carry your school name into setup." : ""}`);
         return;
       }
-      await onAuthenticated({ schoolName: pendingSchoolSetup || registeringSchool ? schoolName.trim() : "" });
+      await onAuthenticated({ schoolName: pendingSchoolSetup || registeringSchool ? schoolName.trim() : "", signInData: result.data });
     } catch (requestError) {
       setError(requestError.message || "We couldn’t complete that request. Please try again.");
     } finally {
@@ -154,7 +154,7 @@ export default function AuthScreen({ authClient, notice, initialEmail = "", veri
       if (result.error) throw new Error(result.error.message || "That verification code could not be accepted.");
       const session = await authClient.getSession();
       if (session.data?.session?.user?.emailVerified) {
-        await onAuthenticated({ schoolName: pendingSchoolSetup && !hasInvitation ? schoolName.trim() : "" });
+        await onAuthenticated({ schoolName: pendingSchoolSetup && !hasInvitation ? schoolName.trim() : "", signInData: session.data?.session });
       } else {
         setVerifyingEmail(false);
         setMode("sign-in");
