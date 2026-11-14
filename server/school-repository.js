@@ -41,6 +41,21 @@ async function getReadyDatabase() {
           )
         `,
         database.sql`
+          CREATE TABLE IF NOT EXISTS school_billing_settings (
+            school_id UUID PRIMARY KEY REFERENCES schools(id) ON DELETE CASCADE,
+            billing_status VARCHAR(16) NOT NULL
+              CHECK (billing_status IN ('pending', 'exempt', 'paid')),
+            plan_id VARCHAR(24),
+            updated_by TEXT NOT NULL,
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            CONSTRAINT school_billing_settings_plan_check CHECK (
+              (billing_status = 'paid' AND plan_id IS NOT NULL
+                AND plan_id IN ('starter', 'growth', 'scale'))
+              OR (billing_status <> 'paid' AND plan_id IS NULL)
+            )
+          )
+        `,
+        database.sql`
           CREATE TABLE IF NOT EXISTS school_grading_settings (
             school_id UUID PRIMARY KEY REFERENCES schools(id) ON DELETE CASCADE,
             grade_bands JSONB NOT NULL,
@@ -483,15 +498,37 @@ export async function getPlatformOverview() {
            COALESCE(m."administratorCount", 0) AS "administratorCount",
            COALESCE(m."teacherCount", 0) AS "teacherCount",
            COALESCE(st."studentCount", 0) AS "studentCount",
-           COALESCE(c."classCount", 0) AS "classCount"
+           COALESCE(c."classCount", 0) AS "classCount",
+           COALESCE(bs.billing_status, 'pending') AS "billingStatus",
+           bs.plan_id AS "planId",
+           bs.updated_at AS "billingUpdatedAt"
     FROM schools s
     LEFT JOIN member_counts m ON m.school_id = s.id
     LEFT JOIN student_counts st ON st.school_id = s.id
     LEFT JOIN class_counts c ON c.school_id = s.id
+    LEFT JOIN school_billing_settings bs ON bs.school_id = s.id
     ORDER BY s.created_at DESC
     LIMIT 100
   `;
   return { summary, schools };
+}
+
+export async function setPlatformSchoolBillingDecision(schoolId, decision, updatedBy) {
+  const sql = await getReadyDatabase();
+  const [saved] = await sql`
+    INSERT INTO school_billing_settings (school_id, billing_status, plan_id, updated_by)
+    SELECT s.id, ${decision.billingStatus}, ${decision.planId}, ${updatedBy}
+    FROM schools s
+    WHERE s.id = ${schoolId}
+    ON CONFLICT (school_id) DO UPDATE
+    SET billing_status = EXCLUDED.billing_status,
+        plan_id = EXCLUDED.plan_id,
+        updated_by = EXCLUDED.updated_by,
+        updated_at = NOW()
+    RETURNING billing_status AS "billingStatus", plan_id AS "planId",
+              updated_at AS "billingUpdatedAt"
+  `;
+  return saved ?? null;
 }
 
 export async function createSchool(school, userId) {

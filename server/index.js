@@ -11,6 +11,7 @@ import {
   deleteSchoolClass,
   getSchoolDashboard,
   getPlatformOverview,
+  setPlatformSchoolBillingDecision,
   getSchoolClassAttendance,
   getSchoolClassAttendanceReport,
   getSchoolGradingSettings,
@@ -60,7 +61,10 @@ import {
 } from "../shared/school-data.js";
 import { createCorsMiddleware } from "./cors.js";
 import { requireAuth } from "./auth.js";
-import { isPlatformAdminEmail } from "./platform-admin.js";
+import {
+  isPlatformAdminEmail,
+  normalizePlatformSchoolBillingDecision,
+} from "./platform-admin.js";
 import { sendInvitationEmail } from "./invitation-email.js";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -97,6 +101,26 @@ app.get("/api/platform/overview", requireAuth, async (request, response) => {
   try {
     const overview = await getPlatformOverview();
     return response.json({ overview });
+  } catch (error) {
+    return handleDatabaseError(error, response);
+  }
+});
+
+app.put("/api/platform/schools/:schoolId/billing", requireAuth, async (request, response) => {
+  if (!isPlatformAdminEmail(request.auth.email)) {
+    return response.status(403).json({ error: "Platform administrator access is required." });
+  }
+  const { schoolId } = request.params;
+  const decision = normalizePlatformSchoolBillingDecision(request.body);
+  if (!isUuid(schoolId) || !decision) {
+    return response.status(400).json({ error: "Choose a valid billing decision and plan." });
+  }
+
+  try {
+    const billingSetting = await setPlatformSchoolBillingDecision(schoolId, decision, request.auth.userId);
+    if (!billingSetting) return response.status(404).json({ error: "School not found." });
+    response.set("Cache-Control", "no-store");
+    return response.json({ billingSetting });
   } catch (error) {
     return handleDatabaseError(error, response);
   }

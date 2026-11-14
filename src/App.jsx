@@ -172,6 +172,9 @@ function App() {
   const [loadingPlatformOverview, setLoadingPlatformOverview] = useState(false);
   const [platformOverviewError, setPlatformOverviewError] = useState("");
   const [platformRefresh, setPlatformRefresh] = useState(0);
+  const [platformBillingDrafts, setPlatformBillingDrafts] = useState({});
+  const [platformBillingSaving, setPlatformBillingSaving] = useState("");
+  const [platformBillingFeedback, setPlatformBillingFeedback] = useState({});
   const [modalOpen, setModalOpen] = useState(false);
   const [explainerOpen, setExplainerOpen] = useState(false);
   const [step, setStep] = useState(1);
@@ -529,6 +532,11 @@ function App() {
         });
       return () => { active = false; };
   }, [platformAdmin, page, platformRefresh, verifiedEmail]);
+
+  useEffect(() => {
+    setPlatformBillingDrafts({});
+    setPlatformBillingFeedback({});
+  }, [verifiedEmail]);
 
   useEffect(() => {
     function restoreSchoolFromPath() {
@@ -996,6 +1004,77 @@ function App() {
     setPage("overview");
     setSidebarOpen(false);
     setToast(`Switched to ${nextSchool.name}.`);
+  }
+
+  function updatePlatformBillingDraft(schoolRow, field, value) {
+    setPlatformBillingDrafts((previous) => {
+      const current = previous[schoolRow.id] || {
+        billingStatus: schoolRow.billingStatus || "pending",
+        planId: schoolRow.planId || "",
+      };
+      return {
+        ...previous,
+        [schoolRow.id]: {
+          ...current,
+          [field]: value,
+          ...(field === "billingStatus" && value !== "paid" ? { planId: "" } : {}),
+        },
+      };
+    });
+    setPlatformBillingFeedback((previous) => ({ ...previous, [schoolRow.id]: null }));
+  }
+
+  async function savePlatformBillingDecision(schoolRow) {
+    const draft = platformBillingDrafts[schoolRow.id] || {
+      billingStatus: schoolRow.billingStatus || "pending",
+      planId: schoolRow.planId || "",
+    };
+    if (draft.billingStatus === "paid" && !draft.planId) {
+      setPlatformBillingFeedback((previous) => ({
+        ...previous,
+        [schoolRow.id]: { message: "Choose a plan before saving a paid status.", error: true },
+      }));
+      return;
+    }
+
+    setPlatformBillingSaving(schoolRow.id);
+    setPlatformBillingFeedback((previous) => ({ ...previous, [schoolRow.id]: null }));
+    try {
+      const { billingSetting } = await apiRequest(`/api/platform/schools/${schoolRow.id}/billing`, {
+        method: "PUT",
+        body: JSON.stringify({
+          billingStatus: draft.billingStatus,
+          planId: draft.billingStatus === "paid" ? draft.planId : null,
+        }),
+      });
+      setPlatformOverview((previous) => previous ? {
+        ...previous,
+        schools: previous.schools.map((row) => row.id === schoolRow.id
+          ? { ...row, ...billingSetting }
+          : row),
+      } : previous);
+      setPlatformBillingDrafts((previous) => ({
+        ...previous,
+        [schoolRow.id]: {
+          billingStatus: billingSetting.billingStatus,
+          planId: billingSetting.planId || "",
+        },
+      }));
+      setPlatformBillingFeedback((previous) => ({
+        ...previous,
+        [schoolRow.id]: { message: "Saved. No charge or access change was made.", error: false },
+      }));
+    } catch (requestError) {
+      setPlatformBillingFeedback((previous) => ({
+        ...previous,
+        [schoolRow.id]: {
+          message: requestError.message || "Could not save this billing decision.",
+          error: true,
+        },
+      }));
+    } finally {
+      setPlatformBillingSaving("");
+    }
   }
 
   async function createSchool(event) {
@@ -1819,7 +1898,7 @@ function App() {
 
           {page === "platform" && platformAdmin && <section className="platform-overview">
             <section className="panel platform-summary-panel">
-              <div className="panel-heading"><div><h2>School network</h2><p>Aggregate operational counts across all Aster schools.</p></div><button className="button button-secondary button-small" type="button" onClick={() => setPlatformRefresh((previous) => previous + 1)} disabled={loadingPlatformOverview}>Refresh</button></div>
+              <div className="panel-heading"><div><h2>School network</h2><p>Aggregate operational counts across all Aster schools.</p></div><button className="button button-secondary button-small" type="button" onClick={() => { setPlatformBillingDrafts({}); setPlatformBillingFeedback({}); setPlatformRefresh((previous) => previous + 1); }} disabled={loadingPlatformOverview || Boolean(platformBillingSaving)}>Refresh</button></div>
               {platformOverviewError && <p className="form-error" role="alert">{platformOverviewError}</p>}
               {loadingPlatformOverview && <p className="empty-search" role="status">Loading platform overview…</p>}
               {!loadingPlatformOverview && platformOverviewForUser && <>
@@ -1834,11 +1913,35 @@ function App() {
                     <div className="stat-number">{Number(value).toLocaleString("en-NG")}</div><div className="stat-foot"><span>{detail}</span></div>
                   </article>)}
                 </section>
-                <div className="platform-directory-heading"><div><h3>Recently created schools</h3><p>Showing up to 100 of {platformOverviewForUser.summary.schoolCount.toLocaleString("en-NG")} schools.</p></div></div>
-                {platformOverviewForUser.schools.length === 0 ? <p className="empty-search">No school workspaces have been created yet.</p> : <div className="table-scroll"><table className="platform-directory-table"><thead><tr><th>SCHOOL</th><th>COUNTRY</th><th>TYPE</th><th>STUDENTS</th><th>TEACHERS</th><th>CLASSES</th><th>ADMINS</th><th>CREATED</th></tr></thead><tbody>
-                  {platformOverviewForUser.schools.map((schoolRow) => <tr key={schoolRow.id}>
-                    <td><strong>{schoolRow.name}</strong></td><td>{schoolRow.country}</td><td>{schoolRow.schoolType}</td><td>{schoolRow.studentCount.toLocaleString("en-NG")}</td><td>{schoolRow.teacherCount.toLocaleString("en-NG")}</td><td>{schoolRow.classCount.toLocaleString("en-NG")}</td><td>{schoolRow.administratorCount.toLocaleString("en-NG")}</td><td>{new Date(schoolRow.createdAt).toLocaleDateString("en-NG")}</td>
-                  </tr>)}
+                <div className="platform-directory-heading"><div><h3>Recently created schools</h3><p>Showing up to 100 of {platformOverviewForUser.summary.schoolCount.toLocaleString("en-NG")} schools. New schools remain pending until you decide.</p></div></div>
+                {platformOverviewForUser.schools.length === 0 ? <p className="empty-search">No school workspaces have been created yet.</p> : <div className="table-scroll"><table className="platform-directory-table"><thead><tr><th>SCHOOL</th><th>COUNTRY</th><th>TYPE</th><th>STUDENTS</th><th>TEACHERS</th><th>CLASSES</th><th>ADMINS</th><th>CREATED</th><th>BILLING DECISION</th></tr></thead><tbody>
+                  {platformOverviewForUser.schools.map((schoolRow) => {
+                    const billingDraft = platformBillingDrafts[schoolRow.id] || {
+                      billingStatus: schoolRow.billingStatus || "pending",
+                      planId: schoolRow.planId || "",
+                    };
+                    const billingFeedback = platformBillingFeedback[schoolRow.id];
+                    return <tr key={schoolRow.id}>
+                      <td><strong>{schoolRow.name}</strong></td><td>{schoolRow.country}</td><td>{schoolRow.schoolType}</td><td>{schoolRow.studentCount.toLocaleString("en-NG")}</td><td>{schoolRow.teacherCount.toLocaleString("en-NG")}</td><td>{schoolRow.classCount.toLocaleString("en-NG")}</td><td>{schoolRow.administratorCount.toLocaleString("en-NG")}</td><td>{new Date(schoolRow.createdAt).toLocaleDateString("en-NG")}</td>
+                      <td>
+                        <div className="platform-billing-controls">
+                          <label className="platform-billing-field"><span>Status</span><select className="text-input" value={billingDraft.billingStatus} disabled={Boolean(platformBillingSaving)} onChange={(event) => updatePlatformBillingDraft(schoolRow, "billingStatus", event.target.value)}>
+                            <option value="pending">Pending decision</option>
+                            <option value="exempt">Exempt / free</option>
+                            <option value="paid">Billable plan</option>
+                          </select></label>
+                          <label className="platform-billing-field"><span>Plan</span><select className="text-input" value={billingDraft.planId} disabled={billingDraft.billingStatus !== "paid" || Boolean(platformBillingSaving)} onChange={(event) => updatePlatformBillingDraft(schoolRow, "planId", event.target.value)}>
+                            <option value="">Select a plan</option>
+                            {subscriptionPlans.map((plan) => <option key={plan.id} value={plan.id}>{plan.name} · ₦{plan.monthlyPrice.toLocaleString("en-NG")}/mo</option>)}
+                          </select></label>
+                          <button className="button button-secondary button-small" type="button" onClick={() => savePlatformBillingDecision(schoolRow)} disabled={Boolean(platformBillingSaving)}>
+                            {platformBillingSaving === schoolRow.id ? "Saving…" : "Save decision"}
+                          </button>
+                          {billingFeedback && <small className={billingFeedback.error ? "platform-billing-feedback form-error" : "platform-billing-feedback"} role={billingFeedback.error ? "alert" : "status"}>{billingFeedback.message}</small>}
+                        </div>
+                      </td>
+                    </tr>;
+                  })}
                 </tbody></table></div>}
               </>}
               {!loadingPlatformOverview && !platformOverviewError && !platformOverviewForUser && <p className="empty-search">Platform operations are unavailable. Refresh to try again.</p>}
