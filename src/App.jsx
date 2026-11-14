@@ -90,12 +90,16 @@ function formatClassPosition(position) {
 
 async function apiRequest(path, options = {}) {
   if (!authClient) throw new Error("Authentication is not configured.");
-  const tokenResult = await authClient.token();
-  if (tokenResult.error || !tokenResult.data?.token) {
-    throw new Error(tokenResult.error?.message || "Your session expired. Please sign in again.");
+  const sessionResult = await authClient.getSession();
+  let token = sessionResult.data?.session?.token;
+  if (!token) {
+    const tokenResult = await authClient.token();
+    if (tokenResult.error) throw new Error(tokenResult.error.message || "Could not retrieve an authentication token.");
+    token = tokenResult.data?.token;
   }
+  if (!token) throw new Error(sessionResult.error?.message || "Your session expired. Please sign in again.");
   const headers = new Headers(options.headers);
-  headers.set("Authorization", `Bearer ${tokenResult.data.token}`);
+  headers.set("Authorization", `Bearer ${token}`);
   if (options.body && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
   const response = await fetch(apiUrl(path), { ...options, headers });
   if (response.status === 204) return null;
