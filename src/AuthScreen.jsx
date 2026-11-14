@@ -2,6 +2,16 @@ import React, { useState } from "react";
 import AsterLogoMark from "./AsterLogo.jsx";
 import { pendingSchoolNameKey } from "./auth.js";
 
+function PasswordEye({ revealed }) {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path d="M2.5 12S6 5.8 12 5.8 21.5 12 21.5 12 18 18.2 12 18.2 2.5 12 2.5 12Z" />
+      <circle cx="12" cy="12" r="2.9" />
+      {!revealed && <path d="M4 4L20 20" />}
+    </svg>
+  );
+}
+
 function AuthIllustration() {
   return (
     <aside className="auth-showcase" aria-label="Aster school results illustration">
@@ -75,13 +85,19 @@ function AuthIllustration() {
   );
 }
 
-export default function AuthScreen({ authClient, notice, initialEmail = "", verificationRequired = false, onAuthenticated, onWatchVideo }) {
+export default function AuthScreen({ authClient, notice, initialEmail = "", verificationRequired = false, onAuthenticated, onWatchVideo, resetToken = "" }) {
   const [mode, setMode] = useState("sign-in");
+  const [recovery, setRecovery] = useState(resetToken ? "reset" : "");
   const [name, setName] = useState("");
   const [schoolName, setSchoolName] = useState("");
   const [pendingSchoolSetup, setPendingSchoolSetup] = useState(false);
   const [email, setEmail] = useState(initialEmail);
   const [password, setPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [showNewPassword, setShowNewPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [code, setCode] = useState("");
   const [verifyingEmail, setVerifyingEmail] = useState(verificationRequired);
   const [pending, setPending] = useState(false);
@@ -170,6 +186,51 @@ export default function AuthScreen({ authClient, notice, initialEmail = "", veri
     }
   }
 
+  async function requestReset(event) {
+    event.preventDefault();
+    setPending(true);
+    setError("");
+    setMessage("");
+    try {
+      const result = await authClient.requestPasswordReset({
+        email: email.trim(),
+        redirectTo: window.location.origin,
+      });
+      if (result.error) throw new Error(result.error.message || "Could not send the reset link.");
+      setMessage(`If an account exists for ${email.trim()}, a reset link is on its way. Check your inbox and spam folder.`);
+    } catch (requestError) {
+      setError(requestError.message || "We couldn’t send a reset link. Please try again.");
+    } finally {
+      setPending(false);
+    }
+  }
+
+  async function resetPassword(event) {
+    event.preventDefault();
+    if (newPassword !== confirmPassword) {
+      setError("Those passwords don’t match.");
+      return;
+    }
+    setPending(true);
+    setError("");
+    setMessage("");
+    try {
+      const result = await authClient.resetPassword({ newPassword, token: resetToken });
+      if (result.error) throw new Error(result.error.message || "That reset link could not be used.");
+      window.history.replaceState(null, "", window.location.pathname);
+      setRecovery("");
+      setMode("sign-in");
+      setPassword("");
+      setNewPassword("");
+      setConfirmPassword("");
+      setMessage("Your password has been updated. Sign in with your new password.");
+    } catch (requestError) {
+      setError(requestError.message || "We couldn’t reset your password. Request a new link and try again.");
+    } finally {
+      setPending(false);
+    }
+  }
+
   if (!authClient) {
     return (
       <main className="auth-shell">
@@ -190,15 +251,19 @@ export default function AuthScreen({ authClient, notice, initialEmail = "", veri
         <a className="brand auth-brand" href="/" aria-label="Aster home"><AsterLogoMark /><span className="brand-name">aster<span>.</span></span></a>
         {hasInvitation && <p className="auth-invitation">You’ve been invited to a school. Use the email address that received the invitation.</p>}
         <p className="auth-kicker">YOUR SCHOOL, IN FOCUS</p>
-        <h1>{verifyingEmail ? "Verify your email" : mode === "sign-up" ? "Create your Aster account" : "Welcome back"}</h1>
+        <h1>{verifyingEmail ? "Verify your email" : recovery === "reset" ? "Choose a new password" : recovery === "request" ? "Reset your password" : mode === "sign-up" ? "Create your Aster account" : "Welcome back"}</h1>
         <p className="auth-description">
           {verifyingEmail
             ? `Enter the verification code sent to ${email}.`
-            : mode === "sign-up"
-              ? hasInvitation
-                ? "Create your account to accept your school invitation."
-                : "Create your account and start setting up your school."
-              : "Sign in to continue to your school workspace."}
+            : recovery === "reset"
+              ? "Set a new password for your Aster account to regain access."
+              : recovery === "request"
+                ? "Enter your account email and we’ll send you a link to reset your password."
+                : mode === "sign-up"
+                  ? hasInvitation
+                    ? "Create your account to accept your school invitation."
+                    : "Create your account and start setting up your school."
+                  : "Sign in to continue to your school workspace."}
         </p>
         {notice && <p className="auth-message" role="status">{notice}</p>}
         {verifyingEmail ? (
@@ -207,6 +272,32 @@ export default function AuthScreen({ authClient, notice, initialEmail = "", veri
             <input className="text-input" id="verificationCode" autoComplete="one-time-code" inputMode="numeric" required value={code} onChange={(event) => setCode(event.target.value)} />
             <button className="button button-primary auth-submit" type="submit" disabled={pending}>{pending ? "Verifying…" : "Verify email"}</button>
             <button className="auth-text-button" type="button" onClick={resendCode} disabled={pending}>Resend code</button>
+          </form>
+        ) : recovery === "reset" ? (
+          <form className="auth-form" onSubmit={resetPassword}>
+            <label className="field-label" htmlFor="newPassword">New password</label>
+            <div className="password-field">
+              <input className="text-input" id="newPassword" type={showNewPassword ? "text" : "password"} autoComplete="new-password" minLength={8} required value={newPassword} onChange={(event) => setNewPassword(event.target.value)} />
+              <button className="password-toggle" type="button" onClick={() => setShowNewPassword((revealed) => !revealed)} aria-label={showNewPassword ? "Hide password" : "Show password"} aria-pressed={showNewPassword} title={showNewPassword ? "Hide password" : "Show password"}>
+                <PasswordEye revealed={showNewPassword} />
+              </button>
+            </div>
+            <label className="field-label" htmlFor="confirmPassword">Confirm new password</label>
+            <div className="password-field">
+              <input className="text-input" id="confirmPassword" type={showConfirmPassword ? "text" : "password"} autoComplete="new-password" minLength={8} required value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} />
+              <button className="password-toggle" type="button" onClick={() => setShowConfirmPassword((revealed) => !revealed)} aria-label={showConfirmPassword ? "Hide password" : "Show password"} aria-pressed={showConfirmPassword} title={showConfirmPassword ? "Hide password" : "Show password"}>
+                <PasswordEye revealed={showConfirmPassword} />
+              </button>
+            </div>
+            <button className="button button-primary auth-submit" type="submit" disabled={pending}>{pending ? "Updating…" : "Set new password"}</button>
+            <button className="auth-text-button" type="button" onClick={() => { setRecovery(""); window.history.replaceState(null, "", window.location.pathname); setError(""); setMessage(""); }}>Back to sign in</button>
+          </form>
+        ) : recovery === "request" ? (
+          <form className="auth-form" onSubmit={requestReset}>
+            <label className="field-label" htmlFor="resetEmail">Email address</label>
+            <input className="text-input" id="resetEmail" type="email" autoComplete="email" required value={email} onChange={(event) => setEmail(event.target.value)} />
+            <button className="button button-primary auth-submit" type="submit" disabled={pending}>{pending ? "Sending…" : "Send reset link"}</button>
+            <button className="auth-text-button" type="button" onClick={() => { setRecovery(""); setError(""); setMessage(""); }}>Back to sign in</button>
           </form>
         ) : (
           <form className="auth-form" onSubmit={submit}>
@@ -221,8 +312,16 @@ export default function AuthScreen({ authClient, notice, initialEmail = "", veri
             <label className="field-label" htmlFor="authEmail">Email address</label>
             <input className="text-input" id="authEmail" type="email" autoComplete="email" required value={email} onChange={(event) => setEmail(event.target.value)} />
             <label className="field-label" htmlFor="authPassword">Password</label>
-            <input className="text-input" id="authPassword" type="password" autoComplete={mode === "sign-up" ? "new-password" : "current-password"} minLength={8} required value={password} onChange={(event) => setPassword(event.target.value)} />
+            <div className="password-field">
+              <input className="text-input" id="authPassword" type={showPassword ? "text" : "password"} autoComplete={mode === "sign-up" ? "new-password" : "current-password"} minLength={8} required value={password} onChange={(event) => setPassword(event.target.value)} />
+              <button className="password-toggle" type="button" onClick={() => setShowPassword((revealed) => !revealed)} aria-label={showPassword ? "Hide password" : "Show password"} aria-pressed={showPassword} title={showPassword ? "Hide password" : "Show password"}>
+                <PasswordEye revealed={showPassword} />
+              </button>
+            </div>
             <button className="button button-primary auth-submit" type="submit" disabled={pending}>{pending ? "Please wait…" : mode === "sign-up" ? "Create account" : "Sign in"}</button>
+            {mode === "sign-in" && (
+              <button className="auth-text-button" type="button" onClick={() => { setRecovery("request"); setError(""); setMessage(""); }}>Forgot your password?</button>
+            )}
             <button className="auth-text-button" type="button" onClick={() => { setMode(mode === "sign-up" ? "sign-in" : "sign-up"); setError(""); setMessage(""); }}>{mode === "sign-up" ? "Already have an account? Sign in" : "New to Aster? Create an account"}</button>
           </form>
         )}

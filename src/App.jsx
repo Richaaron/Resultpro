@@ -124,7 +124,13 @@ function App() {
   const [session, setSession] = useState(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sessionLoading, setSessionLoading] = useState(true);
-  const [authNotice, setAuthNotice] = useState("");
+  const [authNotice, setAuthNotice] = useState(() => {
+    const params = new URLSearchParams(window.location.search);
+    return params.get("error") === "INVALID_TOKEN"
+      ? "That password reset link is invalid or has expired. Request a new one below."
+      : "";
+  });
+  const [resetToken] = useState(() => new URLSearchParams(window.location.search).get("token") || "");
   const [page, setPage] = useState("overview");
   const [school, setSchool] = useState(null);
   const [schoolRouteError, setSchoolRouteError] = useState(false);
@@ -1381,6 +1387,7 @@ function App() {
           verificationRequired={Boolean(session?.user && !session.user.emailVerified)}
           onAuthenticated={restoreSession}
           onWatchVideo={() => setExplainerOpen(true)}
+          resetToken={resetToken}
         />
         <ExplainerVideo open={explainerOpen} onClose={() => setExplainerOpen(false)} />
       </>
