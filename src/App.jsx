@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import AuthScreen from "./AuthScreen.jsx";
 import AsterLogoMark from "./AsterLogo.jsx";
+import EducationBackground from "./EducationBackground.jsx";
 import ExplainerVideo from "./ExplainerVideo.jsx";
 import { authClient, pendingSchoolNameKey } from "./auth.js";
 import { curriculumByGrade, curriculumGrades } from "../shared/curriculum.js";
@@ -1393,6 +1394,7 @@ function App() {
   if (!session?.user || session.user.emailVerified !== true) {
     return (
       <>
+        <EducationBackground variant="dark" />
         <AuthScreen
           authClient={authClient}
           notice={authNotice}
@@ -1423,6 +1425,7 @@ function App() {
 
   return (
     <div className="app-shell">
+      <EducationBackground variant="light" />
       {sidebarOpen && <button className="sidebar-backdrop" type="button" aria-label="Close navigation menu" onClick={() => setSidebarOpen(false)} />}
       <aside className={`sidebar ${sidebarOpen ? "open" : ""}`}>
         <a className="brand" href="#" aria-label="Aster home"><AsterLogoMark /><span className="brand-name">aster<span>.</span></span></a>
