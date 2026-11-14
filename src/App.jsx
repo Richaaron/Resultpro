@@ -168,6 +168,7 @@ function App() {
   const [schools, setSchools] = useState([]);
   const [loadingSchools, setLoadingSchools] = useState(true);
   const [platformAccess, setPlatformAccess] = useState(null);
+  const [platformAccessError, setPlatformAccessError] = useState("");
   const [platformOverview, setPlatformOverview] = useState(null);
   const [loadingPlatformOverview, setLoadingPlatformOverview] = useState(false);
   const [platformOverviewError, setPlatformOverviewError] = useState("");
@@ -301,6 +302,11 @@ function App() {
   const role = school?.role || "admin";
   const verifiedEmail = session?.user?.email?.trim().toLowerCase() || "";
   const platformAdmin = platformAccess?.email === verifiedEmail && platformAccess?.isPlatformAdmin === true;
+  const accountRoleLabel = platformAdmin
+    ? "Platform owner"
+    : school
+      ? portalData[role].label
+      : "No school profile";
   const platformOverviewForUser = platformOverview?.email === verifiedEmail ? platformOverview : null;
   const platformDirectory = platformOverviewForUser?.directory;
   const platformDirectoryPageCount = platformDirectory
@@ -314,9 +320,9 @@ function App() {
     : 0;
   const platformSchoolActionBusy = Boolean(platformBillingSaving || platformSchoolStatusSaving);
   const current = portalData[role];
-  const visibleNavigation = platformAdmin && !school
-    ? []
-    : navigation.filter(([id]) => role === "admin" || (role === "teacher" && ["overview", "results", "attendance", "classes"].includes(id)) || (["student", "parent"].includes(role) && ["overview", "results"].includes(id)));
+  const visibleNavigation = school
+    ? navigation.filter(([id]) => role === "admin" || (role === "teacher" && ["overview", "results", "attendance", "classes"].includes(id)) || (["student", "parent"].includes(role) && ["overview", "results"].includes(id)))
+    : [];
   const dashboardForCurrentSchool = dashboardData && dashboardData.schoolId === school?.id ? dashboardData : null;
   const dashboardErrorForCurrentSchool = dashboardError && dashboardError.schoolId === school?.id
     ? dashboardError.message
@@ -501,12 +507,14 @@ function App() {
       let active = true;
       if (!session?.user?.emailVerified || !verifiedEmail) {
         setPlatformAccess(null);
+        setPlatformAccessError("");
         setPlatformOverview(null);
         setPage((currentPage) => currentPage === "platform" ? "overview" : currentPage);
         return () => { active = false; };
       }
 
       setPlatformAccess(null);
+      setPlatformAccessError("");
       setPlatformOverview(null);
       apiRequest("/api/platform/access")
         .then(({ isPlatformAdmin }) => {
@@ -520,6 +528,7 @@ function App() {
         .catch((requestError) => {
           if (!active) return;
           setPlatformAccess({ email: verifiedEmail, isPlatformAdmin: false });
+          setPlatformAccessError(requestError.message || "Could not check platform access.");
           setPlatformOverview(null);
           setPage((currentPage) => currentPage === "platform" ? "overview" : currentPage);
           setToast(`Could not check platform access: ${requestError.message || "try again later."}`);
@@ -1980,15 +1989,15 @@ function App() {
         </>}
         <div className="sidebar-bottom">
           <div className="help-card"><span className="help-spark">✳</span><strong>A little help goes a long way.</strong><span>Visit the Aster help desk</span><button type="button" onClick={() => setToast("Aster Help Desk — support@aster.school")}>Get help ↗</button><button className="help-video" type="button" onClick={() => setExplainerOpen(true)}><span aria-hidden="true">▶</span> Watch how Aster works</button></div>
-          <div className="user-profile"><span className="user-avatar">{userInitials}</span><span className="user-copy"><strong>{userName}</strong><small className="user-email">{verifiedEmail}</small><small>{platformAdmin ? "Platform owner" : portalData[role].label}</small></span></div>
+          <div className="user-profile"><span className="user-avatar">{userInitials}</span><span className="user-copy"><strong>{userName}</strong><small className="user-email">{verifiedEmail}</small><small>{accountRoleLabel}</small></span></div>
         </div>
       </aside>
 
       <main className="main-content">
-        <header className="topbar"><button className="mobile-menu" type="button" aria-label={sidebarOpen ? "Close navigation menu" : "Open navigation menu"} aria-expanded={sidebarOpen} onClick={() => setSidebarOpen((open) => !open)}><span aria-hidden="true">{sidebarOpen ? "×" : "☰"}</span></button><div className="breadcrumb"><span>Workspace</span><span className="breadcrumb-slash">/</span><strong>{page}</strong></div><div className="topbar-actions"><button className="topbar-video" type="button" onClick={() => setExplainerOpen(true)}><span aria-hidden="true">▶</span> How it works</button><span className="role-select" aria-label={platformAdmin ? "Your platform role" : "Your school role"}>{platformAdmin ? "Platform owner" : portalData[role].label}</span><button className="icon-button" type="button" onClick={() => setToast("You’re all caught up on school notifications.")} aria-label="Notifications">♧</button><button className="topbar-signout" type="button" aria-label={`Sign out ${userName}`} onClick={signOut}>Sign out</button></div></header>
+        <header className="topbar"><button className="mobile-menu" type="button" aria-label={sidebarOpen ? "Close navigation menu" : "Open navigation menu"} aria-expanded={sidebarOpen} onClick={() => setSidebarOpen((open) => !open)}><span aria-hidden="true">{sidebarOpen ? "×" : "☰"}</span></button><div className="breadcrumb"><span>Workspace</span><span className="breadcrumb-slash">/</span><strong>{page}</strong></div><div className="topbar-actions"><button className="topbar-video" type="button" onClick={() => setExplainerOpen(true)}><span aria-hidden="true">▶</span> How it works</button><span className="role-select" aria-label={platformAdmin ? "Your platform role" : school ? "Your school role" : "Account status"}>{accountRoleLabel}</span><button className="icon-button" type="button" onClick={() => setToast("You’re all caught up on school notifications.")} aria-label="Notifications">♧</button><button className="topbar-signout" type="button" aria-label={`Sign out ${userName}`} onClick={signOut}>Sign out</button></div></header>
         <div key={page} className={`page-content page-view ${page === "classes" ? "curriculum-page" : page === "students" ? "students-page" : page === "teachers" ? "teachers-page" : page === "results" ? "results-page" : page === "attendance" ? "attendance-page" : page === "grading" ? "grading-page" : page === "platform" ? "platform-page" : ""}`}>
           <span className="route-sweep" aria-hidden="true" />
-          {!school && !(page === "platform" && platformAdmin) ? <section className="panel onboarding-panel"><span className="auth-kicker">WELCOME TO ASTER</span><h1>Create your school workspace</h1><p className="page-subtitle">Your account is ready. Set up your school profile to begin; only people you invite can join its portal.</p><button className="button button-primary" type="button" onClick={showSetup}>＋ Create school profile</button></section> : <>
+          {!school && !(page === "platform" && platformAdmin) ? <section className="panel onboarding-panel"><span className="auth-kicker">WELCOME TO ASTER</span><h1>{platformAdmin ? "Platform owner access" : "No school profile linked"}</h1><p className="page-subtitle">{platformAdmin ? "Your platform workspace is ready. You can create schools from Platform operations when needed." : "Your account is not linked to a school workspace. Platform-owner access is available only to approved email addresses."}</p>{platformAccessError && <p className="form-error" role="alert">Could not check platform access: {platformAccessError}</p>}{platformAccess?.email === verifiedEmail && !platformAccess.isPlatformAdmin && <p className="field-hint" role="status">Platform-owner access has not been confirmed for this account. You can create a school profile later if you need one.</p>}{!platformAdmin && <button className="button button-primary" type="button" onClick={showSetup}>＋ Create school profile</button>}</section> : <>
           <section className="welcome-row">
             <div><div className="eyebrow"><span className="live-dot" /> {currentDateLabel} <span className="eyebrow-divider">·</span> {page === "platform" ? "PLATFORM OPERATIONS" : "SCHOOL WORKSPACE"}</div><h1>{page === "platform" ? "Platform operations" : page === "overview" ? role === "admin" ? `Good morning, ${userName}` : current.title : page === "results" ? role === "student" ? "Results, at a glance" : role === "parent" ? "Your children’s results" : "Result sheet & assessments" : page === "attendance" ? "Daily attendance" : page === "profile" ? "Your school, your story." : page === "classes" ? "Classes & subjects" : page === "grading" ? "Grading rules" : page === "students" ? "Student register" : `${page[0].toUpperCase()}${page.slice(1)}`} <span className="wave">✳</span></h1><p className="page-subtitle">{page === "platform" ? "Monitor aggregate school activity across Aster without opening individual student records." : page === "overview" ? current.subtitle : page === "results" && role === "student" ? "View only the term results your school has published for your linked student record." : page === "results" && role === "parent" ? "View only published reports for children linked to your verified parent account." : page === "results" && role !== "student" && role !== "parent" ? role === "admin" ? "Calculate term percentages from approved marks, publish frozen result sheets, and review submissions." : "View calculated results and enter marks for your assigned classes." : page === "attendance" ? "Record and review daily attendance for your active class roster." : page === "classes" ? "Configure subjects and organise your classes." : page === "grading" ? "Set the grade bands and class-position rules used for new result publications." : page === "students" ? "Enrol students and keep their school records up to date." : `Keep your ${page} organised for the term ahead.`}</p></div>
             {page === "overview" && <HeroScene />}
