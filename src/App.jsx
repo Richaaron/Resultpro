@@ -108,13 +108,23 @@ async function apiRequest(path, options = {}) {
   return payload;
 }
 
-function StudentReportCard({ schoolName, result, rows }) {
+function StudentReportCard({ school, result, rows }) {
   const summary = summarizePublishedResultRows(rows);
   const student = rows[0];
+  const schoolCode = school.slug || school.id;
+  const schoolMark = school.name.split(/\s+/).slice(0, 2).map((part) => part[0]).join("").toUpperCase();
   return <article className="student-report-card">
     <header className="student-report-print-heading">
-      <strong>{schoolName}</strong>
-      <h2>Term report card</h2>
+      <div className="student-report-school-brand">
+        <span className="student-report-school-mark" aria-hidden="true">{schoolMark}</span>
+        <div className="student-report-school-details">
+          <strong>{school.name}</strong>
+          <span>{[school.schoolType, school.country].filter(Boolean).join(" · ") || "School"}</span>
+          {school.email && <small>{school.email}</small>}
+        </div>
+        <div className="student-report-school-reference"><small>SCHOOL REF</small><strong>{schoolCode}</strong></div>
+      </div>
+      <div className="student-report-title"><span>PUBLISHED RESULT</span><h2>Student term report</h2></div>
       <div className="student-report-identity">
         <span><b>Student</b>{student.firstName} {student.lastName}</span>
         <span><b>Admission no.</b>{student.admissionNumber}</span>
@@ -140,6 +150,9 @@ function StudentReportCard({ schoolName, result, rows }) {
       <td><strong className={row.grade ? "result-percentage" : "ungraded-mark"}>{row.grade || "—"}</strong></td>
     </tr>)}</tbody></table></div>
     <p className="student-report-note">This report reflects the school’s published grading rules and approved marks. Class position is shown only when the configured completeness rule is satisfied; older published reports may not contain grades or positions.</p>
+    <footer className="student-report-signatures">
+      <span><i />Class teacher</span><span><i />Principal</span><span><i />Parent / guardian</span>
+    </footer>
   </article>;
 }
 
@@ -1857,6 +1870,7 @@ function App() {
     };
     const rows = [
       ["School", school.name],
+      ["School reference", school.slug || school.id],
       ["Class", `${resultSheet.schoolClass.grade} ${resultSheet.schoolClass.section}`],
       ["Academic year", resultSheet.schoolClass.academicYear],
       ["Term", resultSheet.term],
@@ -1882,7 +1896,8 @@ function App() {
     const objectUrl = URL.createObjectURL(new Blob([`\uFEFF${csv}`], { type: "text/csv;charset=utf-8" }));
     link.href = objectUrl;
     const className = `${resultSheet.schoolClass.grade}-${resultSheet.schoolClass.section}`.replace(/[^a-z0-9-]+/gi, "-");
-    link.download = `aster-result-sheet-${className}-${resultSheet.term.toLowerCase().replace(" ", "-")}.csv`;
+    const schoolCode = (school.slug || school.id).replace(/[^a-z0-9-]+/gi, "-");
+    link.download = `aster-${schoolCode}-result-sheet-${className}-${resultSheet.term.toLowerCase().replace(" ", "-")}.csv`;
     link.click();
     window.setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
     setToast("The result sheet has been exported.");
@@ -2263,7 +2278,7 @@ function App() {
                         <button className="button button-secondary button-small report-print-button" type="button" onClick={printStudentReport} disabled={!selectedStudentResult?.rows.length}>Print report card</button>
                       </div>
                       {selectedStudentResult?.rows.length
-                        ? <StudentReportCard schoolName={school.name} result={selectedStudentResult} rows={selectedStudentResult.rows} />
+                        ? <StudentReportCard school={school} result={selectedStudentResult} rows={selectedStudentResult.rows} />
                         : <p className="empty-search">{role === "parent" ? "No result sheets have been published for this student yet." : "Select one of your published result sheets to view its subjects."}</p>}
                     </>}
           </section>}
@@ -2274,7 +2289,7 @@ function App() {
                 <div><h2>Term result sheet</h2><p>Only administrator-approved assessments are included. Letter grades and class positions follow this school’s saved grading rules.</p></div>
                 <div className="result-sheet-actions">{role === "admin" && <>{resultSheet?.published && <button className="button button-secondary button-small" type="button" onClick={printClassReportCards} disabled={printingClassReports || !classReportGroups.length}>Print report cards</button>}<button className="button button-primary button-small" type="button" onClick={publishResultSheet} disabled={loadingResultSheet || !resultSheet?.rows.some((row) => row.percentage != null) || Boolean(resultSheet?.published)}>{resultSheet?.published ? "Published" : "Publish results"}</button></>}<button className="button button-secondary button-small" type="button" onClick={printResultSheet} disabled={loadingResultSheet || !resultSheet?.rows.length}>Print</button><button className="button button-secondary button-small" type="button" onClick={exportResultSheet} disabled={loadingResultSheet || !resultSheet?.rows.length}>Export CSV</button></div>
               </div>
-              {resultSheet?.schoolClass && <div className="result-sheet-print-heading"><strong>{school.name}</strong><span>{resultSheet.schoolClass.grade} {resultSheet.schoolClass.section} · {resultSheet.schoolClass.academicYear} · {resultSheet.term}</span><small>{resultSheet.published ? "Published result snapshot" : "Calculated from administrator-approved assessments only"}</small></div>}
+              {resultSheet?.schoolClass && <div className="result-sheet-print-heading"><strong>{school.name}</strong><span>School ref: {school.slug || school.id}</span><span>{resultSheet.schoolClass.grade} {resultSheet.schoolClass.section} · {resultSheet.schoolClass.academicYear} · {resultSheet.term}</span><small>{resultSheet.published ? `Published result snapshot · ${new Date(resultSheet.published.publishedAt).toLocaleDateString("en-NG")}` : "Calculated from administrator-approved assessments only"}</small></div>}
               <div className="result-sheet-filters">
                 <label><span>Class</span><select className="text-input" value={resultSheetClassId} onChange={(event) => setResultSheetClassId(event.target.value)} disabled={loadingClasses || !schoolClasses.length}><option value="">Select a class</option>{schoolClasses.map((item) => <option key={item.id} value={item.id}>{item.grade} {item.section} · {item.academicYear}</option>)}</select></label>
                 <label><span>Term</span><select className="text-input" value={resultSheetTerm} onChange={(event) => setResultSheetTerm(event.target.value)}><option>Term 1</option><option>Term 2</option><option>Term 3</option></select></label>
@@ -2302,7 +2317,7 @@ function App() {
               {role === "admin" && resultSheet?.published && resultSheet.schoolClass && <div className="class-report-print-root" aria-hidden="true">
                 {classReportGroups.map(({ studentId, rows }) => <div className="class-report-card" key={studentId}>
                   <StudentReportCard
-                    schoolName={school.name}
+                    school={school}
                     result={{ ...resultSheet.schoolClass, term: resultSheet.term, publishedAt: resultSheet.published.publishedAt }}
                     rows={rows}
                   />
