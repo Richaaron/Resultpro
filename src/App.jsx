@@ -1967,7 +1967,7 @@ function App() {
         </>}
         <div className="sidebar-bottom">
           <div className="help-card"><span className="help-spark">✳</span><strong>A little help goes a long way.</strong><span>Visit the Aster help desk</span><button type="button" onClick={() => setToast("Aster Help Desk — support@aster.school")}>Get help ↗</button><button className="help-video" type="button" onClick={() => setExplainerOpen(true)}><span aria-hidden="true">▶</span> Watch how Aster works</button></div>
-          <div className="user-profile"><span className="user-avatar">{userInitials}</span><span className="user-copy"><strong>{userName}</strong><small>{platformAdmin ? "Platform owner" : portalData[role].label}</small></span></div>
+          <div className="user-profile"><span className="user-avatar">{userInitials}</span><span className="user-copy"><strong>{userName}</strong><small className="user-email">{verifiedEmail}</small><small>{platformAdmin ? "Platform owner" : portalData[role].label}</small></span></div>
         </div>
       </aside>
 

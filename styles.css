@@ -53,8 +53,10 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .user-profile { display: flex; align-items: center; width: 100%; margin-top: 15px; padding: 13px 2px 1px; border: 0; border-top: 1px solid var(--line); background: transparent; text-align: left; cursor: pointer; }
 .user-avatar { display: grid; place-items: center; border-radius: 50%; background: #dce8df; color: #47664e; font-size: 10px; font-weight: 700; }
 .user-avatar { width: 31px; height: 31px; }
-.user-copy { display: grid; gap: 3px; margin-left: 9px; }
+.user-copy { display: grid; min-width: 0; gap: 3px; margin-left: 9px; }
+.user-copy strong, .user-copy small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .user-copy strong { font-size: 11px; }
+.user-copy small.user-email { font-size: 9px; }
 .more-icon { width: 18px; height: 18px; margin-left: auto; fill: #848d86; }
 .main-content { min-height: 100vh; margin-left: 252px; }
 .topbar { height: 65px; display: flex; align-items: center; justify-content: space-between; padding: 0 42px; border-bottom: 1px solid #e9ece7; background: rgba(255,255,255,.82); }
