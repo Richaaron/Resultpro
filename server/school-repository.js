@@ -451,6 +451,49 @@ export async function listSchools(userId) {
   `;
 }
 
+export async function getPlatformOverview() {
+  const sql = await getReadyDatabase();
+  const [summary] = await sql`
+    SELECT
+      (SELECT COUNT(*)::int FROM schools) AS "schoolCount",
+      (SELECT COUNT(*)::int FROM school_classes) AS "classCount",
+      (SELECT COUNT(*)::int FROM school_students WHERE is_active) AS "activeStudentCount",
+      (SELECT COUNT(*)::int FROM school_members WHERE role = 'teacher') AS "teacherMembershipCount"
+  `;
+  const schools = await sql`
+    WITH member_counts AS (
+      SELECT school_id,
+             COUNT(*) FILTER (WHERE role = 'admin')::int AS "administratorCount",
+             COUNT(*) FILTER (WHERE role = 'teacher')::int AS "teacherCount"
+      FROM school_members
+      GROUP BY school_id
+    ),
+    student_counts AS (
+      SELECT school_id, COUNT(*) FILTER (WHERE is_active)::int AS "studentCount"
+      FROM school_students
+      GROUP BY school_id
+    ),
+    class_counts AS (
+      SELECT school_id, COUNT(*)::int AS "classCount"
+      FROM school_classes
+      GROUP BY school_id
+    )
+    SELECT s.id, s.name, s.school_type AS "schoolType", s.country,
+           s.created_at AS "createdAt",
+           COALESCE(m."administratorCount", 0) AS "administratorCount",
+           COALESCE(m."teacherCount", 0) AS "teacherCount",
+           COALESCE(st."studentCount", 0) AS "studentCount",
+           COALESCE(c."classCount", 0) AS "classCount"
+    FROM schools s
+    LEFT JOIN member_counts m ON m.school_id = s.id
+    LEFT JOIN student_counts st ON st.school_id = s.id
+    LEFT JOIN class_counts c ON c.school_id = s.id
+    ORDER BY s.created_at DESC
+    LIMIT 100
+  `;
+  return { summary, schools };
+}
+
 export async function createSchool(school, userId) {
   const sql = await getReadyDatabase();
   const id = randomUUID();

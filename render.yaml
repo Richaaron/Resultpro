@@ -16,6 +16,8 @@ services:
         sync: false
       - key: FRONTEND_ORIGINS
         sync: false
+      - key: PLATFORM_ADMIN_EMAILS
+        sync: false
       - key: APP_BASE_URL
         sync: false
       - key: RESEND_API_KEY

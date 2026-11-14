@@ -166,6 +166,11 @@ function App() {
   const [schoolRouteError, setSchoolRouteError] = useState(false);
   const [schools, setSchools] = useState([]);
   const [loadingSchools, setLoadingSchools] = useState(true);
+  const [platformAccess, setPlatformAccess] = useState(null);
+  const [platformOverview, setPlatformOverview] = useState(null);
+  const [loadingPlatformOverview, setLoadingPlatformOverview] = useState(false);
+  const [platformOverviewError, setPlatformOverviewError] = useState("");
+  const [platformRefresh, setPlatformRefresh] = useState(0);
   const [modalOpen, setModalOpen] = useState(false);
   const [explainerOpen, setExplainerOpen] = useState(false);
   const [step, setStep] = useState(1);
@@ -285,6 +290,9 @@ function App() {
   const [dashboardRefresh, setDashboardRefresh] = useState(0);
   const [form, setForm] = useState({ name: "", schoolType: "", country: "", email: "", accessMode: "invite" });
   const role = school?.role || "admin";
+  const verifiedEmail = session?.user?.email?.trim().toLowerCase() || "";
+  const platformAdmin = platformAccess?.email === verifiedEmail && platformAccess?.isPlatformAdmin === true;
+  const platformOverviewForUser = platformOverview?.email === verifiedEmail ? platformOverview : null;
   const current = portalData[role];
   const visibleNavigation = navigation.filter(([id]) => role === "admin" || (role === "teacher" && ["overview", "results", "attendance", "classes"].includes(id)) || (["student", "parent"].includes(role) && ["overview", "results"].includes(id)));
   const dashboardForCurrentSchool = dashboardData && dashboardData.schoolId === school?.id ? dashboardData : null;
@@ -466,6 +474,60 @@ function App() {
       });
     return () => { active = false; };
   }, [session]);
+
+  useEffect(() => {
+      let active = true;
+      if (!session?.user?.emailVerified || !verifiedEmail) {
+        setPlatformAccess(null);
+        setPlatformOverview(null);
+        setPage((currentPage) => currentPage === "platform" ? "overview" : currentPage);
+        return () => { active = false; };
+      }
+
+      setPlatformAccess(null);
+      setPlatformOverview(null);
+      apiRequest("/api/platform/access")
+        .then(({ isPlatformAdmin }) => {
+          if (!active) return;
+          setPlatformAccess({ email: verifiedEmail, isPlatformAdmin: isPlatformAdmin === true });
+          if (isPlatformAdmin !== true) {
+            setPlatformOverview(null);
+            setPage((currentPage) => currentPage === "platform" ? "overview" : currentPage);
+          }
+        })
+        .catch((requestError) => {
+          if (!active) return;
+          setPlatformAccess({ email: verifiedEmail, isPlatformAdmin: false });
+          setPlatformOverview(null);
+          setPage((currentPage) => currentPage === "platform" ? "overview" : currentPage);
+          setToast(`Could not check platform access: ${requestError.message || "try again later."}`);
+        });
+      return () => { active = false; };
+  }, [session?.user?.email, session?.user?.emailVerified, verifiedEmail]);
+
+  useEffect(() => {
+      let active = true;
+      if (!platformAdmin || page !== "platform") {
+        setLoadingPlatformOverview(false);
+        return () => { active = false; };
+      }
+
+      setLoadingPlatformOverview(true);
+      setPlatformOverviewError("");
+      apiRequest("/api/platform/overview")
+        .then(({ overview }) => {
+          if (active) setPlatformOverview({ ...overview, email: verifiedEmail });
+        })
+        .catch((requestError) => {
+          if (!active) return;
+          setPlatformOverview(null);
+          setPlatformOverviewError(requestError.message || "Could not load platform operations.");
+        })
+        .finally(() => {
+          if (active) setLoadingPlatformOverview(false);
+        });
+      return () => { active = false; };
+  }, [platformAdmin, page, platformRefresh, verifiedEmail]);
 
   useEffect(() => {
     function restoreSchoolFromPath() {
@@ -1729,22 +1791,58 @@ function App() {
             {visibleNavigation.slice(6).map(([id, label, icon]) => <button key={id} className={`nav-item ${page === id ? "active" : ""}`} type="button" onClick={() => { setPage(id); setSidebarOpen(false); }}><span className="nav-symbol">{icon}</span><span>{label}</span></button>)}
           </nav>
         </>}
+        {platformAdmin && <>
+          <div className="nav-label nav-label-lower">PLATFORM</div>
+          <nav className="main-nav" aria-label="Platform operations">
+            <button className={`nav-item ${page === "platform" ? "active" : ""}`} type="button" onClick={() => { setPage("platform"); setSidebarOpen(false); }}>
+              <span className="nav-symbol">◈</span><span>Platform operations</span>
+            </button>
+          </nav>
+        </>}
         <div className="sidebar-bottom">
           <div className="help-card"><span className="help-spark">✳</span><strong>A little help goes a long way.</strong><span>Visit the Aster help desk</span><button type="button" onClick={() => setToast("Aster Help Desk — support@aster.school")}>Get help ↗</button><button className="help-video" type="button" onClick={() => setExplainerOpen(true)}><span aria-hidden="true">▶</span> Watch how Aster works</button></div>
-          <div className="user-profile"><span className="user-avatar">{userInitials}</span><span className="user-copy"><strong>{userName}</strong><small>{portalData[role].label}</small></span></div>
+          <div className="user-profile"><span className="user-avatar">{userInitials}</span><span className="user-copy"><strong>{userName}</strong><small>{page === "platform" ? "Platform admin" : portalData[role].label}</small></span></div>
         </div>
       </aside>
 
       <main className="main-content">
-        <header className="topbar"><button className="mobile-menu" type="button" aria-label={sidebarOpen ? "Close navigation menu" : "Open navigation menu"} aria-expanded={sidebarOpen} onClick={() => setSidebarOpen((open) => !open)}><span aria-hidden="true">{sidebarOpen ? "×" : "☰"}</span></button><div className="breadcrumb"><span>Workspace</span><span className="breadcrumb-slash">/</span><strong>{page}</strong></div><div className="topbar-actions"><button className="topbar-video" type="button" onClick={() => setExplainerOpen(true)}><span aria-hidden="true">▶</span> How it works</button><span className="role-select" aria-label="Your school role">{portalData[role].label}</span><button className="icon-button" type="button" onClick={() => setToast("You’re all caught up on school notifications.")} aria-label="Notifications">♧</button><button className="topbar-avatar" type="button" aria-label={`Sign out ${userName}`} onClick={signOut}>{userInitials}</button></div></header>
-        <div key={page} className={`page-content page-view ${page === "classes" ? "curriculum-page" : page === "students" ? "students-page" : page === "teachers" ? "teachers-page" : page === "results" ? "results-page" : page === "attendance" ? "attendance-page" : page === "grading" ? "grading-page" : ""}`}>
+        <header className="topbar"><button className="mobile-menu" type="button" aria-label={sidebarOpen ? "Close navigation menu" : "Open navigation menu"} aria-expanded={sidebarOpen} onClick={() => setSidebarOpen((open) => !open)}><span aria-hidden="true">{sidebarOpen ? "×" : "☰"}</span></button><div className="breadcrumb"><span>Workspace</span><span className="breadcrumb-slash">/</span><strong>{page}</strong></div><div className="topbar-actions"><button className="topbar-video" type="button" onClick={() => setExplainerOpen(true)}><span aria-hidden="true">▶</span> How it works</button><span className="role-select" aria-label={page === "platform" ? "Your platform role" : "Your school role"}>{page === "platform" ? "Platform admin" : portalData[role].label}</span><button className="icon-button" type="button" onClick={() => setToast("You’re all caught up on school notifications.")} aria-label="Notifications">♧</button><button className="topbar-avatar" type="button" aria-label={`Sign out ${userName}`} onClick={signOut}>{userInitials}</button></div></header>
+        <div key={page} className={`page-content page-view ${page === "classes" ? "curriculum-page" : page === "students" ? "students-page" : page === "teachers" ? "teachers-page" : page === "results" ? "results-page" : page === "attendance" ? "attendance-page" : page === "grading" ? "grading-page" : page === "platform" ? "platform-page" : ""}`}>
           <span className="route-sweep" aria-hidden="true" />
-          {!school ? <section className="panel onboarding-panel"><span className="auth-kicker">WELCOME TO ASTER</span><h1>Create your school workspace</h1><p className="page-subtitle">Your account is ready. Set up your school profile to begin; only people you invite can join its portal.</p><button className="button button-primary" type="button" onClick={showSetup}>＋ Create school profile</button></section> : <>
+          {!school && !(page === "platform" && platformAdmin) ? <section className="panel onboarding-panel"><span className="auth-kicker">WELCOME TO ASTER</span><h1>Create your school workspace</h1><p className="page-subtitle">Your account is ready. Set up your school profile to begin; only people you invite can join its portal.</p><button className="button button-primary" type="button" onClick={showSetup}>＋ Create school profile</button></section> : <>
           <section className="welcome-row">
-            <div><div className="eyebrow"><span className="live-dot" /> {currentDateLabel} <span className="eyebrow-divider">·</span> SCHOOL WORKSPACE</div><h1>{page === "overview" ? role === "admin" ? `Good morning, ${userName}` : current.title : page === "results" ? role === "student" ? "Results, at a glance" : role === "parent" ? "Your children’s results" : "Result sheet & assessments" : page === "attendance" ? "Daily attendance" : page === "profile" ? "Your school, your story." : page === "classes" ? "Classes & subjects" : page === "grading" ? "Grading rules" : page === "students" ? "Student register" : `${page[0].toUpperCase()}${page.slice(1)}`} <span className="wave">✳</span></h1><p className="page-subtitle">{page === "overview" ? current.subtitle : page === "results" && role === "student" ? "View only the term results your school has published for your linked student record." : page === "results" && role === "parent" ? "View only published reports for children linked to your verified parent account." : page === "results" && role !== "student" && role !== "parent" ? role === "admin" ? "Calculate term percentages from approved marks, publish frozen result sheets, and review submissions." : "View calculated results and enter marks for your assigned classes." : page === "attendance" ? "Record and review daily attendance for your active class roster." : page === "classes" ? "Configure subjects and organise your classes." : page === "grading" ? "Set the grade bands and class-position rules used for new result publications." : page === "students" ? "Enrol students and keep their school records up to date." : `Keep your ${page} organised for the term ahead.`}</p></div>
+            <div><div className="eyebrow"><span className="live-dot" /> {currentDateLabel} <span className="eyebrow-divider">·</span> {page === "platform" ? "PLATFORM OPERATIONS" : "SCHOOL WORKSPACE"}</div><h1>{page === "platform" ? "Platform operations" : page === "overview" ? role === "admin" ? `Good morning, ${userName}` : current.title : page === "results" ? role === "student" ? "Results, at a glance" : role === "parent" ? "Your children’s results" : "Result sheet & assessments" : page === "attendance" ? "Daily attendance" : page === "profile" ? "Your school, your story." : page === "classes" ? "Classes & subjects" : page === "grading" ? "Grading rules" : page === "students" ? "Student register" : `${page[0].toUpperCase()}${page.slice(1)}`} <span className="wave">✳</span></h1><p className="page-subtitle">{page === "platform" ? "Monitor aggregate school activity across Aster without opening individual student records." : page === "overview" ? current.subtitle : page === "results" && role === "student" ? "View only the term results your school has published for your linked student record." : page === "results" && role === "parent" ? "View only published reports for children linked to your verified parent account." : page === "results" && role !== "student" && role !== "parent" ? role === "admin" ? "Calculate term percentages from approved marks, publish frozen result sheets, and review submissions." : "View calculated results and enter marks for your assigned classes." : page === "attendance" ? "Record and review daily attendance for your active class roster." : page === "classes" ? "Configure subjects and organise your classes." : page === "grading" ? "Set the grade bands and class-position rules used for new result publications." : page === "students" ? "Enrol students and keep their school records up to date." : `Keep your ${page} organised for the term ahead.`}</p></div>
             {page === "overview" && <HeroScene />}
-            {page !== "classes" && page !== "students" && page !== "teachers" && page !== "results" && page !== "attendance" && page !== "grading" && !(page === "overview" && role === "parent") && <div className="welcome-actions"><button className="button button-secondary" type="button" onClick={async () => { try { await navigator.clipboard.writeText(`${window.location.origin}${school.portalUrl || `/school/${school.slug}`}`); setToast("Your school workspace link has been copied. Only invited school members can access it."); } catch { setToast("Could not copy the school link. Please try again."); } }}>↗ Copy school workspace link</button><button className="button button-primary" type="button" onClick={() => page === "profile" ? showSetup() : page === "access" ? document.getElementById("inviteEmail")?.focus() : setPage(role === "admin" ? "students" : "results")}>＋ {page === "access" ? "Invite a member" : role === "teacher" ? "Enter marks" : ["student", "parent"].includes(role) ? role === "parent" ? "View child results" : "View my results" : "Add a student"}</button></div>}
+            {page !== "platform" && page !== "classes" && page !== "students" && page !== "teachers" && page !== "results" && page !== "attendance" && page !== "grading" && !(page === "overview" && role === "parent") && <div className="welcome-actions"><button className="button button-secondary" type="button" onClick={async () => { try { await navigator.clipboard.writeText(`${window.location.origin}${school.portalUrl || `/school/${school.slug}`}`); setToast("Your school workspace link has been copied. Only invited school members can access it."); } catch { setToast("Could not copy the school link. Please try again."); } }}>↗ Copy school workspace link</button><button className="button button-primary" type="button" onClick={() => page === "profile" ? showSetup() : page === "access" ? document.getElementById("inviteEmail")?.focus() : setPage(role === "admin" ? "students" : "results")}>＋ {page === "access" ? "Invite a member" : role === "teacher" ? "Enter marks" : ["student", "parent"].includes(role) ? role === "parent" ? "View child results" : "View my results" : "Add a student"}</button></div>}
           </section>
+
+          {page === "platform" && platformAdmin && <section className="platform-overview">
+            <section className="panel platform-summary-panel">
+              <div className="panel-heading"><div><h2>School network</h2><p>Aggregate operational counts across all Aster schools.</p></div><button className="button button-secondary button-small" type="button" onClick={() => setPlatformRefresh((previous) => previous + 1)} disabled={loadingPlatformOverview}>Refresh</button></div>
+              {platformOverviewError && <p className="form-error" role="alert">{platformOverviewError}</p>}
+              {loadingPlatformOverview && <p className="empty-search" role="status">Loading platform overview…</p>}
+              {!loadingPlatformOverview && platformOverviewForUser && <>
+                <section className="stats-grid" aria-label="Platform summary">
+                  {[
+                    ["Schools", platformOverviewForUser.summary.schoolCount, "Registered workspaces", "▦"],
+                    ["Active students", platformOverviewForUser.summary.activeStudentCount, "Across all schools", "♧"],
+                    ["Teacher memberships", platformOverviewForUser.summary.teacherMembershipCount, "Across all schools", "♙"],
+                    ["Classes", platformOverviewForUser.summary.classCount, "Across all schools", "▤"],
+                  ].map(([label, value, detail, icon], index) => <article className="stat-card" key={label}>
+                    <div className="stat-top"><span className="stat-label">{label}</span><span className={`stat-icon ${["student-stat-icon", "teacher-stat-icon", "average-stat-icon", "review-stat-icon"][index]}`}>{icon}</span></div>
+                    <div className="stat-number">{Number(value).toLocaleString("en-NG")}</div><div className="stat-foot"><span>{detail}</span></div>
+                  </article>)}
+                </section>
+                <div className="platform-directory-heading"><div><h3>Recently created schools</h3><p>Showing up to 100 of {platformOverviewForUser.summary.schoolCount.toLocaleString("en-NG")} schools.</p></div></div>
+                {platformOverviewForUser.schools.length === 0 ? <p className="empty-search">No school workspaces have been created yet.</p> : <div className="table-scroll"><table className="platform-directory-table"><thead><tr><th>SCHOOL</th><th>COUNTRY</th><th>TYPE</th><th>STUDENTS</th><th>TEACHERS</th><th>CLASSES</th><th>ADMINS</th><th>CREATED</th></tr></thead><tbody>
+                  {platformOverviewForUser.schools.map((schoolRow) => <tr key={schoolRow.id}>
+                    <td><strong>{schoolRow.name}</strong></td><td>{schoolRow.country}</td><td>{schoolRow.schoolType}</td><td>{schoolRow.studentCount.toLocaleString("en-NG")}</td><td>{schoolRow.teacherCount.toLocaleString("en-NG")}</td><td>{schoolRow.classCount.toLocaleString("en-NG")}</td><td>{schoolRow.administratorCount.toLocaleString("en-NG")}</td><td>{new Date(schoolRow.createdAt).toLocaleDateString("en-NG")}</td>
+                  </tr>)}
+                </tbody></table></div>}
+              </>}
+              {!loadingPlatformOverview && !platformOverviewError && !platformOverviewForUser && <p className="empty-search">Platform operations are unavailable. Refresh to try again.</p>}
+            </section>
+          </section>}
 
           {page === "attendance" && <section className="panel attendance-panel">
             <div className="panel-heading"><div><h2>Class register</h2><p>Attendance is saved per school day. Teachers can record attendance only for their assigned classes.</p></div></div>

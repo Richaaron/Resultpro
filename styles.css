@@ -268,6 +268,13 @@ select.text-input { color: #58645a; }
 .invitation-revoke-action:disabled { color: #a7afa8; }
 .dashboard-message { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 15px; color: #778178; font-size: 12px; }
 .dashboard-error { border-color: #e7c9c4; color: #9c4b42; }
+.platform-overview { display: grid; gap: 14px; }
+.platform-summary-panel { display: grid; gap: 14px; }
+.platform-directory-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-top: 2px; }
+.platform-directory-heading h3 { margin: 0; color: #4f5b52; font: 700 12px/1.4 var(--font-display); }
+.platform-directory-heading p { margin: 4px 0 0; color: #89938b; font-size: 10px; }
+.platform-directory-table { min-width: 900px; }
+.platform-directory-table td > strong { color: #4f5b52; font-size: 10px; font-weight: 600; }
 .curriculum-page > .term-banner, .curriculum-page > .stats-grid, .curriculum-page > .main-grid, .curriculum-page > .results-panel,
 .students-page > .term-banner, .students-page > .stats-grid, .students-page > .main-grid, .students-page > .results-panel,
 .teachers-page > .term-banner, .teachers-page > .stats-grid, .teachers-page > .main-grid, .teachers-page > .results-panel,
@@ -787,6 +794,8 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .live-dot { background: #78d394; box-shadow: 0 0 0 3px #1a3825; }
 h1, .panel-heading h2, .stat-number { color: #f0f7f1; }
 .panel-heading p { color: #b3c2b6; }
+.platform-directory-heading h3 { color: #e8f4e9; }
+.platform-directory-heading p { color: #a9b9ac; }
 .term-banner { border-color: #294632; background: linear-gradient(105deg, #14291b, #142219); box-shadow: var(--shadow-card); }
 .term-icon { background: #213e28; color: #a6dea3; }
 .term-copy strong { color: #e7f4e8; }
@@ -827,7 +836,7 @@ h1, .panel-heading h2, .stat-number { color: #f0f7f1; }
 .results-panel th, th { background: #17271d; color: #c1d0c4; }
 td { border-bottom-color: #253a2d; color: #d1dfd4; }
 tbody tr:hover { background: #16271c; }
-.student-cell > span > strong, .student-register-panel td > strong, .result-sheet-table td > strong,
+.student-cell > span > strong, .student-register-panel td > strong, .platform-directory-table td > strong, .result-sheet-table td > strong,
 .result-percentage, .assessment-table strong, .class-card h3, .mark { color: #e8f4e9 !important; }
 .student-cell small, .assessment-subtitle, .mark-denom { color: #a9b9ac; }
 .result-sheet-table td, .assessment-table td, .assignment-table td { color: #d1dfd4; }

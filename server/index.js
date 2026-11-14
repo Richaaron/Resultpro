@@ -10,6 +10,7 @@ import {
   createSchoolStudent,
   deleteSchoolClass,
   getSchoolDashboard,
+  getPlatformOverview,
   getSchoolClassAttendance,
   getSchoolClassAttendanceReport,
   getSchoolGradingSettings,
@@ -59,6 +60,7 @@ import {
 } from "../shared/school-data.js";
 import { createCorsMiddleware } from "./cors.js";
 import { requireAuth } from "./auth.js";
+import { isPlatformAdminEmail } from "./platform-admin.js";
 import { sendInvitationEmail } from "./invitation-email.js";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -80,6 +82,24 @@ app.use(express.json({ limit: "128kb" }));
 
 app.get("/api/health", (_request, response) => {
   response.json({ status: "ok" });
+});
+
+app.get("/api/platform/access", requireAuth, (request, response) => {
+  response.set("Cache-Control", "no-store");
+  return response.json({ isPlatformAdmin: isPlatformAdminEmail(request.auth.email) });
+});
+
+app.get("/api/platform/overview", requireAuth, async (request, response) => {
+  if (!isPlatformAdminEmail(request.auth.email)) {
+    return response.status(403).json({ error: "Platform administrator access is required." });
+  }
+  response.set("Cache-Control", "no-store");
+  try {
+    const overview = await getPlatformOverview();
+    return response.json({ overview });
+  } catch (error) {
+    return handleDatabaseError(error, response);
+  }
 });
 
 app.get("/api/schools", requireAuth, async (request, response) => {
