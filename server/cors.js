@@ -2,6 +2,7 @@ const LOCAL_ORIGINS = new Set([
   "http://localhost:5173",
   "http://127.0.0.1:5173",
 ]);
+const PRODUCTION_ORIGINS = new Set(["https://resultpro-ruby.vercel.app"]);
 
 export function createCorsMiddleware({ production, configuredOrigins = "" }) {
   const allowedOrigins = new Set(
@@ -10,7 +11,9 @@ export function createCorsMiddleware({ production, configuredOrigins = "" }) {
       .map((origin) => origin.trim())
       .filter(Boolean),
   );
-  if (!production) {
+  if (production) {
+    for (const origin of PRODUCTION_ORIGINS) allowedOrigins.add(origin);
+  } else {
     for (const origin of LOCAL_ORIGINS) allowedOrigins.add(origin);
   }
 

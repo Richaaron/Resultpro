@@ -34,7 +34,7 @@ The production frontend can be built with `npm run build`; `npm start` serves th
 1. In Render, choose **New → Blueprint** and connect this repository. Render reads `render.yaml` and creates the `aster-api` web service.
 2. Set `DATABASE_URL` to the Neon **pooled** connection string when Render prompts for it.
 3. Set `NEON_AUTH_BASE_URL` to the Managed Auth Base URL shown by `neon env pull` (or in the Neon Auth configuration tab).
-4. Set `FRONTEND_ORIGINS` to the exact Vercel frontend origin, such as `https://your-app.vercel.app` (no trailing slash). Include additional trusted origins as a comma-separated list.
+4. The production frontend at `https://resultpro-ruby.vercel.app` is allowed by default. Set `FRONTEND_ORIGINS` to add any other exact trusted origins (no trailing slash; comma-separated).
 5. In Resend, verify a sender domain. Set `RESEND_API_KEY`, `EMAIL_FROM` (for example, `Aster <invites@yourdomain.com>`), and `APP_BASE_URL` to your Vercel origin in the Render service environment.
 6. Deploy the service and verify `https://<your-render-service>.onrender.com/api/health` returns `{"status":"ok"}`.
 7. Add only the main owner's verified Aster account email to the Render API service’s `PLATFORM_ADMIN_EMAILS` environment variable to enable owner-only platform operations.
@@ -58,7 +58,7 @@ The service uses Render's **Free** plan. Free web services sleep after inactivit
 3. Add `VITE_NEON_AUTH_URL` with the same Neon Managed Auth Base URL used by the API.
 4. Deploy or redeploy. These URLs are public frontend configuration, not secrets.
 
-The browser calls the Render API directly. The API only allows origins listed in `FRONTEND_ORIGINS`; update that Render variable if your Vercel domain changes. Local Vite development uses its `/api` proxy instead.
+The browser calls the Render API directly. The API allows the production frontend origin and any additional origins listed in `FRONTEND_ORIGINS`; update that Render variable if you use another Vercel domain. Local Vite development uses its `/api` proxy instead.
 
 ## API
 
