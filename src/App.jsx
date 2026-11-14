@@ -108,7 +108,48 @@ async function apiRequest(path, options = {}) {
   return payload;
 }
 
-function StudentReportCard({ school, result, rows }) {
+async function prepareSignatureImage(file) {
+  if (!["image/png", "image/jpeg", "image/webp"].includes(file.type)) {
+    throw new Error("Choose a PNG, JPEG, or WebP signature image.");
+  }
+  if (file.size > 5 * 1024 * 1024) throw new Error("Choose a signature image smaller than 5 MB.");
+
+  const imageUrl = URL.createObjectURL(file);
+  try {
+    const image = await new Promise((resolve, reject) => {
+      const loadedImage = new Image();
+      loadedImage.onload = () => resolve(loadedImage);
+      loadedImage.onerror = () => reject(new Error("That image could not be opened. Choose another file."));
+      loadedImage.src = imageUrl;
+    });
+    const scale = Math.min(1, 1600 / image.naturalWidth, 600 / image.naturalHeight);
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+    canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+    const context = canvas.getContext("2d", { willReadFrequently: true });
+    if (!context) throw new Error("Your browser could not prepare the signature image.");
+    context.drawImage(image, 0, 0, canvas.width, canvas.height);
+
+    const pixels = context.getImageData(0, 0, canvas.width, canvas.height);
+    for (let index = 0; index < pixels.data.length; index += 4) {
+      const luminance = (pixels.data[index] * 299 + pixels.data[index + 1] * 587 + pixels.data[index + 2] * 114) / 1000;
+      pixels.data[index] = 31;
+      pixels.data[index + 1] = 56;
+      pixels.data[index + 2] = 40;
+      pixels.data[index + 3] = Math.round(pixels.data[index + 3] * Math.max(0, Math.min(1, (231 - luminance) / 180)));
+    }
+    context.putImageData(pixels, 0, 0);
+    const signatureData = canvas.toDataURL("image/png");
+    if (signatureData.length > 88_000) {
+      throw new Error("The signature is still too large after optimization. Try a tightly cropped image.");
+    }
+    return signatureData;
+  } finally {
+    URL.revokeObjectURL(imageUrl);
+  }
+}
+
+function StudentReportCard({ school, result, rows, signatures }) {
   const summary = summarizePublishedResultRows(rows);
   const student = rows[0];
   const schoolCode = school.slug || school.id;
@@ -151,7 +192,9 @@ function StudentReportCard({ school, result, rows }) {
     </tr>)}</tbody></table></div>
     <p className="student-report-note">This report reflects the school’s published grading rules and approved marks. Class position is shown only when the configured completeness rule is satisfied; older published reports may not contain grades or positions.</p>
     <footer className="student-report-signatures">
-      <span><i />Class teacher</span><span><i />Principal</span><span><i />Parent / guardian</span>
+      <span><div className="student-report-signature-line">{signatures?.formMasterSignature && <img src={signatures.formMasterSignature} alt={`${signatures.formMasterName || "Form master"} signature`} />}</div><b>Form master</b><small>{signatures?.formMasterName || "Signature not uploaded"}</small></span>
+      <span><div className="student-report-signature-line">{signatures?.principalSignature && <img src={signatures.principalSignature} alt={`${signatures.principalName || "Principal"} signature`} />}</div><b>Principal</b><small>{signatures?.principalName || "Signature not uploaded"}</small></span>
+      <span><div className="student-report-signature-line" /><b>Parent / guardian</b></span>
     </footer>
   </article>;
 }
@@ -278,6 +321,21 @@ function App() {
   const [assignmentTeacherId, setAssignmentTeacherId] = useState("");
   const [savingAssignment, setSavingAssignment] = useState(false);
   const [assignmentRefresh, setAssignmentRefresh] = useState(0);
+  const [formMasterAssignments, setFormMasterAssignments] = useState([]);
+  const [formMasterSelections, setFormMasterSelections] = useState({});
+  const [formMasterLoading, setFormMasterLoading] = useState(false);
+  const [formMasterSavingClassId, setFormMasterSavingClassId] = useState("");
+  const [formMasterError, setFormMasterError] = useState("");
+  const [formMasterRefresh, setFormMasterRefresh] = useState(0);
+  const [mySignature, setMySignature] = useState(null);
+  const [signatureCanUpload, setSignatureCanUpload] = useState(false);
+  const [signatureRole, setSignatureRole] = useState("");
+  const [signatureFormMasterClasses, setSignatureFormMasterClasses] = useState([]);
+  const [signatureFileData, setSignatureFileData] = useState("");
+  const [signatureLoading, setSignatureLoading] = useState(false);
+  const [signatureSaving, setSignatureSaving] = useState(false);
+  const [signatureError, setSignatureError] = useState("");
+  const [signatureRefresh, setSignatureRefresh] = useState(0);
   const [assessments, setAssessments] = useState([]);
   const [loadingAssessments, setLoadingAssessments] = useState(false);
   const [assessmentError, setAssessmentError] = useState("");
@@ -899,6 +957,62 @@ function App() {
       });
     return () => { active = false; };
   }, [school?.id, page, role, assignmentRefresh]);
+
+  useEffect(() => {
+    let active = true;
+    if (!school?.id || page !== "teachers" || role !== "admin") {
+      setFormMasterAssignments([]);
+      setFormMasterSelections({});
+      setFormMasterLoading(false);
+      return () => { active = false; };
+    }
+
+    setFormMasterLoading(true);
+    setFormMasterError("");
+    apiRequest(`/api/schools/${school.id}/form-masters`)
+      .then(({ assignments }) => {
+        if (active) setFormMasterAssignments(assignments);
+      })
+      .catch((requestError) => {
+        if (active) setFormMasterError(requestError.message || "Could not load form-master assignments.");
+      })
+      .finally(() => {
+        if (active) setFormMasterLoading(false);
+      });
+    return () => { active = false; };
+  }, [school?.id, page, role, formMasterRefresh]);
+
+  useEffect(() => {
+    let active = true;
+    if (!school?.id || page !== "results" || !["admin", "teacher"].includes(role)) {
+      setMySignature(null);
+      setSignatureCanUpload(false);
+      setSignatureRole("");
+      setSignatureFormMasterClasses([]);
+      setSignatureLoading(false);
+      setSignatureError("");
+      setSignatureFileData("");
+      return () => { active = false; };
+    }
+
+    setSignatureLoading(true);
+    setSignatureError("");
+    apiRequest(`/api/schools/${school.id}/my-signature`)
+      .then((data) => {
+        if (!active) return;
+        setMySignature(data.signatureData);
+        setSignatureCanUpload(data.canUpload);
+        setSignatureRole(data.signerRole);
+        setSignatureFormMasterClasses(data.formMasterClasses || []);
+      })
+      .catch((requestError) => {
+        if (active) setSignatureError(requestError.message || "Could not load your signature settings.");
+      })
+      .finally(() => {
+        if (active) setSignatureLoading(false);
+      });
+    return () => { active = false; };
+  }, [school?.id, page, role, signatureRefresh]);
 
   useEffect(() => {
     let active = true;
@@ -1596,6 +1710,91 @@ function App() {
     }
   }
 
+  async function assignFormMaster(event, classId, teacherUserId) {
+    event.preventDefault();
+    if (!school || !classId || !teacherUserId) return;
+    setFormMasterSavingClassId(classId);
+    setFormMasterError("");
+    try {
+      await apiRequest(`/api/schools/${school.id}/form-masters`, {
+        method: "PUT",
+        body: JSON.stringify({ classId, teacherUserId }),
+      });
+      setFormMasterRefresh((previous) => previous + 1);
+      setToast("Class form master assigned.");
+    } catch (requestError) {
+      setFormMasterError(requestError.message || "Could not assign the form master.");
+    } finally {
+      setFormMasterSavingClassId("");
+    }
+  }
+
+  async function removeFormMaster(assignment) {
+    if (!school || !window.confirm(`Remove ${assignment.teacherName} as form master for ${assignment.grade} ${assignment.section}?`)) return;
+    setFormMasterSavingClassId(assignment.classId);
+    setFormMasterError("");
+    try {
+      await apiRequest(`/api/schools/${school.id}/form-masters/${assignment.classId}`, { method: "DELETE" });
+      setFormMasterRefresh((previous) => previous + 1);
+      setToast("Form-master assignment removed.");
+    } catch (requestError) {
+      setFormMasterError(requestError.message || "Could not remove the form-master assignment.");
+    } finally {
+      setFormMasterSavingClassId("");
+    }
+  }
+
+  async function prepareSignatureFile(event) {
+    const file = event.target.files?.[0];
+    setSignatureError("");
+    setSignatureFileData("");
+    if (!file) return;
+    try {
+      setSignatureFileData(await prepareSignatureImage(file));
+    } catch (requestError) {
+      setSignatureError(requestError.message || "Could not prepare that signature image.");
+      event.target.value = "";
+    }
+  }
+
+  async function saveMySignature(event) {
+    event.preventDefault();
+    if (!school || !signatureFileData || !signatureCanUpload) return;
+    setSignatureSaving(true);
+    setSignatureError("");
+    try {
+      const { signatureData } = await apiRequest(`/api/schools/${school.id}/my-signature`, {
+        method: "PUT",
+        body: JSON.stringify({ signatureData: signatureFileData }),
+      });
+      setMySignature(signatureData);
+      setSignatureFileData("");
+      setAssessmentRefresh((previous) => previous + 1);
+      setToast(`${signatureRole} signature saved.`);
+    } catch (requestError) {
+      setSignatureError(requestError.message || "Could not save your signature.");
+    } finally {
+      setSignatureSaving(false);
+    }
+  }
+
+  async function removeMySignature() {
+    if (!school || !window.confirm("Remove your saved report signature?")) return;
+    setSignatureSaving(true);
+    setSignatureError("");
+    try {
+      await apiRequest(`/api/schools/${school.id}/my-signature`, { method: "DELETE" });
+      setMySignature(null);
+      setSignatureFileData("");
+      setAssessmentRefresh((previous) => previous + 1);
+      setToast("Signature removed from future reports.");
+    } catch (requestError) {
+      setSignatureError(requestError.message || "Could not remove your signature.");
+    } finally {
+      setSignatureSaving(false);
+    }
+  }
+
   function resetStudentForm() {
     setEditingStudentId("");
     setStudentForm({
@@ -2258,6 +2457,30 @@ function App() {
             </div>
           </section>}
 
+          {page === "results" && ["admin", "teacher"].includes(role) && <section className="panel signature-settings-panel">
+            <div className="panel-heading"><div><h2>{role === "admin" ? "Principal report signature" : "Form-master report signature"}</h2><p>{role === "admin" ? "Your signature as the school’s primary administrator appears on published student reports." : "Your signature appears only on published reports for classes where you are assigned as form master."}</p></div></div>
+            {signatureLoading ? <p className="empty-search">Loading signature settings…</p>
+              : signatureError && <p className="form-error" role="alert">{signatureError}</p>}
+            {!signatureLoading && !signatureError && !signatureCanUpload && <p className="field-hint">{role === "admin" ? "Only the school’s primary administrator can upload the principal signature." : "You are not assigned as a form master yet. Ask your school administrator to assign you to a class."}</p>}
+            {!signatureLoading && signatureCanUpload && <>
+              {role === "teacher" && <p className="field-hint">Assigned classes: {signatureFormMasterClasses.map((item) => `${item.grade} ${item.section}`).join(", ")}</p>}
+              <div className="signature-current">
+                <span>Current {signatureRole.toLowerCase()} signature</span>
+                {mySignature
+                  ? <img src={mySignature} alt={`Saved ${signatureRole.toLowerCase()} signature`} />
+                  : <small>No signature uploaded yet.</small>}
+              </div>
+              <form className="signature-upload-form" onSubmit={saveMySignature}>
+                <label><span>Upload signature image</span><input type="file" accept="image/png,image/jpeg,image/webp" onChange={prepareSignatureFile} disabled={signatureSaving} /><small>PNG, JPG, or WebP; maximum 5 MB. Aster trims and optimizes it into a private PNG.</small></label>
+                {signatureFileData && <img className="signature-upload-preview" src={signatureFileData} alt="Preview of signature to save" />}
+                <div className="signature-upload-actions">
+                  <button className="button button-primary" type="submit" disabled={!signatureFileData || signatureSaving}>{signatureSaving ? "Saving…" : "Save signature"}</button>
+                  {mySignature && <button className="button button-secondary" type="button" onClick={removeMySignature} disabled={signatureSaving}>Remove signature</button>}
+                </div>
+              </form>
+            </>}
+          </section>}
+
           {page === "results" && ["student", "parent"].includes(role) && <section className="panel student-results-panel">
             <div className="panel-heading"><div><h2>{role === "parent" ? "Your children’s published results" : "Published term results"}</h2><p>{role === "parent" ? "Only reports for students explicitly linked to your verified parent account are shown." : "Your school releases results after administrator approval. Only your linked student record is shown here."}</p></div></div>
             {studentResultError && <p className="form-error" role="alert">{studentResultError}</p>}
@@ -2278,7 +2501,7 @@ function App() {
                         <button className="button button-secondary button-small report-print-button" type="button" onClick={printStudentReport} disabled={!selectedStudentResult?.rows.length}>Print report card</button>
                       </div>
                       {selectedStudentResult?.rows.length
-                        ? <StudentReportCard school={school} result={selectedStudentResult} rows={selectedStudentResult.rows} />
+                        ? <StudentReportCard school={school} result={selectedStudentResult} rows={selectedStudentResult.rows} signatures={selectedStudentResult.reportSignatures} />
                         : <p className="empty-search">{role === "parent" ? "No result sheets have been published for this student yet." : "Select one of your published result sheets to view its subjects."}</p>}
                     </>}
           </section>}
@@ -2320,6 +2543,7 @@ function App() {
                     school={school}
                     result={{ ...resultSheet.schoolClass, term: resultSheet.term, publishedAt: resultSheet.published.publishedAt }}
                     rows={rows}
+                    signatures={resultSheet.reportSignatures}
                   />
                 </div>)}
               </div>}
@@ -2425,6 +2649,31 @@ function App() {
                 <div className="assignment-list-heading"><h3>Current assignments</h3><span>{teachingAssignments.length}</span></div>
                 {teachingAssignments.length === 0 ? <p className="empty-search">No teacher assignments yet.</p> : <div className="table-scroll"><table className="assignment-table"><thead><tr><th>CLASS</th><th>SUBJECT</th><th>TEACHER</th><th>ACADEMIC YEAR</th><th></th></tr></thead><tbody>{teachingAssignments.map((assignment) => <tr key={assignment.id}><td>{assignment.grade} {assignment.section}</td><td>{assignment.subject}</td><td>{assignment.teacherEmail}</td><td>{assignment.academicYear}</td><td><button className="quiet-action" type="button" onClick={() => unassignTeacher(assignment)}>Remove</button></td></tr>)}</tbody></table></div>}
               </>}
+            </section>
+            <section className="panel form-master-panel">
+              <div className="panel-heading"><div><h2>Class form masters</h2><p>Choose one active teacher for each class. Form masters can add their own signature to that class’s published reports.</p></div></div>
+              {formMasterError && <p className="form-error" role="alert">{formMasterError}</p>}
+              {formMasterLoading || loadingClasses || loadingAssignments
+                ? <p className="empty-search">Loading classes and teachers…</p>
+                : schoolClasses.length === 0
+                  ? <p className="empty-search">Create a class before assigning a form master. <button className="inline-action" type="button" onClick={() => setPage("classes")}>Go to Classes & subjects →</button></p>
+                  : teacherRoster.length === 0
+                    ? <p className="empty-search">Register and activate a teacher before assigning a form master.</p>
+                    : <div className="form-master-list">{schoolClasses.map((classItem) => {
+                      const assignment = formMasterAssignments.find((item) => item.classId === classItem.id);
+                      const selectedTeacherId = formMasterSelections[classItem.id] ?? assignment?.teacherUserId ?? "";
+                      return <div className="form-master-row" key={classItem.id}>
+                        <div><strong>{classItem.grade} {classItem.section}</strong><small>{classItem.academicYear}</small></div>
+                        <form onSubmit={(event) => assignFormMaster(event, classItem.id, selectedTeacherId)}>
+                          <select className="text-input" required aria-label={`Form master for ${classItem.grade} ${classItem.section}`} value={selectedTeacherId} onChange={(event) => setFormMasterSelections((previous) => ({ ...previous, [classItem.id]: event.target.value }))}>
+                            <option value="">Select a teacher</option>
+                            {teacherRoster.map((teacher) => <option key={teacher.userId} value={teacher.userId}>{teacher.teacherName || teacher.email} · {teacher.teacherCode || teacher.email}</option>)}
+                          </select>
+                          <button className="button button-secondary button-small" type="submit" disabled={!selectedTeacherId || formMasterSavingClassId === classItem.id}>{formMasterSavingClassId === classItem.id ? "Saving…" : assignment ? "Update" : "Assign"}</button>
+                        </form>
+                        {assignment && <button className="quiet-action" type="button" onClick={() => removeFormMaster(assignment)} disabled={formMasterSavingClassId === classItem.id}>Remove</button>}
+                      </div>;
+                    })}</div>}
             </section>
           </section>}
 

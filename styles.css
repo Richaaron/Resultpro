@@ -359,6 +359,23 @@ select.text-input { color: #58645a; }
 .assignment-list-heading h3 { color: #4a574d; font-size: 11px; font-weight: 700; }
 .assignment-list-heading span { display: grid; min-width: 20px; height: 20px; place-items: center; border-radius: 12px; background: #f0f4ee; color: #607664; font-size: 9px; }
 .assignment-table td { vertical-align: middle; }
+.form-master-list { display: grid; gap: 8px; margin-top: 16px; }
+.form-master-row { display: grid; grid-template-columns: minmax(140px, 1fr) minmax(240px, 2fr) auto; align-items: center; gap: 12px; padding: 10px 0; border-top: 1px solid #e8eee8; }
+.form-master-row > div { display: grid; gap: 4px; }
+.form-master-row > div strong { color: #34463a; font-size: 10px; }
+.form-master-row > div small { color: #78877d; font-size: 9px; }
+.form-master-row form { display: flex; align-items: center; gap: 8px; }
+.form-master-row .text-input { min-width: 0; height: 36px; font-size: 10px; }
+.signature-settings-panel { padding: 20px; }
+.signature-current { display: grid; justify-items: start; gap: 7px; margin: 14px 0; color: #637065; font-size: 9px; }
+.signature-current img { max-width: min(100%, 300px); max-height: 90px; padding: 8px; border: 1px solid #e3eae3; border-radius: 8px; background: #fff; object-fit: contain; }
+.signature-current small { color: #78877d; }
+.signature-upload-form { display: grid; justify-items: start; gap: 12px; }
+.signature-upload-form label { display: grid; gap: 6px; color: #637065; font-size: 9px; font-weight: 600; }
+.signature-upload-form label small { color: #78877d; font-size: 8px; font-weight: 400; }
+.signature-upload-form input[type="file"] { max-width: 100%; color: #637065; font-size: 9px; }
+.signature-upload-preview { max-width: min(100%, 300px); max-height: 90px; padding: 8px; border: 1px solid #dce5dc; border-radius: 8px; background: #fff; object-fit: contain; }
+.signature-upload-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .teacher-assignment-cards { margin-top: 18px; }
 .teacher-assignment-cards .class-card > p { color: #5e715f; font-size: 10px; }
 .assessment-workspace { display: grid; gap: 14px; }
@@ -427,7 +444,10 @@ select.text-input { color: #58645a; }
 .student-report-note { margin-top: 12px; color: #7a867d; font-size: 9px; line-height: 1.55; }
 .student-report-signatures { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 22px; margin-top: 34px; }
 .student-report-signatures span { display: grid; gap: 6px; color: #667269; font-size: 8px; }
-.student-report-signatures i { display: block; height: 19px; border-bottom: 1px solid #9aa79b; }
+.student-report-signatures b { color: #536457; font-size: 8px; }
+.student-report-signatures small { color: #78877d; font-size: 8px; overflow-wrap: anywhere; }
+.student-report-signature-line { display: flex; align-items: end; min-height: 42px; border-bottom: 1px solid #9aa79b; }
+.student-report-signature-line img { max-width: 100%; max-height: 40px; object-fit: contain; object-position: left bottom; }
 .student-portal-linked { color: #477b59; font-size: 9px; font-weight: 600; }
 .assessment-form-panel, .assessment-list-panel, .assessment-detail-panel { padding: 20px; }
 .assessment-create-form { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); align-items: end; gap: 11px; margin-top: 17px; }
@@ -523,6 +543,13 @@ select.text-input { color: #58645a; }
   .welcome-actions .button { gap: 5px; }.welcome-actions .button svg { width: 12px; }.field-row { grid-template-columns: 1fr; gap: 0; }.page-footer > span:first-child { max-width: 155px; }
   .curriculum-grid, .class-list, .class-create-form, .student-create-form, .assignment-form, .assessment-create-form, .student-import-controls { grid-template-columns: 1fr; }    .teacher-assignment-panel, .result-sheet-panel, .attendance-panel, .attendance-report-panel, .assessment-form-panel, .assessment-list-panel, .assessment-detail-panel { padding: 15px; }.teacher-assignment-panel > .panel-heading, .result-sheet-heading, .assessment-list-panel > .panel-heading { align-items: flex-start; flex-direction: column; }.result-sheet-filters { align-items: stretch; flex-direction: column; }.result-sheet-filters label { min-width: 0; }.result-sheet-summary { margin-left: 0; }.attendance-controls { align-items: stretch; flex-direction: column; }.attendance-controls label { min-width: 0; }.attendance-counts { margin-left: 0; }.attendance-footer { align-items: stretch; flex-direction: column; }.attendance-report-filters { align-items: stretch; flex-direction: column; }.attendance-report-filters label { min-width: 0; }.attendance-report-filters .button { width: 100%; }.attendance-report-meta { align-items: flex-start; flex-direction: column; }.assessment-actions { align-items: stretch; flex-direction: column; }.assessment-actions .field-hint { margin-right: 0; }.assessment-review-actions > div { align-items: stretch; flex-direction: column; }.student-filters { align-items: stretch; flex-direction: column; }.student-filters .text-input { width: 100%; }.student-register-panel { padding-right: 11px; padding-left: 11px; }.student-register-panel .panel-heading, .student-import-panel .panel-heading { align-items: flex-start; flex-direction: column; }.student-import-actions { align-items: stretch; flex-direction: column-reverse; }.student-import-actions .button { width: 100%; }
 }
+@media (max-width: 700px) {
+  .form-master-row { grid-template-columns: minmax(0, 1fr); align-items: stretch; gap: 7px; }
+  .form-master-row form { align-items: stretch; flex-direction: column; }
+  .form-master-row form .button { width: 100%; min-height: 40px; }
+  .form-master-row > .quiet-action { justify-self: start; }
+  .student-report-signatures { gap: 10px; }
+}
 @media print {
   body * { visibility: hidden !important; }
   .result-sheet-panel, .result-sheet-panel * { visibility: visible !important; }
@@ -554,7 +581,8 @@ select.text-input { color: #58645a; }
   .student-report-summary small, .student-report-summary strong, .student-report-note { color: #26352a; }
   .student-report-signatures { margin-top: 26px; }
   .student-report-signatures span { color: #526055; }
-  .student-report-signatures i { border-color: #8d9b8f; }
+  .student-report-signatures b, .student-report-signatures small { color: #526055; }
+  .student-report-signature-line { border-color: #8d9b8f; }
   .student-report-card .table-scroll { overflow: visible; }
   .student-report-note { margin-top: 16px; }
 }

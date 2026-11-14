@@ -17,8 +17,13 @@ import {
   getSchoolClassAttendanceReport,
   getSchoolGradingSettings,
   getSchoolRole,
+  getSchoolMemberSignature,
+  getSchoolPrincipalUser,
+  getSchoolReportSignatures,
   importSchoolStudents,
   listSchoolInvitations,
+  listSchoolFormMasterClasses,
+  listSchoolFormMasters,
   getSchoolPublishedResultSheet,
   listSchoolTeachers,
   listSchoolClasses,
@@ -34,18 +39,26 @@ import {
   removeTeachingAssignment,
   publishSchoolResultSheet,
   renewSchoolInvitation,
+  removeSchoolFormMaster,
+  removeSchoolMemberSignature,
   revokeSchoolInvitation,
   replaceSchoolSubjects,
   reviewSchoolAssessment,
   saveSchoolAssessmentMarks,
   saveSchoolClassAttendance,
+  saveSchoolFormMaster,
   saveSchoolGradingSettings,
+  saveSchoolMemberSignature,
   saveTeachingAssignment,
   setSchoolStudentActive,
   submitSchoolAssessment,
   updateSchoolStudent,
 } from "./school-repository.js";
-import { normalizeSchoolInput, normalizeTeacherRegistrationInput } from "./school-input.js";
+import {
+  normalizeSchoolInput,
+  normalizeSignatureData,
+  normalizeTeacherRegistrationInput,
+} from "./school-input.js";
 import { normalizeSubjectSelection } from "../shared/curriculum.js";
 import {
   normalizeClassInput,
@@ -278,6 +291,50 @@ app.get("/api/schools/:schoolId/teaching-assignments", requireAuth, async (reque
   }
 });
 
+app.get("/api/schools/:schoolId/form-masters", requireAuth, async (request, response) => {
+  const { schoolId } = request.params;
+  if (!isUuid(schoolId)) return response.status(400).json({ error: "Enter a valid school." });
+
+  try {
+    const membershipRole = await getSchoolRole(schoolId, request.auth.userId);
+    if (!membershipRole) return response.status(404).json({ error: "School not found." });
+    if (membershipRole !== "admin") {
+      return response.status(403).json({ error: "Only a school administrator can manage form-master assignments." });
+    }
+    const assignments = await listSchoolFormMasters(schoolId);
+    return response.json({ assignments });
+  } catch (error) {
+    return handleDatabaseError(error, response);
+  }
+});
+
+app.get("/api/schools/:schoolId/my-signature", requireAuth, async (request, response) => {
+  const { schoolId } = request.params;
+  if (!isUuid(schoolId)) return response.status(400).json({ error: "Enter a valid school." });
+
+  try {
+    const membershipRole = await getSchoolRole(schoolId, request.auth.userId);
+    if (!membershipRole) return response.status(404).json({ error: "School not found." });
+    if (!["admin", "teacher"].includes(membershipRole)) {
+      return response.status(403).json({ error: "Signature settings are available to school administrators and assigned form masters." });
+    }
+    const access = await getOwnSignatureAccess(schoolId, request.auth.userId, membershipRole);
+    const signatureData = access.allowed
+      ? await getSchoolMemberSignature(schoolId, request.auth.userId)
+      : null;
+    response.set("Cache-Control", "no-store");
+    return response.json({
+      signatureData,
+      signerRole: access.signerRole,
+      canUpload: access.allowed,
+      formMasterClasses: access.formMasterClasses,
+      principalName: access.principalName,
+    });
+  } catch (error) {
+    return handleDatabaseError(error, response);
+  }
+});
+
 app.get("/api/schools/:schoolId/attendance", requireAuth, async (request, response) => {
   const { schoolId } = request.params;
   const classId = typeof request.query.classId === "string" ? request.query.classId : "";
@@ -404,6 +461,103 @@ app.delete("/api/schools/:schoolId/teaching-assignments/:assignmentId", requireA
   }
 });
 
+app.put("/api/schools/:schoolId/form-masters", requireAuth, async (request, response) => {
+  const { schoolId } = request.params;
+  const classId = request.body?.classId;
+  const teacherUserId = request.body?.teacherUserId;
+  if (
+    !isUuid(schoolId)
+    || !isUuid(classId)
+    || typeof teacherUserId !== "string"
+    || !teacherUserId.trim()
+    || teacherUserId.length > 200
+  ) {
+    return response.status(400).json({ error: "Choose a valid class and active teacher as its form master." });
+  }
+
+  try {
+    const membershipRole = await getSchoolRole(schoolId, request.auth.userId);
+    if (!membershipRole) return response.status(404).json({ error: "School not found." });
+    if (membershipRole !== "admin") {
+      return response.status(403).json({ error: "Only a school administrator can assign form masters." });
+    }
+    const assignment = await saveSchoolFormMaster(schoolId, classId, teacherUserId.trim(), request.auth.userId);
+    if (!assignment) return response.status(400).json({ error: "The class or active teacher could not be found in this school." });
+    return response.json({ assignment });
+  } catch (error) {
+    return handleDatabaseError(error, response);
+  }
+});
+
+app.delete("/api/schools/:schoolId/form-masters/:classId", requireAuth, async (request, response) => {
+  const { schoolId, classId } = request.params;
+  if (!isUuid(schoolId) || !isUuid(classId)) {
+    return response.status(400).json({ error: "Enter a valid school and class." });
+  }
+
+  try {
+    const membershipRole = await getSchoolRole(schoolId, request.auth.userId);
+    if (!membershipRole) return response.status(404).json({ error: "School not found." });
+    if (membershipRole !== "admin") {
+      return response.status(403).json({ error: "Only a school administrator can remove form-master assignments." });
+    }
+    if (!await removeSchoolFormMaster(schoolId, classId)) {
+      return response.status(404).json({ error: "No form master is assigned to this class." });
+    }
+    return response.status(204).end();
+  } catch (error) {
+    return handleDatabaseError(error, response);
+  }
+});
+
+app.put("/api/schools/:schoolId/my-signature", requireAuth, async (request, response) => {
+  const { schoolId } = request.params;
+  const signatureData = normalizeSignatureData(request.body?.signatureData);
+  if (!isUuid(schoolId) || !signatureData) {
+    return response.status(400).json({ error: "Upload a valid PNG signature no larger than 64 KB and 1600 × 600 pixels." });
+  }
+
+  try {
+    const membershipRole = await getSchoolRole(schoolId, request.auth.userId);
+    if (!membershipRole) return response.status(404).json({ error: "School not found." });
+    if (!["admin", "teacher"].includes(membershipRole)) {
+      return response.status(403).json({ error: "Only a school administrator or assigned form master can upload a signature." });
+    }
+    const access = await getOwnSignatureAccess(schoolId, request.auth.userId, membershipRole);
+    if (!access.allowed) {
+      return response.status(403).json({
+        error: membershipRole === "admin"
+          ? "Only the school’s primary administrator can upload the principal signature."
+          : "Ask your school administrator to assign you as a form master before uploading your signature.",
+      });
+    }
+    const saved = await saveSchoolMemberSignature(schoolId, request.auth.userId, signatureData);
+    response.set("Cache-Control", "no-store");
+    return response.json({ signatureData: saved });
+  } catch (error) {
+    return handleDatabaseError(error, response);
+  }
+});
+
+app.delete("/api/schools/:schoolId/my-signature", requireAuth, async (request, response) => {
+  const { schoolId } = request.params;
+  if (!isUuid(schoolId)) return response.status(400).json({ error: "Enter a valid school." });
+
+  try {
+    const membershipRole = await getSchoolRole(schoolId, request.auth.userId);
+    if (!membershipRole) return response.status(404).json({ error: "School not found." });
+    if (!["admin", "teacher"].includes(membershipRole)) {
+      return response.status(403).json({ error: "Only a school administrator or assigned form master can remove a signature." });
+    }
+    const access = await getOwnSignatureAccess(schoolId, request.auth.userId, membershipRole);
+    if (!access.allowed) return response.status(403).json({ error: "You are not authorized to manage a report signature." });
+    await removeSchoolMemberSignature(schoolId, request.auth.userId);
+    return response.status(204).end();
+  } catch (error) {
+    return handleDatabaseError(error, response);
+  }
+});
+
 app.get("/api/schools/:schoolId/grading-settings", requireAuth, async (request, response) => {
   const { schoolId } = request.params;
   if (!isUuid(schoolId)) return response.status(400).json({ error: "Enter a valid school." });
@@ -473,11 +627,14 @@ app.get("/api/schools/:schoolId/result-sheet", requireAuth, async (request, resp
           classPosition: null,
         }))
         : published.rows;
+      const reportSignaturesByClass = await getSchoolReportSignatures(schoolId, [classId]);
+      response.set("Cache-Control", "no-store");
       return response.json({
         schoolClass,
         term,
         rows,
         published: published.publication,
+        reportSignatures: reportSignaturesByClass[classId] || null,
       });
     }
 
@@ -537,7 +694,33 @@ app.get("/api/schools/:schoolId/my-results", requireAuth, async (request, respon
     const results = membershipRole === "parent"
       ? await listParentPublishedResultSheets(schoolId, request.auth.userId)
       : await listStudentPublishedResultSheets(schoolId, request.auth.userId);
-    return response.json(results);
+    const sheets = membershipRole === "parent"
+      ? results.children.flatMap((child) => child.sheets)
+      : results.sheets;
+    const reportSignaturesByClass = await getSchoolReportSignatures(
+      schoolId,
+      sheets.map((sheet) => sheet.classId),
+    );
+    const withSignatures = membershipRole === "parent"
+      ? {
+        ...results,
+        children: results.children.map((child) => ({
+          ...child,
+          sheets: child.sheets.map((sheet) => ({
+            ...sheet,
+            reportSignatures: reportSignaturesByClass[sheet.classId] || null,
+          })),
+        })),
+      }
+      : {
+        ...results,
+        sheets: results.sheets.map((sheet) => ({
+          ...sheet,
+          reportSignatures: reportSignaturesByClass[sheet.classId] || null,
+        })),
+      };
+    response.set("Cache-Control", "no-store");
+    return response.json(withSignatures);
   } catch (error) {
     return handleDatabaseError(error, response);
   }
@@ -1022,6 +1205,28 @@ function handleDatabaseError(error, response) {
   return response.status(500).json({
     error: "We couldn’t complete the school request. Please try again.",
   });
+}
+
+async function getOwnSignatureAccess(schoolId, userId, membershipRole) {
+  if (membershipRole === "admin") {
+    const principal = await getSchoolPrincipalUser(schoolId);
+    return {
+      allowed: principal?.userId === userId,
+      signerRole: "Principal",
+      principalName: principal?.name || "",
+      formMasterClasses: [],
+    };
+  }
+  if (membershipRole === "teacher") {
+    const formMasterClasses = await listSchoolFormMasterClasses(schoolId, userId);
+    return {
+      allowed: formMasterClasses.length > 0,
+      signerRole: "Form master",
+      principalName: "",
+      formMasterClasses,
+    };
+  }
+  return { allowed: false, signerRole: "", principalName: "", formMasterClasses: [] };
 }
 
 function isUuid(value) {

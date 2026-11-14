@@ -226,6 +226,44 @@ async function getReadyDatabase() {
           ON school_teaching_assignments (school_id, teacher_user_id, class_id)
         `,
         database.sql`
+          CREATE TABLE IF NOT EXISTS school_form_masters (
+            school_id UUID NOT NULL,
+            class_id UUID NOT NULL,
+            teacher_user_id TEXT NOT NULL,
+            assigned_by TEXT NOT NULL,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            PRIMARY KEY (school_id, class_id),
+            CONSTRAINT school_form_masters_class_fk
+              FOREIGN KEY (school_id, class_id)
+              REFERENCES school_classes(school_id, id) ON DELETE CASCADE,
+            CONSTRAINT school_form_masters_teacher_fk
+              FOREIGN KEY (school_id, teacher_user_id)
+              REFERENCES school_members(school_id, user_id) ON DELETE CASCADE
+          )
+        `,
+        database.sql`
+          ALTER TABLE school_form_masters
+          DROP CONSTRAINT IF EXISTS school_form_masters_assigned_by_fk
+        `,
+        database.sql`
+          CREATE INDEX IF NOT EXISTS school_form_masters_teacher_idx
+          ON school_form_masters (school_id, teacher_user_id, class_id)
+        `,
+        database.sql`
+          CREATE TABLE IF NOT EXISTS school_member_signatures (
+            school_id UUID NOT NULL,
+            user_id TEXT NOT NULL,
+            signature_data TEXT NOT NULL
+              CHECK (length(signature_data) <= 88000 AND signature_data LIKE 'data:image/png;base64,%'),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            PRIMARY KEY (school_id, user_id),
+            CONSTRAINT school_member_signatures_member_fk
+              FOREIGN KEY (school_id, user_id)
+              REFERENCES school_members(school_id, user_id) ON DELETE CASCADE
+          )
+        `,
+        database.sql`
           CREATE TABLE IF NOT EXISTS school_students (
             id UUID PRIMARY KEY,
             school_id UUID NOT NULL REFERENCES schools(id) ON DELETE CASCADE,
@@ -1609,6 +1647,7 @@ export async function listStudentPublishedResultSheets(schoolId, userId) {
 
   const rows = await sql`
     SELECT p.id AS "publicationId", p.term, p.academic_year AS "academicYear",
+           p.class_id AS "classId",
            p.published_at AS "publishedAt", c.grade, c.section,
            r.admission_number AS "admissionNumber", r.first_name AS "firstName",
            r.last_name AS "lastName", r.subject_name AS subject,
@@ -1632,6 +1671,7 @@ export async function listStudentPublishedResultSheets(schoolId, userId) {
     if (!sheet) {
       sheet = {
         id: row.publicationId,
+        classId: row.classId,
         term: row.term,
         academicYear: row.academicYear,
         publishedAt: row.publishedAt,
@@ -1678,7 +1718,7 @@ export async function listParentPublishedResultSheets(schoolId, userId) {
 
   const rows = await sql`
     SELECT r.student_id AS "studentId", p.id AS "publicationId",
-           p.term, p.academic_year AS "academicYear",
+           p.class_id AS "classId", p.term, p.academic_year AS "academicYear",
            p.published_at AS "publishedAt", c.grade, c.section,
            r.admission_number AS "admissionNumber", r.first_name AS "firstName",
            r.last_name AS "lastName", r.subject_name AS subject,
@@ -1705,6 +1745,7 @@ export async function listParentPublishedResultSheets(schoolId, userId) {
     if (!sheet) {
       sheet = {
         id: row.publicationId,
+        classId: row.classId,
         term: row.term,
         academicYear: row.academicYear,
         publishedAt: row.publishedAt,
@@ -1748,6 +1789,184 @@ export async function listSchoolTeachers(schoolId) {
     WHERE school_id = ${schoolId} AND role = 'teacher' AND email IS NOT NULL
     ORDER BY display_name, email
   `;
+}
+
+export async function getSchoolPrincipalUser(schoolId) {
+  const sql = await getReadyDatabase();
+  const [principal] = await sql`
+    SELECT user_id AS "userId", COALESCE(display_name, email) AS name
+    FROM school_members
+    WHERE school_id = ${schoolId} AND role = 'admin'
+    ORDER BY created_at, user_id
+    LIMIT 1
+  `;
+  return principal ?? null;
+}
+
+export async function listSchoolFormMasters(schoolId) {
+  const sql = await getReadyDatabase();
+  return sql`
+    SELECT f.class_id AS "classId", c.grade, c.section,
+           c.academic_year AS "academicYear",
+           f.teacher_user_id AS "teacherUserId",
+           COALESCE(m.display_name, m.email) AS "teacherName",
+           m.email AS "teacherEmail"
+    FROM school_form_masters f
+    JOIN school_classes c
+      ON c.school_id = f.school_id AND c.id = f.class_id
+    JOIN school_members m
+      ON m.school_id = f.school_id AND m.user_id = f.teacher_user_id
+    WHERE f.school_id = ${schoolId}
+    ORDER BY c.grade, c.section, c.academic_year
+  `;
+}
+
+export async function saveSchoolFormMaster(schoolId, classId, teacherUserId, assignedBy) {
+  const sql = await getReadyDatabase();
+  const [previous] = await sql`
+    SELECT teacher_user_id AS "teacherUserId"
+    FROM school_form_masters
+    WHERE school_id = ${schoolId} AND class_id = ${classId}
+  `;
+  const [saved] = await sql`
+    INSERT INTO school_form_masters
+      (school_id, class_id, teacher_user_id, assigned_by)
+    SELECT c.school_id, c.id, teacher.user_id, ${assignedBy}
+    FROM school_classes c
+    JOIN school_members teacher
+      ON teacher.school_id = c.school_id
+      AND teacher.user_id = ${teacherUserId}
+      AND teacher.role = 'teacher'
+    WHERE c.school_id = ${schoolId} AND c.id = ${classId}
+    ON CONFLICT (school_id, class_id) DO UPDATE
+    SET teacher_user_id = EXCLUDED.teacher_user_id,
+        assigned_by = EXCLUDED.assigned_by,
+        updated_at = NOW()
+    RETURNING class_id AS "classId", teacher_user_id AS "teacherUserId"
+  `;
+  if (saved && previous?.teacherUserId !== saved.teacherUserId) {
+    await removeOrphanedFormMasterSignature(sql, schoolId, previous?.teacherUserId);
+  }
+  return saved ?? null;
+}
+
+export async function removeSchoolFormMaster(schoolId, classId) {
+  const sql = await getReadyDatabase();
+  const [removed] = await sql`
+    DELETE FROM school_form_masters
+    WHERE school_id = ${schoolId} AND class_id = ${classId}
+    RETURNING teacher_user_id AS "teacherUserId"
+  `;
+  if (removed) {
+    await removeOrphanedFormMasterSignature(sql, schoolId, removed.teacherUserId);
+  }
+  return Boolean(removed);
+}
+
+async function removeOrphanedFormMasterSignature(sql, schoolId, teacherUserId) {
+  if (!teacherUserId) return;
+  await sql`
+    DELETE FROM school_member_signatures member_signature
+    WHERE member_signature.school_id = ${schoolId}
+      AND member_signature.user_id = ${teacherUserId}
+      AND NOT EXISTS (
+        SELECT 1
+        FROM school_form_masters assignment
+        WHERE assignment.school_id = ${schoolId}
+          AND assignment.teacher_user_id = ${teacherUserId}
+      )
+  `;
+}
+
+export async function listSchoolFormMasterClasses(schoolId, teacherUserId) {
+  const sql = await getReadyDatabase();
+  return sql`
+    SELECT c.id AS "classId", c.grade, c.section,
+           c.academic_year AS "academicYear"
+    FROM school_form_masters f
+    JOIN school_classes c
+      ON c.school_id = f.school_id AND c.id = f.class_id
+    WHERE f.school_id = ${schoolId}
+      AND f.teacher_user_id = ${teacherUserId}
+    ORDER BY c.grade, c.section, c.academic_year
+  `;
+}
+
+export async function getSchoolMemberSignature(schoolId, userId) {
+  const sql = await getReadyDatabase();
+  const [signature] = await sql`
+    SELECT signature_data AS "signatureData"
+    FROM school_member_signatures
+    WHERE school_id = ${schoolId} AND user_id = ${userId}
+  `;
+  return signature?.signatureData ?? null;
+}
+
+export async function saveSchoolMemberSignature(schoolId, userId, signatureData) {
+  const sql = await getReadyDatabase();
+  const [saved] = await sql`
+    INSERT INTO school_member_signatures (school_id, user_id, signature_data)
+    VALUES (${schoolId}, ${userId}, ${signatureData})
+    ON CONFLICT (school_id, user_id) DO UPDATE
+    SET signature_data = EXCLUDED.signature_data,
+        updated_at = NOW()
+    RETURNING signature_data AS "signatureData"
+  `;
+  return saved?.signatureData ?? null;
+}
+
+export async function removeSchoolMemberSignature(schoolId, userId) {
+  const sql = await getReadyDatabase();
+  const [removed] = await sql`
+    DELETE FROM school_member_signatures
+    WHERE school_id = ${schoolId} AND user_id = ${userId}
+    RETURNING user_id
+  `;
+  return Boolean(removed);
+}
+
+export async function getSchoolReportSignatures(schoolId, classIds) {
+  const sql = await getReadyDatabase();
+  const signatures = {};
+  for (const classId of new Set(classIds)) {
+    const [row] = await sql`
+      SELECT c.id AS "classId",
+             principal.display_name AS "principalName",
+             principal.email AS "principalEmail",
+             principal_signature.signature_data AS "principalSignature",
+             COALESCE(form_master.display_name, form_master.email) AS "formMasterName",
+             form_master_signature.signature_data AS "formMasterSignature"
+      FROM school_classes c
+      LEFT JOIN LATERAL (
+        SELECT member.user_id, member.display_name, member.email
+        FROM school_members member
+        WHERE member.school_id = c.school_id AND member.role = 'admin'
+        ORDER BY member.created_at, member.user_id
+        LIMIT 1
+      ) principal ON TRUE
+      LEFT JOIN school_member_signatures principal_signature
+        ON principal_signature.school_id = c.school_id
+        AND principal_signature.user_id = principal.user_id
+      LEFT JOIN school_form_masters assignment
+        ON assignment.school_id = c.school_id AND assignment.class_id = c.id
+      LEFT JOIN school_members form_master
+        ON form_master.school_id = assignment.school_id
+        AND form_master.user_id = assignment.teacher_user_id
+      LEFT JOIN school_member_signatures form_master_signature
+        ON form_master_signature.school_id = assignment.school_id
+        AND form_master_signature.user_id = assignment.teacher_user_id
+      WHERE c.school_id = ${schoolId} AND c.id = ${classId}
+    `;
+    if (row) {
+      signatures[classId] = {
+        principalName: row.principalName || row.principalEmail || "",
+        principalSignature: row.principalSignature,
+        formMasterName: row.formMasterName || "",
+        formMasterSignature: row.formMasterSignature,
+      };
+    }
+  }
+  return signatures;
 }
 
 export async function listTeachingAssignments(schoolId, teacherUserId = null) {
