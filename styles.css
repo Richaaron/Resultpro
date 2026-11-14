@@ -275,6 +275,17 @@ select.text-input { color: #58645a; }
 .platform-directory-heading p { margin: 4px 0 0; color: #89938b; font-size: 10px; }
 .platform-directory-table { min-width: 900px; }
 .platform-directory-table td > strong { color: #4f5b52; font-size: 10px; font-weight: 600; }
+.platform-pricing-panel { display: grid; gap: 12px; }
+.platform-billing-notice { padding: 10px 12px; border: 1px solid #e8dfc9; border-radius: 8px; background: #faf6ea; color: #7e6735; font-size: 10px; line-height: 1.5; }
+.platform-pricing-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.platform-plan-card { display: grid; gap: 9px; min-width: 0; padding: 15px; border: 1px solid #e6ebe4; border-radius: 10px; background: #fbfcfa; }
+.platform-plan-name { color: #4b7653; font-size: 11px; font-weight: 700; }
+.platform-plan-price { color: #28372d; font: 800 20px/1.3 var(--font-display); }
+.platform-plan-price small { color: #828d84; font: 500 10px var(--font-body); }
+.platform-plan-cap { color: #69756c; font-size: 10px; }
+.platform-plan-annual { display: grid; gap: 3px; margin-top: 3px; padding-top: 9px; border-top: 1px solid #e6ebe4; color: #778178; font-size: 9px; }
+.platform-plan-annual strong { color: #4f5b52; font-size: 10px; }
+.platform-plan-annual small { color: #4b7653; font-size: 9px; font-weight: 700; }
 .curriculum-page > .term-banner, .curriculum-page > .stats-grid, .curriculum-page > .main-grid, .curriculum-page > .results-panel,
 .students-page > .term-banner, .students-page > .stats-grid, .students-page > .main-grid, .students-page > .results-panel,
 .teachers-page > .term-banner, .teachers-page > .stats-grid, .teachers-page > .main-grid, .teachers-page > .results-panel,
@@ -453,6 +464,7 @@ select.text-input { color: #58645a; }
   .main-content { margin-left: 0; }.topbar { height: 59px; padding: 0 22px; }.mobile-menu { display: grid; place-items: center; width: 30px; height: 30px; color: #58645a; }
   .breadcrumb { margin-right: auto; margin-left: 10px; }.page-content { padding: 29px 22px 20px; }
   .main-grid { grid-template-columns: minmax(0, 1.3fr) minmax(260px, 1fr); }
+  .platform-pricing-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 680px) {
   .topbar { padding: 0 15px; }.topbar-actions { gap: 8px; }.role-control > span:first-child { display: none; }.role-select { gap: 5px; padding: 6px 7px; }.role-menu { right: -80px; }
@@ -466,6 +478,7 @@ select.text-input { color: #58645a; }
   .curriculum-panel, .grading-settings-panel { padding: 15px; }.curriculum-heading { align-items: flex-start; flex-direction: column; }.grade-picker { width: 100%; }.curriculum-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }.grading-policy-grid { grid-template-columns: 1fr; }
   .class-create-form, .student-create-form, .assignment-form, .assessment-create-form, .student-import-controls { grid-template-columns: repeat(2, minmax(0, 1fr)); }.class-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }.student-filters { width: 100%; }.student-filters .search-box { flex: 1; }.student-filters .text-input { width: 130px; }
   .student-report-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .platform-pricing-grid { grid-template-columns: 1fr; }
   .grading-band-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }.grading-band-remove { grid-column: 1 / -1; justify-self: start; }
 }
 @media (max-width: 390px) {
@@ -796,6 +809,12 @@ h1, .panel-heading h2, .stat-number { color: #f0f7f1; }
 .panel-heading p { color: #b3c2b6; }
 .platform-directory-heading h3 { color: #e8f4e9; }
 .platform-directory-heading p { color: #a9b9ac; }
+.platform-billing-notice { border-color: #514629; background: #2b2619; color: #e3cb8b; }
+.platform-plan-card { border-color: #293d30; background: #14231a; }
+.platform-plan-name, .platform-plan-annual small { color: #a2d6a5; }
+.platform-plan-price, .platform-plan-annual strong { color: #e8f4e9; }
+.platform-plan-price small, .platform-plan-cap, .platform-plan-annual { color: #a9b9ac; }
+.platform-plan-annual { border-top-color: #304636; }
 .term-banner { border-color: #294632; background: linear-gradient(105deg, #14291b, #142219); box-shadow: var(--shadow-card); }
 .term-icon { background: #213e28; color: #a6dea3; }
 .term-copy strong { color: #e7f4e8; }

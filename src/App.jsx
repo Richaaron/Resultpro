@@ -5,6 +5,7 @@ import EducationBackground from "./EducationBackground.jsx";
 import ExplainerVideo from "./ExplainerVideo.jsx";
 import { authClient, pendingSchoolNameKey } from "./auth.js";
 import { curriculumByGrade, curriculumGrades } from "../shared/curriculum.js";
+import { subscriptionPlans } from "../shared/billing-plans.js";
 import {
   defaultGradingSettings,
   groupPublishedResultRowsByStudent,
@@ -1841,6 +1842,19 @@ function App() {
                 </tbody></table></div>}
               </>}
               {!loadingPlatformOverview && !platformOverviewError && !platformOverviewForUser && <p className="empty-search">Platform operations are unavailable. Refresh to try again.</p>}
+            </section>
+            <section className="panel platform-pricing-panel">
+              <div className="panel-heading"><div><h2>Approved pricing proposal</h2><p>All tiers include Aster’s current school workflows; only active-student capacity differs.</p></div></div>
+              <p className="platform-billing-notice" role="status">Checkout and student-cap enforcement are disabled until a payment provider is selected.</p>
+              <div className="platform-pricing-grid">
+                {subscriptionPlans.map((plan) => <article className="platform-plan-card" key={plan.id}>
+                  <span className="platform-plan-name">{plan.name}</span>
+                  <strong className="platform-plan-price">₦{plan.monthlyPrice.toLocaleString("en-NG")}<small> / month</small></strong>
+                  <span className="platform-plan-cap">Up to {plan.maxActiveStudents.toLocaleString("en-NG")} active students</span>
+                  <div className="platform-plan-annual"><span>Annual</span><strong>₦{plan.annualPrice.toLocaleString("en-NG")} / year</strong><small>10% discount</small></div>
+                </article>)}
+              </div>
+              <p className="field-hint">Schools above 1,500 active students will need a custom quote. Prices are per school, in Nigerian naira.</p>
             </section>
           </section>}
 
