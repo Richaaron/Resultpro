@@ -314,7 +314,9 @@ function App() {
     : 0;
   const platformSchoolActionBusy = Boolean(platformBillingSaving || platformSchoolStatusSaving);
   const current = portalData[role];
-  const visibleNavigation = navigation.filter(([id]) => role === "admin" || (role === "teacher" && ["overview", "results", "attendance", "classes"].includes(id)) || (["student", "parent"].includes(role) && ["overview", "results"].includes(id)));
+  const visibleNavigation = platformAdmin && !school
+    ? []
+    : navigation.filter(([id]) => role === "admin" || (role === "teacher" && ["overview", "results", "attendance", "classes"].includes(id)) || (["student", "parent"].includes(role) && ["overview", "results"].includes(id)));
   const dashboardForCurrentSchool = dashboardData && dashboardData.schoolId === school?.id ? dashboardData : null;
   const dashboardErrorForCurrentSchool = dashboardError && dashboardError.schoolId === school?.id
     ? dashboardError.message
@@ -524,6 +526,12 @@ function App() {
         });
       return () => { active = false; };
   }, [session?.user?.email, session?.user?.emailVerified, verifiedEmail]);
+
+  useEffect(() => {
+    if (platformAdmin && !loadingSchools && schools.length === 0) {
+      setPage("platform");
+    }
+  }, [platformAdmin, loadingSchools, schools.length]);
 
   useEffect(() => {
       let active = true;
@@ -1939,19 +1947,24 @@ function App() {
             </select>
           </label>
           <button className="school-create-link" type="button" onClick={showSetup}>＋ Add another school</button>
-        </> : <button className="school-switcher" type="button" onClick={showSetup} disabled={loadingSchools}>
+        </> : platformAdmin ? <div className="school-switcher">
+          <span className="school-avatar">◈</span>
+          <span className="school-switcher-copy"><strong>Platform account</strong><small>No school profile linked</small></span>
+        </div> : <button className="school-switcher" type="button" onClick={showSetup} disabled={loadingSchools}>
           <span className="school-avatar">＋</span>
           <span className="school-switcher-copy"><strong>{loadingSchools ? "Loading schools…" : "Set up your school"}</strong><small>Create your school profile</small></span><span className="chevron">⌄</span>
         </button>}
-        <div className="nav-label">WORKSPACE</div>
-        <nav className="main-nav" aria-label="Main navigation">
-          {visibleNavigation.slice(0, role === "admin" ? 6 : visibleNavigation.length).map(([id, label, icon]) => (
-            <button key={id} className={`nav-item ${page === id ? "active" : ""}`} type="button" onClick={() => { setPage(id); setSidebarOpen(false); }}>
-              <span className="nav-symbol">{icon}</span><span>{label}</span>
-            </button>
-          ))}
-        </nav>
-        {role === "admin" && <>
+        {visibleNavigation.length > 0 && <>
+          <div className="nav-label">WORKSPACE</div>
+          <nav className="main-nav" aria-label="Main navigation">
+            {visibleNavigation.slice(0, role === "admin" ? 6 : visibleNavigation.length).map(([id, label, icon]) => (
+              <button key={id} className={`nav-item ${page === id ? "active" : ""}`} type="button" onClick={() => { setPage(id); setSidebarOpen(false); }}>
+                <span className="nav-symbol">{icon}</span><span>{label}</span>
+              </button>
+            ))}
+          </nav>
+        </>}
+        {role === "admin" && school && <>
           <div className="nav-label nav-label-lower">SCHOOL</div>
           <nav className="main-nav" aria-label="School settings">
             {visibleNavigation.slice(6).map(([id, label, icon]) => <button key={id} className={`nav-item ${page === id ? "active" : ""}`} type="button" onClick={() => { setPage(id); setSidebarOpen(false); }}><span className="nav-symbol">{icon}</span><span>{label}</span></button>)}

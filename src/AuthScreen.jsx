@@ -107,10 +107,19 @@ export default function AuthScreen({ authClient, notice, initialEmail = "", veri
 
   async function submit(event) {
     event.preventDefault();
-    const registeringSchool = mode === "sign-up" && !hasInvitation;
-    if (registeringSchool && schoolName.trim().length < 2) {
-      setError("Enter your school name to continue.");
+    const registeringAccount = mode === "sign-up" && !hasInvitation;
+    const schoolNameForSetup = schoolName.trim();
+    if (registeringAccount && schoolNameForSetup && schoolNameForSetup.length < 2) {
+      setError("Enter at least two characters for your school name, or leave it blank.");
       return;
+    }
+    if (registeringAccount && !schoolNameForSetup) {
+      try {
+        window.sessionStorage.removeItem(pendingSchoolNameKey);
+      } catch {
+        setError("Could not clear a previously saved school name. Please enable session storage and try again.");
+        return;
+      }
     }
     setPending(true);
     setError("");
@@ -122,10 +131,10 @@ export default function AuthScreen({ authClient, notice, initialEmail = "", veri
         : await authClient.signIn.email({ email: email.trim(), password });
       if (result.error) throw new Error(result.error.message || "Authentication failed.");
 
-      if (registeringSchool) setPendingSchoolSetup(true);
-      if (registeringSchool && schoolName.trim()) {
+      if (registeringAccount) setPendingSchoolSetup(Boolean(schoolNameForSetup));
+      if (schoolNameForSetup) {
         try {
-          window.sessionStorage.setItem(pendingSchoolNameKey, schoolName.trim());
+          window.sessionStorage.setItem(pendingSchoolNameKey, schoolNameForSetup);
         } catch {
           schoolNameSaved = false;
         }
@@ -133,10 +142,13 @@ export default function AuthScreen({ authClient, notice, initialEmail = "", veri
 
       if (mode === "sign-up" && result.data?.user?.emailVerified !== true) {
         setVerifyingEmail(true);
-        setMessage(`Enter the verification code sent to your email before continuing.${registeringSchool && !schoolNameSaved ? " Keep this page open so we can carry your school name into setup." : ""}`);
+        setMessage(`Enter the verification code sent to your email before continuing.${schoolNameForSetup && !schoolNameSaved ? " Keep this page open so we can carry your school name into setup." : ""}`);
         return;
       }
-      await onAuthenticated({ schoolName: pendingSchoolSetup || registeringSchool ? schoolName.trim() : "", signInData: result.data });
+      await onAuthenticated({
+        schoolName: registeringAccount || pendingSchoolSetup ? schoolNameForSetup : "",
+        signInData: result.data,
+      });
     } catch (requestError) {
       setError(requestError.message || "We couldn’t complete that request. Please try again.");
     } finally {
@@ -262,7 +274,7 @@ export default function AuthScreen({ authClient, notice, initialEmail = "", veri
                 : mode === "sign-up"
                   ? hasInvitation
                     ? "Create your account to accept your school invitation."
-                    : "Create your account and start setting up your school."
+                    : "Create your account. School setup is optional; platform-owner access requires an approved email address."
                   : "Sign in to continue to your school workspace."}
         </p>
         {notice && <p className="auth-message" role="status">{notice}</p>}
@@ -302,8 +314,8 @@ export default function AuthScreen({ authClient, notice, initialEmail = "", veri
         ) : (
           <form className="auth-form" onSubmit={submit}>
             {mode === "sign-up" && !hasInvitation && <>
-              <label className="field-label" htmlFor="authSchoolName">School name</label>
-              <input className="text-input" id="authSchoolName" autoComplete="organization" required minLength={2} maxLength={120} value={schoolName} onChange={(event) => setSchoolName(event.target.value)} placeholder="e.g. Harborview Academy" />
+              <label className="field-label" htmlFor="authSchoolName">School name (optional)</label>
+              <input className="text-input" id="authSchoolName" autoComplete="organization" minLength={2} maxLength={120} value={schoolName} onChange={(event) => setSchoolName(event.target.value)} placeholder="e.g. Harborview Academy" />
             </>}
             {mode === "sign-up" && <>
               <label className="field-label" htmlFor="authName">Your name</label>

@@ -43,7 +43,7 @@ Invitation emails are sent by the API through Resend. Keep the Resend API key on
 
 ## School account setup
 
-Choose **Create an account**, enter the administrator name, school name, email, and password, then verify the email. After signing in, complete the school type, country, school email, and portal-access details. The first verified account to create the school profile becomes its administrator and can then use the school dashboard. The signup school name is kept in the browser session to prefill setup; invitation signups skip this field.
+Choose **Create an account**, enter your name, email, and password, then verify the email. School name is optional: enter it to prefill school setup, or leave it blank to continue without a school profile. Platform-owner access is granted only to verified emails on the server allowlist. Invitation signups skip school setup.
 
 Every school profile receives its own workspace URL, such as `/school/harborview-academy-abc123`. Creating a school opens that URL, and administrators can copy it from the workspace. It is a school-specific entry point, not a public-results link: visitors must sign in with a verified account that belongs to that school. The selected school ID is used for all workspace data requests, and server-side membership checks prevent one school's teachers or admins from reading another school's records.
 
