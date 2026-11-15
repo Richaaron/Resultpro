@@ -1,16 +1,16 @@
 import React from "react";
 
 const ELEMENTS = [
-  { kind: "book", left: "6%", top: "14%", size: 34, delay: 0, duration: 19, drift: 28, rotate: -12 },
-  { kind: "cap", left: "82%", top: "10%", size: 38, delay: 1.4, duration: 22, drift: 34, rotate: 14 },
-  { kind: "pencil", left: "14%", top: "68%", size: 30, delay: 0.8, duration: 17, drift: 26, rotate: 32 },
-  { kind: "star", left: "74%", top: "40%", size: 22, delay: 2.1, duration: 15, drift: 22, rotate: 0 },
-  { kind: "bulb", left: "46%", top: "12%", size: 28, delay: 1.1, duration: 24, drift: 30, rotate: -8 },
-  { kind: "atom", left: "90%", top: "72%", size: 36, delay: 2.6, duration: 26, drift: 36, rotate: 0 },
-  { kind: "math", left: "30%", top: "40%", size: 24, delay: 1.8, duration: 18, drift: 20, rotate: 18 },
-  { kind: "ruler", left: "60%", top: "82%", size: 30, delay: 0.4, duration: 21, drift: 24, rotate: -22 },
-  { kind: "book", left: "38%", top: "88%", size: 26, delay: 3, duration: 20, drift: 22, rotate: 10 },
-  { kind: "cap", left: "8%", top: "38%", size: 26, delay: 2.2, duration: 23, drift: 28, rotate: -16 },
+  { kind: "book", left: "6%", top: "14%", size: 34, delay: 0, duration: 32, drift: 14, rotate: -6 },
+  { kind: "cap", left: "82%", top: "10%", size: 38, delay: 1.4, duration: 36, drift: 16, rotate: 7 },
+  { kind: "pencil", left: "14%", top: "68%", size: 30, delay: 0.8, duration: 30, drift: 13, rotate: 9 },
+  { kind: "star", left: "74%", top: "40%", size: 22, delay: 2.1, duration: 28, drift: 11, rotate: 0 },
+  { kind: "bulb", left: "46%", top: "12%", size: 28, delay: 1.1, duration: 38, drift: 15, rotate: -5 },
+  { kind: "atom", left: "90%", top: "72%", size: 36, delay: 2.6, duration: 40, drift: 17, rotate: 0 },
+  { kind: "math", left: "30%", top: "40%", size: 24, delay: 1.8, duration: 30, drift: 10, rotate: 6 },
+  { kind: "ruler", left: "60%", top: "82%", size: 30, delay: 0.4, duration: 34, drift: 12, rotate: -7 },
+  { kind: "book", left: "38%", top: "88%", size: 26, delay: 3, duration: 36, drift: 11, rotate: 5 },
+  { kind: "cap", left: "8%", top: "38%", size: 26, delay: 2.2, duration: 38, drift: 14, rotate: -8 },
 ];
 
 function EducationIcon({ kind, size }) {
@@ -86,6 +86,12 @@ export default function EducationBackground({ variant = "light" }) {
   return (
     <div className={`education-bg education-bg--${variant}`} aria-hidden="true">
       <div className="education-bg__grid" />
+      <div className="education-bg__result-card">
+        <span className="education-bg__card-heading"><i /><i /></span>
+        <span className="education-bg__card-chart"><i /><i /><i /><i /></span>
+        <span className="education-bg__card-lines"><i /><i /><i /></span>
+      </div>
+      <div className="education-bg__orbit"><i /></div>
       {ELEMENTS.map((element, index) => (
         <span
           key={index}
