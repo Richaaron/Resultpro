@@ -6,6 +6,7 @@ const invitation = {
   email: "teacher@example.com",
   role: "teacher",
   teacherName: "Ada Okafor",
+  teacherCode: "TCH-1234567890ABCDEF",
   schoolName: "Harborview Academy",
   schoolSlug: "harborview-academy-abc123",
   token: "A".repeat(43),
@@ -45,6 +46,8 @@ test("sends a role-specific invitation with the school activation URL", async ()
   assert.deepEqual(payload.to, [invitation.email]);
   assert.equal(payload.from, configuration.from);
   assert.match(payload.text, /https:\/\/aster\.example\.com\/school\/harborview-academy-abc123#invite=A{43}/);
+  assert.match(payload.text, /Your teacher ID is TCH-1234567890ABCDEF/);
+  assert.match(payload.text, /password you create/);
   assert.match(payload.html, /Hello Ada Okafor/);
 });
 

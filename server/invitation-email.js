@@ -50,12 +50,19 @@ export async function sendInvitationEmail(invitation, {
   const schoolName = escapeHtml(invitation.schoolName);
   const safeGreeting = escapeHtml(greeting);
   const safeUrl = escapeHtml(activationUrl);
+  const safeTeacherCode = invitation.role === "teacher" ? escapeHtml(invitation.teacherCode) : "";
   const roleLabel = invitation.role === "teacher"
     ? "teacher"
     : invitation.role === "parent" ? "parent/guardian" : "student";
+  const teacherDetails = invitation.role === "teacher"
+    ? `Your teacher ID is ${invitation.teacherCode}. After activation, sign in with this ID or your verified email address and the password you create.`
+    : "";
+  const teacherDetailsHtml = invitation.role === "teacher"
+    ? `<p>Your teacher ID is <strong>${safeTeacherCode}</strong>. After activation, sign in with this ID or your verified email address and the password you create.</p>`
+    : "";
   const subject = `You are invited to join ${invitation.schoolName} on Aster`;
-  const text = `${greeting}\n\nYou have been invited to join ${invitation.schoolName}'s ${roleLabel} portal on Aster. Accept this invitation within seven days:\n\n${activationUrl}\n\nIf you were not expecting this invitation, you can ignore this email.`;
-  const html = `<p>${safeGreeting}</p><p>You have been invited to join ${schoolName}'s ${roleLabel} portal on Aster. Accept this invitation within seven days:</p><p><a href="${safeUrl}">Accept invitation</a></p><p>If you were not expecting this invitation, you can ignore this email.</p>`;
+  const text = `${greeting}\n\nYou have been invited to join ${invitation.schoolName}'s ${roleLabel} portal on Aster. Accept this invitation within seven days:\n\n${activationUrl}\n\n${teacherDetails ? `${teacherDetails}\n\n` : ""}If you were not expecting this invitation, you can ignore this email.`;
+  const html = `<p>${safeGreeting}</p><p>You have been invited to join ${schoolName}'s ${roleLabel} portal on Aster. Accept this invitation within seven days:</p><p><a href="${safeUrl}">Accept invitation</a></p>${teacherDetailsHtml}<p>If you were not expecting this invitation, you can ignore this email.</p>`;
 
   let response;
   try {

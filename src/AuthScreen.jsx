@@ -85,7 +85,7 @@ function AuthIllustration() {
   );
 }
 
-export default function AuthScreen({ authClient, notice, initialEmail = "", initialMode = "sign-in", verificationRequired = false, onAuthenticated, onWatchVideo, onDemo, resetToken = "" }) {
+export default function AuthScreen({ authClient, notice, initialEmail = "", initialMode = "sign-in", verificationRequired = false, onAuthenticated, onWatchVideo, onDemo, resolveTeacherLogin, resetToken = "" }) {
   const [mode, setMode] = useState(initialMode);
   const [recovery, setRecovery] = useState(resetToken ? "reset" : "");
   const [name, setName] = useState("");
@@ -106,6 +106,14 @@ export default function AuthScreen({ authClient, notice, initialEmail = "", init
   const [error, setError] = useState("");
   const hasInvitation = new URLSearchParams(window.location.hash.slice(1)).has("invite");
   const showDemoEntry = Boolean(onDemo && !hasInvitation && !verifyingEmail && !recovery);
+
+  async function getLoginEmail(identifier) {
+    const teacherCode = identifier.trim().toUpperCase();
+    if (!teacherCode.startsWith("TCH-")) return identifier.trim();
+    if (!/^TCH-[A-F0-9]{16}$/.test(teacherCode)) throw new Error("Enter a valid teacher ID.");
+    if (!resolveTeacherLogin) throw new Error("Teacher ID sign-in is unavailable. Use your account email instead.");
+    return resolveTeacherLogin(teacherCode);
+  }
 
   async function submit(event) {
     event.preventDefault();
@@ -128,9 +136,10 @@ export default function AuthScreen({ authClient, notice, initialEmail = "", init
     setMessage("");
     try {
       let schoolNameSaved = true;
+      const loginEmail = mode === "sign-up" ? email.trim() : await getLoginEmail(email);
       const result = mode === "sign-up"
-        ? await authClient.signUp.email({ name: name.trim(), email: email.trim(), password })
-        : await authClient.signIn.email({ email: email.trim(), password });
+        ? await authClient.signUp.email({ name: name.trim(), email: loginEmail, password })
+        : await authClient.signIn.email({ email: loginEmail, password });
       if (result.error) throw new Error(result.error.message || "Authentication failed.");
 
       if (registeringAccount) setPendingSchoolSetup(Boolean(schoolNameForSetup));
@@ -213,12 +222,13 @@ export default function AuthScreen({ authClient, notice, initialEmail = "", init
     setError("");
     setMessage("");
     try {
+      const resetEmail = await getLoginEmail(email);
       const result = await authClient.requestPasswordReset({
-        email: email.trim(),
+        email: resetEmail,
         redirectTo: window.location.origin,
       });
       if (result.error) throw new Error(result.error.message || "Could not send the reset link.");
-      setMessage(`If an account exists for ${email.trim()}, a reset link is on its way. Check your inbox and spam folder.`);
+      setMessage("If an account exists for that sign-in ID, a reset link is on its way. Check the email address on the teacher account.");
     } catch (requestError) {
       setError(requestError.message || "We couldn’t send a reset link. Please try again.");
     } finally {
@@ -280,12 +290,12 @@ export default function AuthScreen({ authClient, notice, initialEmail = "", init
             : recovery === "reset"
               ? "Set a new password for your Aster account to regain access."
               : recovery === "request"
-                ? "Enter your account email and we’ll send you a link to reset your password."
+                ? "Enter your account email or teacher ID. We’ll send a reset link to the address on file."
                 : mode === "sign-up"
                   ? hasInvitation
                     ? "Create your account with the email that received your school invitation, then activate your access with a private password."
                     : "Create your account with your email and a private password; school setup is optional. After email verification, we’ll send your account reference and sign-in instructions."
-                  : "Sign in to continue to your school workspace."}
+                  : "Sign in with your email or teacher ID and password. New teachers must activate their invitation first."}
         </p>
         {notice && <p className="auth-message" role="status">{notice}</p>}
         {verifyingEmail ? (
@@ -316,8 +326,8 @@ export default function AuthScreen({ authClient, notice, initialEmail = "", init
           </form>
         ) : recovery === "request" ? (
           <form className="auth-form" onSubmit={requestReset}>
-            <label className="field-label" htmlFor="resetEmail">Email address</label>
-            <input className="text-input" id="resetEmail" type="email" autoComplete="email" required value={email} onChange={(event) => setEmail(event.target.value)} />
+            <label className="field-label" htmlFor="resetEmail">Email address or teacher ID</label>
+            <input className="text-input" id="resetEmail" type="text" autoComplete="username" required value={email} onChange={(event) => setEmail(event.target.value)} placeholder="Email address or teacher ID" />
             <button className="button button-primary auth-submit" type="submit" disabled={pending}>{pending ? "Sending…" : "Send reset link"}</button>
             <button className="auth-text-button" type="button" onClick={() => { setRecovery(""); setError(""); setMessage(""); }}>Back to sign in</button>
           </form>
@@ -331,8 +341,8 @@ export default function AuthScreen({ authClient, notice, initialEmail = "", init
               <label className="field-label" htmlFor="authName">Your name</label>
               <input className="text-input" id="authName" autoComplete="name" required maxLength={120} value={name} onChange={(event) => setName(event.target.value)} />
             </>}
-            <label className="field-label" htmlFor="authEmail">Email address</label>
-            <input className="text-input" id="authEmail" type="email" autoComplete="email" required value={email} onChange={(event) => setEmail(event.target.value)} />
+            <label className="field-label" htmlFor="authEmail">{mode === "sign-in" ? "Email address or teacher ID" : "Email address"}</label>
+            <input className="text-input" id="authEmail" type={mode === "sign-in" ? "text" : "email"} autoComplete={mode === "sign-in" ? "username" : "email"} required value={email} onChange={(event) => setEmail(event.target.value)} placeholder={mode === "sign-in" ? "name@school.com or TCH-…" : undefined} />
             <label className="field-label" htmlFor="authPassword">Password</label>
             <div className="password-field">
               <input className="text-input" id="authPassword" type={showPassword ? "text" : "password"} autoComplete={mode === "sign-up" ? "new-password" : "current-password"} minLength={8} required value={password} onChange={(event) => setPassword(event.target.value)} />

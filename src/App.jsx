@@ -2574,6 +2574,18 @@ function App() {
     }
   }
 
+  async function resolveTeacherLogin(teacherCode) {
+    const response = await fetch(apiUrl("/api/auth/teacher-login"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ teacherCode }),
+    });
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.error || "Could not resolve this teacher ID.");
+    if (typeof payload.email !== "string") throw new Error("The teacher login could not be resolved.");
+    return payload.email;
+  }
+
   async function restoreSession({ schoolName = "", signInData = null, newAccount = false } = {}) {
     const result = await authClient.getSession();
     if (result.error) throw new Error(result.error.message || "Could not load your account.");
@@ -2745,6 +2757,7 @@ function App() {
           initialEmail={session?.user?.email}
           verificationRequired={Boolean(session?.user && !session.user.emailVerified)}
           onAuthenticated={restoreSession}
+          resolveTeacherLogin={resolveTeacherLogin}
           onDemo={openDemo}
           onWatchVideo={() => setExplainerOpen(true)}
           resetToken={resetToken}
@@ -3353,7 +3366,7 @@ function App() {
 
           {page === "teachers" && role === "admin" && <section className="teacher-workspace">
             <section className="panel teacher-registration-panel">
-              <div className="panel-heading"><div><h2>Register a teacher</h2><p>Add the teacher’s name and email. Aster sends the teacher a seven-day activation link and emails you their staff ID. The teacher sets their own password securely.</p></div></div>
+              <div className="panel-heading"><div><h2>Register a teacher</h2><p>Add the teacher’s name and email. Aster sends the teacher a seven-day activation link and emails you their staff ID. After activating once, they can sign in with that ID and their own password.</p></div></div>
               <form className="invite-form" onSubmit={registerTeacher}>
                 <label className="field-label" htmlFor="teacherName">Teacher’s full name</label>
                 <input className="text-input" id="teacherName" autoComplete="name" required minLength={2} maxLength={120} value={teacherName} onChange={(event) => setTeacherName(event.target.value)} placeholder="e.g. Ada Okafor" />
@@ -3371,7 +3384,7 @@ function App() {
                 <input className="text-input" id="teacherCode" readOnly value={teacherRegistration.teacherCode} />
                 <label className="field-label" htmlFor="teacherActivationUrl">One-time activation link</label>
                 <div><input className="text-input" id="teacherActivationUrl" readOnly value={teacherRegistration.activationUrl} /><button className="button button-secondary" type="button" onClick={copyTeacherActivationLink}>Copy link</button></div>
-                <p className="field-hint">This seven-day link is a backup. Share it only with the registered teacher; they verify their email and create their own password. Passwords are never sent to administrators.</p>
+                <p className="field-hint">This seven-day link is a backup. Share it only with the registered teacher; they verify their email and create their own password. If they miss the email, resend the invitation from Portal access. After activation, they can sign in with their teacher ID and password.</p>
               </div>}
             </section>
             {teacherRoster.length > 0 && <section className="panel teacher-roster-panel">

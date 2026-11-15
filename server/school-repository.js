@@ -161,6 +161,13 @@ async function getReadyDatabase() {
           WHERE teacher_code IS NOT NULL
         `,
         database.sql`
+          UPDATE school_members
+          SET teacher_code = 'TCH-' || UPPER(SUBSTRING(
+            MD5(RANDOM()::text || clock_timestamp()::text || user_id), 1, 16
+          ))
+          WHERE role = 'teacher' AND teacher_code IS NULL
+        `,
+        database.sql`
           CREATE TABLE IF NOT EXISTS school_invitations (
             id UUID PRIMARY KEY,
             school_id UUID NOT NULL REFERENCES schools(id) ON DELETE CASCADE,
@@ -2301,6 +2308,32 @@ export async function listSchoolTeachers(schoolId) {
     WHERE school_id = ${schoolId} AND role = 'teacher' AND email IS NOT NULL
     ORDER BY display_name, email
   `;
+}
+
+export async function getTeacherLoginDetails(teacherCode) {
+  const sql = await getReadyDatabase();
+  const teachers = await sql`
+    SELECT DISTINCT LOWER(email) AS email
+    FROM school_members
+    WHERE role = 'teacher'
+      AND teacher_code = ${teacherCode}
+      AND email IS NOT NULL
+    LIMIT 2
+  `;
+  if (teachers.length === 1) return { email: teachers[0].email };
+  if (teachers.length > 1) return null;
+
+  const [pendingInvitation] = await sql`
+    SELECT 1
+    FROM school_invitations
+    WHERE role = 'teacher'
+      AND teacher_code = ${teacherCode}
+      AND accepted_at IS NULL
+      AND revoked_at IS NULL
+      AND expires_at > NOW()
+    LIMIT 1
+  `;
+  return pendingInvitation ? { activationRequired: true } : null;
 }
 
 export async function getSchoolPrincipalUser(schoolId) {

@@ -19,6 +19,7 @@ import {
   getSchoolClassAttendanceReport,
   getSchoolGradingSettings,
   getSchoolRole,
+  getTeacherLoginDetails,
   finishAccountWelcomeEmail,
   listSchoolAcademicCalendar,
   createSchoolAcademicSession,
@@ -124,6 +125,31 @@ app.use(express.json({ limit: "128kb" }));
 
 app.get("/api/health", (_request, response) => {
   response.json({ status: "ok" });
+});
+
+app.post("/api/auth/teacher-login", async (request, response) => {
+  response.set("Cache-Control", "no-store");
+  const teacherCode = typeof request.body?.teacherCode === "string"
+    ? request.body.teacherCode.trim().toUpperCase()
+    : "";
+  if (!/^TCH-[A-F0-9]{16}$/.test(teacherCode)) {
+    return response.status(400).json({ error: "Enter a valid teacher ID." });
+  }
+
+  try {
+    const teacher = await getTeacherLoginDetails(teacherCode);
+    if (teacher?.activationRequired) {
+      return response.status(409).json({
+        error: "This teacher ID needs activation first. Ask your school administrator to resend the invitation, then set your password.",
+      });
+    }
+    if (!teacher?.email) {
+      return response.status(401).json({ error: "We couldn’t find an active teacher account for that ID." });
+    }
+    return response.json({ email: teacher.email });
+  } catch (error) {
+    return handleDatabaseError(error, response);
+  }
 });
 
 app.post("/api/account/welcome-email", requireAuth, async (request, response) => {
