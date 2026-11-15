@@ -3,6 +3,7 @@ import AuthScreen from "./AuthScreen.jsx";
 import AsterLogoMark from "./AsterLogo.jsx";
 import EducationBackground from "./EducationBackground.jsx";
 import ExplainerVideo from "./ExplainerVideo.jsx";
+import DemoMode from "./DemoMode.jsx";
 import { authClient, pendingSchoolNameKey } from "./auth.js";
 import {
   curriculumByGrade,
@@ -278,6 +279,8 @@ function LoadingMessage({ children, className = "" }) {
 
 function App() {
   const [session, setSession] = useState(null);
+  const [demoOpen, setDemoOpen] = useState(() => window.location.pathname === "/demo");
+  const [authMode, setAuthMode] = useState("sign-in");
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sessionLoading, setSessionLoading] = useState(true);
   const [authNotice, setAuthNotice] = useState(() => {
@@ -537,6 +540,11 @@ function App() {
     () => groupPublishedResultRowsByStudent(resultSheet?.rows),
     [resultSheet?.rows],
   );
+  useEffect(() => {
+    const handleDemoRouteChange = () => setDemoOpen(window.location.pathname === "/demo");
+    window.addEventListener("popstate", handleDemoRouteChange);
+    return () => window.removeEventListener("popstate", handleDemoRouteChange);
+  }, []);
   const teacherPerformanceTrends = useMemo(() => {
     if (role !== "teacher") return [];
     const groups = new Map();
@@ -2401,9 +2409,23 @@ function App() {
     setForm((previous) => ({ ...previous, [field]: value }));
   }
 
+  function openDemo() {
+    window.history.pushState(null, "", "/demo");
+    setDemoOpen(true);
+  }
+
+  function closeDemo(registering = false) {
+    window.history.replaceState(null, "", "/");
+    setDemoOpen(false);
+    setAuthMode(registering ? "sign-up" : "sign-in");
+  }
+
   const userName = session?.user?.name || session?.user?.email?.split("@")[0] || "School administrator";
   const userInitials = userName.split(/\s+/).slice(0, 2).map((part) => part[0]).join("").toUpperCase();
 
+  if (demoOpen) {
+    return <DemoMode onExit={() => closeDemo()} onCreateAccount={() => closeDemo(true)} />;
+  }
   if (sessionLoading) {
     return <PortalLoadingScreen title="Welcome back" message="Restoring your secure session" detail="Your school workspace will be ready in a moment." />;
   }
@@ -2412,11 +2434,14 @@ function App() {
       <>
         <EducationBackground variant="dark" />
         <AuthScreen
+          key={authMode}
           authClient={authClient}
           notice={authNotice}
+          initialMode={authMode}
           initialEmail={session?.user?.email}
           verificationRequired={Boolean(session?.user && !session.user.emailVerified)}
           onAuthenticated={restoreSession}
+          onDemo={openDemo}
           onWatchVideo={() => setExplainerOpen(true)}
           resetToken={resetToken}
         />

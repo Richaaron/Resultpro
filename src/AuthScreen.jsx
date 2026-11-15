@@ -85,8 +85,8 @@ function AuthIllustration() {
   );
 }
 
-export default function AuthScreen({ authClient, notice, initialEmail = "", verificationRequired = false, onAuthenticated, onWatchVideo, resetToken = "" }) {
-  const [mode, setMode] = useState("sign-in");
+export default function AuthScreen({ authClient, notice, initialEmail = "", initialMode = "sign-in", verificationRequired = false, onAuthenticated, onWatchVideo, onDemo, resetToken = "" }) {
+  const [mode, setMode] = useState(initialMode);
   const [recovery, setRecovery] = useState(resetToken ? "reset" : "");
   const [name, setName] = useState("");
   const [schoolName, setSchoolName] = useState("");
@@ -104,6 +104,7 @@ export default function AuthScreen({ authClient, notice, initialEmail = "", veri
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const hasInvitation = new URLSearchParams(window.location.hash.slice(1)).has("invite");
+  const showDemoEntry = Boolean(onDemo && !hasInvitation && !verifyingEmail && !recovery);
 
   async function submit(event) {
     event.preventDefault();
@@ -251,6 +252,7 @@ export default function AuthScreen({ authClient, notice, initialEmail = "", veri
           <a className="brand auth-brand" href="/" aria-label="Aster home"><AsterLogoMark /><span className="brand-name">aster<span>.</span></span></a>
           <h1>Authentication setup needed</h1>
           <p className="auth-description">Set VITE_NEON_AUTH_URL to your Neon Auth Base URL to continue.</p>
+          {showDemoEntry && <AuthDemoPrompt onDemo={onDemo} />}
         </section>
       </main>
     );
@@ -337,6 +339,7 @@ export default function AuthScreen({ authClient, notice, initialEmail = "", veri
             <button className="auth-text-button" type="button" onClick={() => { setMode(mode === "sign-up" ? "sign-in" : "sign-up"); setError(""); setMessage(""); }}>{mode === "sign-up" ? "Already have an account? Sign in" : "New to Aster? Create an account"}</button>
           </form>
         )}
+        {showDemoEntry && <AuthDemoPrompt onDemo={onDemo} />}
         {message && <p className="auth-message" role="status">{message}</p>}
         {error && <p className="form-error" role="alert">{error}</p>}
         <p className="privacy-note">Your school data is private to your verified account.</p>
@@ -347,5 +350,15 @@ export default function AuthScreen({ authClient, notice, initialEmail = "", veri
         )}
       </section>
     </main>
+  );
+}
+
+function AuthDemoPrompt({ onDemo }) {
+  return (
+    <div className="auth-demo-prompt">
+      <span>Want to see Aster in action first?</span>
+      <button type="button" onClick={onDemo}>Explore the interactive demo <span aria-hidden="true">→</span></button>
+      <small>No account needed. Demo records are fictional and read-only.</small>
+    </div>
   );
 }

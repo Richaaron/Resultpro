@@ -2,6 +2,10 @@
 
 Aster is a React school-results platform with a Vite frontend, Express API, Neon Postgres, and Neon Managed Auth.
 
+## Interactive demo
+
+Visit `/demo` on the deployed frontend, or choose **Explore the interactive demo** on the sign-in screen, to preview a fictional school workspace without registering. The demo generates its school, staff, student roster, and sample results in the browser; it is read-only and does not save demo data or call school APIs. Visitors can switch between admin, form teacher, subject teacher, and student views, explore the student register, and preview a sample report card.
+
 ## Requirements
 
 - Node.js 22 or newer
