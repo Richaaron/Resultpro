@@ -154,6 +154,7 @@ function StudentReportCard({ school, result, rows, signatures }) {
   const student = rows[0];
   const schoolCode = school.slug || school.id;
   const schoolMark = school.name.split(/\s+/).slice(0, 2).map((part) => part[0]).join("").toUpperCase();
+  const averagePercentage = summary.averagePercentage;
   return <article className="student-report-card">
     <header className="student-report-print-heading">
       <div className="student-report-school-brand">
@@ -165,32 +166,41 @@ function StudentReportCard({ school, result, rows, signatures }) {
         </div>
         <div className="student-report-school-reference"><small>SCHOOL REF</small><strong>{schoolCode}</strong></div>
       </div>
-      <div className="student-report-title"><span>PUBLISHED RESULT</span><h2>Student term report</h2></div>
+      <div className="student-report-title"><div><span>OFFICIAL ACADEMIC RECORD</span><span className="student-report-term-pill">{result.term} · {result.academicYear}</span></div><h2>Student result sheet</h2><p>Academic performance and approved assessment summary</p></div>
       <div className="student-report-identity">
-        <span><b>Student</b>{student.firstName} {student.lastName}</span>
-        <span><b>Admission no.</b>{student.admissionNumber}</span>
-        <span><b>Class</b>{result.grade} {result.section}</span>
-        <span><b>Academic year</b>{result.academicYear}</span>
-        <span><b>Term</b>{result.term}</span>
-        <span><b>Published</b>{new Date(result.publishedAt).toLocaleDateString("en-NG")}</span>
+        <span className="student-report-name"><b>Student name</b><strong>{student.firstName} {student.lastName}</strong></span>
+        <span><b>Admission no.</b><strong>{student.admissionNumber}</strong></span>
+        <span><b>Class</b><strong>{result.grade} {result.section}</strong></span>
+        <span><b>Academic year</b><strong>{result.academicYear}</strong></span>
+        <span><b>Term</b><strong>{result.term}</strong></span>
+        <span><b>Date published</b><strong>{new Date(result.publishedAt).toLocaleDateString("en-NG")}</strong></span>
       </div>
     </header>
     <div className="student-report-summary" aria-label="Report summary">
-      <div><small>Overall average</small><strong>{summary.averagePercentage == null ? "—" : `${summary.averagePercentage.toFixed(2)}%`}</strong></div>
-      <div><small>Overall grade</small><strong>{student.overallGrade || "—"}</strong></div>
-      <div><small>Class position</small><strong>{formatClassPosition(student.classPosition)}</strong></div>
-      <div><small>Total points</small><strong>{summary.earnedPoints.toLocaleString("en-NG")} / {summary.possiblePoints.toLocaleString("en-NG")}</strong></div>
-      <div><small>Graded subjects</small><strong>{summary.gradedSubjectCount} / {summary.subjectCount}</strong></div>
-      <div><small>Approved assessments</small><strong>{summary.assessmentCount}</strong></div>
+      <div className="student-report-average">
+        <small>Overall average</small>
+        <strong>{averagePercentage == null ? "—" : `${averagePercentage.toFixed(2)}%`}</strong>
+        <span className="student-report-average-track" aria-hidden="true"><i style={{ width: `${Math.max(0, Math.min(100, averagePercentage || 0))}%` }} /></span>
+      </div>
+      <div><small>Overall grade</small><strong className="student-report-highlight">{student.overallGrade || "—"}</strong><span className="student-report-summary-caption">Weighted term result</span></div>
+      <div><small>Class position</small><strong className="student-report-highlight">{formatClassPosition(student.classPosition)}</strong><span className="student-report-summary-caption">Among classmates</span></div>
     </div>
-    <div className="table-scroll"><table className="result-sheet-table"><thead><tr><th>SUBJECT</th><th>APPROVED MARKS</th><th>ASSESSMENTS</th><th>TERM PERCENTAGE</th><th>GRADE</th></tr></thead><tbody>{rows.map((row) => <tr key={row.subject}>
+    <div className="student-report-details" aria-label="Assessment overview">
+      <span><small>Total points</small><strong>{summary.earnedPoints.toLocaleString("en-NG")} <i>/</i> {summary.possiblePoints.toLocaleString("en-NG")}</strong></span>
+      <span><small>Subjects graded</small><strong>{summary.gradedSubjectCount} <i>/</i> {summary.subjectCount}</strong></span>
+      <span><small>Approved assessments</small><strong>{summary.assessmentCount}</strong></span>
+    </div>
+    <section className="student-report-academics">
+      <div className="student-report-section-heading"><div><span>TERM BREAKDOWN</span><h3>Subject performance</h3></div><small>{summary.subjectCount} subject{summary.subjectCount === 1 ? "" : "s"}</small></div>
+      <div className="table-scroll"><table className="result-sheet-table"><thead><tr><th>SUBJECT</th><th>SCORE EARNED</th><th>ASSESSMENTS</th><th>TERM AVERAGE</th><th>GRADE</th></tr></thead><tbody>{rows.map((row) => <tr key={row.subject}>
       <td><strong>{row.subject}</strong></td>
       <td>{row.percentage == null ? "—" : `${Number(row.earnedPoints).toLocaleString("en-NG", { maximumFractionDigits: 2 })} / ${Number(row.possiblePoints).toLocaleString("en-NG", { maximumFractionDigits: 2 })}`}</td>
       <td>{row.assessmentCount}</td>
-      <td><strong className={row.percentage == null ? "ungraded-mark" : "result-percentage"}>{row.percentage == null ? "Not graded" : `${Number(row.percentage).toFixed(2)}%`}</strong></td>
-      <td><strong className={row.grade ? "result-percentage" : "ungraded-mark"}>{row.grade || "—"}</strong></td>
+      <td><div className="student-report-subject-average"><strong className={row.percentage == null ? "ungraded-mark" : ""}>{row.percentage == null ? "Not graded" : `${Number(row.percentage).toFixed(2)}%`}</strong>{row.percentage != null && <span aria-hidden="true"><i style={{ width: `${Math.max(0, Math.min(100, Number(row.percentage)))}%` }} /></span>}</div></td>
+      <td><span className={`student-report-grade-pill${row.grade ? "" : " is-empty"}`}>{row.grade || "—"}</span></td>
     </tr>)}</tbody></table></div>
-    <p className="student-report-note">This report reflects the school’s published grading rules and approved marks. Class position is shown only when the configured completeness rule is satisfied; older published reports may not contain grades or positions.</p>
+    </section>
+    <p className="student-report-note">Results are calculated from approved assessments using this school’s published grading rules. Class position is shown when the school’s completeness requirements are met.</p>
     <footer className="student-report-signatures">
       <span><div className="student-report-signature-line">{signatures?.formMasterSignature && <img src={signatures.formMasterSignature} alt={`${signatures.formMasterName || "Form master"} signature`} />}</div><b>Form master</b><small>{signatures?.formMasterName || "Signature not uploaded"}</small></span>
       <span><div className="student-report-signature-line">{signatures?.principalSignature && <img src={signatures.principalSignature} alt={`${signatures.principalName || "Principal"} signature`} />}</div><b>Principal</b><small>{signatures?.principalName || "Signature not uploaded"}</small></span>
