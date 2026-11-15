@@ -9,7 +9,13 @@ import {
   curriculumGrades,
   normalizeEducationalLevelSelection,
 } from "../shared/curriculum.js";
-import { subscriptionPlans } from "../shared/billing-plans.js";
+import {
+  billablePlans,
+  customQuotePlan,
+  freePlan,
+  getPricingTierForActiveStudents,
+  subscriptionPlans,
+} from "../shared/billing-plans.js";
 import {
   defaultGradingSettings,
   groupPublishedResultRowsByStudent,
@@ -243,6 +249,31 @@ function HeroScene() {
     <span className="hs-orb" />
     <span className="hs-core"><AsterLogoMark className="hs-logo" /></span>
   </div>;
+}
+
+function PortalLoadingScreen({ title, message, detail }) {
+  return (
+    <main className="session-restore-shell" aria-busy="true">
+      <section className="session-restore-card" role="status" aria-live="polite">
+        <div className="brand session-restore-brand" aria-label="Aster">
+          <AsterLogoMark /><span className="brand-name">aster<span>.</span></span>
+        </div>
+        <span className="session-restore-spinner" aria-hidden="true" />
+        <h1>{title}</h1>
+        <p>{message}</p>
+        <small>{detail}</small>
+      </section>
+    </main>
+  );
+}
+
+function LoadingMessage({ children, className = "" }) {
+  return (
+    <p className={`loading-message ${className}`.trim()} role="status">
+      <span className="loading-message-spinner" aria-hidden="true" />
+      <span>{children}</span>
+    </p>
+  );
 }
 
 function App() {
@@ -2374,19 +2405,7 @@ function App() {
   const userInitials = userName.split(/\s+/).slice(0, 2).map((part) => part[0]).join("").toUpperCase();
 
   if (sessionLoading) {
-    return (
-      <main className="session-restore-shell" aria-busy="true">
-        <section className="session-restore-card" role="status" aria-live="polite">
-          <div className="brand session-restore-brand" aria-label="Aster">
-            <AsterLogoMark /><span className="brand-name">aster<span>.</span></span>
-          </div>
-          <span className="session-restore-spinner" aria-hidden="true" />
-          <h1>Welcome back</h1>
-          <p>Restoring your secure session</p>
-          <small>Your school workspace will be ready in a moment.</small>
-        </section>
-      </main>
-    );
+    return <PortalLoadingScreen title="Welcome back" message="Restoring your secure session" detail="Your school workspace will be ready in a moment." />;
   }
   if (!session?.user || session.user.emailVerified !== true) {
     return (
@@ -2406,7 +2425,7 @@ function App() {
     );
   }
   if (loadingSchools) {
-    return <main className="auth-shell"><p className="auth-description">Loading your school workspace…</p></main>;
+    return <PortalLoadingScreen title="Almost there" message="Loading your school workspace" detail="Gathering your school profiles and portal access." />;
   }
   if (schoolRouteError) {
     return (
@@ -2502,7 +2521,7 @@ function App() {
                   {notificationsErrorForCurrentSchool
                     ? <div className="notification-popover-message" role="alert"><span>{notificationsErrorForCurrentSchool}</span><button className="quiet-action" type="button" onClick={() => setStudentNotificationRefresh((previous) => previous + 1)}>Retry</button></div>
                     : loadingNotificationsForCurrentSchool
-                      ? <p className="notification-popover-message" role="status">Loading notifications…</p>
+                      ? <LoadingMessage className="notification-popover-message">Loading notifications…</LoadingMessage>
                       : notificationsForCurrentSchool.length
                         ? <div className="student-notification-list">{notificationsForCurrentSchool.map((notification) => <button
                           className={`student-notification-item${notification.readAt ? "" : " unread"}`}
@@ -2533,7 +2552,7 @@ function App() {
             <section className="panel platform-summary-panel">
               <div className="panel-heading"><div><h2>School network</h2><p>Aggregate operational counts across all Aster schools.</p></div><div className="platform-summary-actions"><button className="button button-primary button-small" type="button" onClick={showSetup}>＋ Add school</button><button className="button button-secondary button-small" type="button" onClick={() => { setPlatformBillingDrafts({}); setPlatformBillingFeedback({}); setPlatformSchoolStatusFeedback({}); setPlatformRefresh((previous) => previous + 1); }} disabled={loadingPlatformOverview || platformSchoolActionBusy}>Refresh</button></div></div>
               {platformOverviewError && <p className="form-error" role="alert">{platformOverviewError}</p>}
-              {loadingPlatformOverview && <p className="empty-search" role="status">Loading platform overview…</p>}
+              {loadingPlatformOverview && <LoadingMessage>Loading platform overview…</LoadingMessage>}
               {!loadingPlatformOverview && platformOverviewForUser && <>
                 <section className="stats-grid" aria-label="Platform summary">
                   {[
@@ -2556,17 +2575,18 @@ function App() {
                 </div>
                 {platformOverviewForUser.schools.length === 0
                   ? <p className="empty-search">{platformSchoolSearch ? "No schools match that search. Try another name, type, or country." : "No school workspaces have been created yet."}</p>
-                  : <div className="table-scroll"><table className="platform-directory-table"><thead><tr><th>SCHOOL</th><th>COUNTRY</th><th>TYPE</th><th>STUDENTS</th><th>TEACHERS</th><th>CLASSES</th><th>ADMINS</th><th>CREATED</th><th>BILLING DECISION</th><th>SCHOOL ACCESS</th></tr></thead><tbody>
+                  : <div className="table-scroll"><table className="platform-directory-table"><thead><tr><th>SCHOOL</th><th>COUNTRY</th><th>TYPE</th><th>STUDENTS / PRICING BAND</th><th>TEACHERS</th><th>CLASSES</th><th>ADMINS</th><th>CREATED</th><th>BILLING DECISION</th><th>SCHOOL ACCESS</th></tr></thead><tbody>
                   {platformOverviewForUser.schools.map((schoolRow) => {
                     const billingDraft = platformBillingDrafts[schoolRow.id] || {
                       billingStatus: schoolRow.billingStatus || "pending",
                       planId: schoolRow.planId || "",
                     };
+                    const pricingTier = getPricingTierForActiveStudents(schoolRow.studentCount);
                     const billingFeedback = platformBillingFeedback[schoolRow.id];
                     const schoolStatusFeedback = platformSchoolStatusFeedback[schoolRow.id];
                     const isArchived = Boolean(schoolRow.archivedAt);
                     return <tr key={schoolRow.id}>
-                      <td><strong>{schoolRow.name}</strong></td><td>{schoolRow.country}</td><td>{schoolRow.schoolType}</td><td>{schoolRow.studentCount.toLocaleString("en-NG")}</td><td>{schoolRow.teacherCount.toLocaleString("en-NG")}</td><td>{schoolRow.classCount.toLocaleString("en-NG")}</td><td>{schoolRow.administratorCount.toLocaleString("en-NG")}</td><td>{new Date(schoolRow.createdAt).toLocaleDateString("en-NG")}</td>
+                      <td><strong>{schoolRow.name}</strong></td><td>{schoolRow.country}</td><td>{schoolRow.schoolType}</td><td><strong>{schoolRow.studentCount.toLocaleString("en-NG")}</strong><small className="platform-student-pricing-band">{pricingTier?.name || "Unassigned pricing band"}</small></td><td>{schoolRow.teacherCount.toLocaleString("en-NG")}</td><td>{schoolRow.classCount.toLocaleString("en-NG")}</td><td>{schoolRow.administratorCount.toLocaleString("en-NG")}</td><td>{new Date(schoolRow.createdAt).toLocaleDateString("en-NG")}</td>
                       <td>
                         <div className="platform-billing-controls">
                           <label className="platform-billing-field"><span>Status</span><select className="text-input" value={billingDraft.billingStatus} disabled={platformSchoolActionBusy} onChange={(event) => updatePlatformBillingDraft(schoolRow, "billingStatus", event.target.value)}>
@@ -2576,7 +2596,7 @@ function App() {
                           </select></label>
                           <label className="platform-billing-field"><span>Plan</span><select className="text-input" value={billingDraft.planId} disabled={billingDraft.billingStatus !== "paid" || platformSchoolActionBusy} onChange={(event) => updatePlatformBillingDraft(schoolRow, "planId", event.target.value)}>
                             <option value="">Select a plan</option>
-                            {subscriptionPlans.map((plan) => <option key={plan.id} value={plan.id}>{plan.name} · ₦{plan.monthlyPrice.toLocaleString("en-NG")}/mo</option>)}
+                            {billablePlans.map((plan) => <option key={plan.id} value={plan.id}>{plan.name} · {plan.minActiveStudents.toLocaleString("en-NG")}{plan.maxActiveStudents == null ? "+" : `–${plan.maxActiveStudents.toLocaleString("en-NG")}`} students · {typeof plan.monthlyPrice === "number" ? `₦${plan.monthlyPrice.toLocaleString("en-NG")}/mo` : "Custom pricing"}</option>)}
                           </select></label>
                           <button className="button button-secondary button-small" type="button" onClick={() => savePlatformBillingDecision(schoolRow)} disabled={platformSchoolActionBusy}>
                             {platformBillingSaving === schoolRow.id ? "Saving…" : "Save decision"}
@@ -2605,17 +2625,28 @@ function App() {
               {!loadingPlatformOverview && !platformOverviewError && !platformOverviewForUser && <p className="empty-search">Platform operations are unavailable. Refresh to try again.</p>}
             </section>
             <section className="panel platform-pricing-panel">
-              <div className="panel-heading"><div><h2>Approved pricing proposal</h2><p>All tiers include Aster’s current school workflows; only active-student capacity differs.</p></div></div>
-              <p className="platform-billing-notice" role="status">Checkout and student-cap enforcement are disabled until a payment provider is selected.</p>
+              <div className="panel-heading"><div><h2>School pricing</h2><p>Free for the first 500 active students; paid tiers apply above that.</p></div></div>
+              <p className="platform-billing-notice" role="status">Pricing policy only: enrollment remains open, and no payment or automatic student-cap enforcement is active yet.</p>
               <div className="platform-pricing-grid">
+                <article className="platform-plan-card platform-plan-card-free">
+                  <span className="platform-plan-name">{freePlan.name}</span>
+                  <strong className="platform-plan-price">₦0<small> / month</small></strong>
+                  <span className="platform-plan-cap">Up to {freePlan.maxActiveStudents.toLocaleString("en-NG")} active students</span>
+                  <div className="platform-plan-annual"><span>Annual</span><strong>₦0 / year</strong><small>No charge</small></div>
+                </article>
                 {subscriptionPlans.map((plan) => <article className="platform-plan-card" key={plan.id}>
                   <span className="platform-plan-name">{plan.name}</span>
                   <strong className="platform-plan-price">₦{plan.monthlyPrice.toLocaleString("en-NG")}<small> / month</small></strong>
-                  <span className="platform-plan-cap">Up to {plan.maxActiveStudents.toLocaleString("en-NG")} active students</span>
+                  <span className="platform-plan-cap">{plan.minActiveStudents.toLocaleString("en-NG")}–{plan.maxActiveStudents.toLocaleString("en-NG")} active students</span>
                   <div className="platform-plan-annual"><span>Annual</span><strong>₦{plan.annualPrice.toLocaleString("en-NG")} / year</strong><small>10% discount</small></div>
                 </article>)}
+                <article className="platform-plan-card">
+                  <span className="platform-plan-name">{customQuotePlan.name}</span>
+                  <strong className="platform-plan-price">Contact us</strong>
+                  <span className="platform-plan-cap">{customQuotePlan.minActiveStudents.toLocaleString("en-NG")}+ active students</span>
+                </article>
               </div>
-              <p className="field-hint">Schools above 1,500 active students will need a custom quote. Prices are per school, in Nigerian naira.</p>
+              <p className="field-hint">All plans include Aster’s current school workflows. Prices are per school, in Nigerian naira; annual paid plans include a 10% discount.</p>
             </section>
           </section>}
 
@@ -2630,7 +2661,7 @@ function App() {
             </div>
             {classError && <p className="form-error" role="alert">{classError}</p>}
             {attendanceError && <p className="form-error" role="alert">{attendanceError}</p>}
-            {loadingAttendance || loadingClasses ? <p className="empty-search">Loading the class register…</p>
+            {loadingAttendance || loadingClasses ? <LoadingMessage>Loading the class register…</LoadingMessage>
               : !schoolClasses.length ? <p className="empty-search">{classError ? "Your class list could not be loaded." : "Create a class and enrol active students before recording attendance."}</p>
                 : !attendanceDate ? <p className="empty-search">Choose a date to load attendance.</p>
                 : !attendanceClassId ? <p className="empty-search">Select a class to load its active student roster.</p>
@@ -2665,7 +2696,7 @@ function App() {
               <button className="button button-secondary" type="submit" disabled={loadingAttendanceReport || !attendanceClassId}>{loadingAttendanceReport ? "Loading…" : "Generate report"}</button>
             </form>
             {attendanceReportError && <p className="form-error" role="alert">{attendanceReportError}</p>}
-            {loadingAttendanceReport ? <p className="empty-search">Generating attendance summary…</p>
+            {loadingAttendanceReport ? <LoadingMessage>Generating attendance summary…</LoadingMessage>
               : !attendanceReportForSelection ? <p className="empty-search">Choose a class and date range, then generate the attendance summary.</p>
               : <>
                 <div className="attendance-report-meta">
@@ -2690,7 +2721,7 @@ function App() {
               <div><h2>School grading policy</h2><p>Set percentage bands, tie handling, and when students can receive class positions.</p></div>
             </div>
             {gradingSettingsError && <p className="form-error" role="alert">{gradingSettingsError}</p>}
-            {loadingGradingSettings ? <p className="empty-search">Loading this school’s grading rules…</p>
+            {loadingGradingSettings ? <LoadingMessage>Loading this school’s grading rules…</LoadingMessage>
               : gradingSettings && <>
                 <p className="curriculum-note">A score receives the highest grade band whose minimum it meets. The lowest band must begin at 0, and all labels and thresholds must be unique.</p>
                 <div className="grading-band-list" aria-label="Grade bands">
@@ -2730,7 +2761,7 @@ function App() {
               <div className="educational-levels-heading">
                 <div><h3 id="educational-levels-heading">Educational levels</h3><p>Choose the levels your school offers. Class and subject setup follows this selection.</p></div>
               </div>
-              {loadingEducationalLevels ? <p className="empty-search">Loading this school’s educational levels…</p>
+              {loadingEducationalLevels ? <LoadingMessage>Loading this school’s educational levels…</LoadingMessage>
                 : educationalLevels.length > 0 && <div className="educational-level-options">
                   {educationalLevels.map((level) => {
                     const checked = draftEducationalLevelCodes.includes(level.code);
@@ -2776,7 +2807,7 @@ function App() {
                 <button className="button button-primary" type="submit" disabled={creatingClass || loadingClasses || loadingEducationalLevels || !activeGradeOptions.includes(classForm.grade)}>{creatingClass ? "Creating…" : "Create class"}</button>
               </form>}
               {classError && <p className="form-error" role="alert">{classError}</p>}
-              {loadingClasses ? <p className="empty-search">Loading classes…</p> : schoolClasses.length === 0 ? <p className="empty-search">No classes yet. Save subjects for a grade, then create its first class.</p> : <div className="class-list">
+              {loadingClasses ? <LoadingMessage>Loading classes…</LoadingMessage> : schoolClasses.length === 0 ? <p className="empty-search">No classes yet. Save subjects for a grade, then create its first class.</p> : <div className="class-list">
                 {schoolClasses.map((schoolClass) => <article className="class-card tilt-3d" key={schoolClass.id}>
                   <div className="class-card-top"><span className="class-card-grade">{schoolClass.grade}</span>{role === "admin" && <button className="quiet-action" type="button" onClick={() => removeClass(schoolClass)} disabled={schoolClass.studentCount > 0}>Delete</button>}</div>
                   <h3>{schoolClass.section}</h3>
@@ -2790,7 +2821,7 @@ function App() {
 
           {page === "results" && ["admin", "teacher"].includes(role) && <section className="panel signature-settings-panel">
             <div className="panel-heading"><div><h2>{role === "admin" ? "Principal report signature" : "Form-master report signature"}</h2><p>{role === "admin" ? "Your signature as the school’s primary administrator appears on published student reports." : "Your signature appears only on published reports for classes where you are assigned as form master."}</p></div></div>
-            {signatureLoading ? <p className="empty-search">Loading signature settings…</p>
+            {signatureLoading ? <LoadingMessage>Loading signature settings…</LoadingMessage>
               : signatureError && <p className="form-error" role="alert">{signatureError}</p>}
             {!signatureLoading && !signatureError && !signatureCanUpload && <p className="field-hint">{role === "admin" ? "Only the school’s primary administrator can upload the principal signature." : "You are not assigned as a form master yet. Ask your school administrator to assign you to a class."}</p>}
             {!signatureLoading && signatureCanUpload && <>
@@ -2815,7 +2846,7 @@ function App() {
           {page === "results" && ["student", "parent"].includes(role) && <section className="panel student-results-panel">
             <div className="panel-heading"><div><h2>{role === "parent" ? "Your children’s published results" : "Published term results"}</h2><p>{role === "parent" ? "Only reports for students explicitly linked to your verified parent account are shown." : "Your school releases results after administrator approval. Only your linked student record is shown here."}</p></div></div>
             {studentResultError && <p className="form-error" role="alert">{studentResultError}</p>}
-            {loadingStudentResults ? <p className="empty-search">Loading your published results…</p>
+            {loadingStudentResults ? <LoadingMessage>Loading your published results…</LoadingMessage>
               : !studentResultData ? <p className="empty-search">Your results could not be loaded. Please try again.</p>
                 : role === "parent" && !studentResultData.linked ? <p className="empty-search">Ask your school to link your verified email to your child’s guardian contact to enable parent access.</p>
                   : role === "student" && !studentResultData.linked ? <p className="empty-search">Your school administrator needs to link your verified portal email to your student record before results can appear.</p>
@@ -2853,8 +2884,8 @@ function App() {
                 ? <p className="result-publication-note">Published {new Date(resultSheet.published.publishedAt).toLocaleString("en-NG")} by {resultSheet.published.publishedBy || "a school administrator"}. Grades and positions are frozen with this snapshot and released to each linked student account.</p>
                 : <p className="result-calculation-note">Percentage = total points earned across approved assessments ÷ total possible points × 100. Letter grades use this school’s bands. Class positions follow its tie and completeness rules; positions may change until publication.</p>}
               {resultSheetError && <p className="form-error" role="alert">{resultSheetError}</p>}
-              {loadingResultSheet ? <p className="empty-search">Calculating the result sheet…</p>
-                : !resultSheetClassId ? <p className="empty-search">{loadingClasses ? "Loading classes…" : "Create a class and assign a teacher to its subjects to view a result sheet."}</p>
+              {loadingResultSheet ? <LoadingMessage>Calculating the result sheet…</LoadingMessage>
+                : !resultSheetClassId ? loadingClasses ? <LoadingMessage>Loading classes…</LoadingMessage> : <p className="empty-search">Create a class and assign a teacher to its subjects to view a result sheet.</p>
                   : resultSheet?.rows.length ? <div className="table-scroll"><table className="result-sheet-table"><thead><tr><th>STUDENT</th><th>ADMISSION NO.</th><th>SUBJECT</th><th>APPROVED MARKS</th><th>ASSESSMENTS</th><th>TERM PERCENTAGE</th><th>GRADE</th><th>CLASS POSITION</th></tr></thead><tbody>{resultSheet.rows.map((row) => <tr key={`${row.studentId}-${row.subject}`}>
                     <td><strong>{row.firstName} {row.lastName}</strong></td>
                     <td>{row.admissionNumber}</td>
@@ -2883,7 +2914,7 @@ function App() {
             {role === "admin" && <section className="panel assessment-form-panel">
               <div className="panel-heading"><div><h2>Create an assessment</h2><p>Assessments can be created for subjects with an assigned teacher.</p></div></div>
               {resultSheet?.published && assessmentForm.classId === resultSheetClassId && assessmentForm.term === resultSheetTerm && <p className="result-publication-note">This class and term are published. No further assessments can be added.</p>}
-              {loadingAssignments || loadingClasses ? <p className="empty-search">Loading assigned classes…</p> : assessmentAssignableClasses.length === 0 ? <p className="empty-search">{schoolClasses.length === 0 ? "Create a class and save its subjects first." : "Assign a teacher to a class subject first."} <button className="inline-action" type="button" onClick={() => setPage(schoolClasses.length === 0 ? "classes" : "teachers")}>Go to {schoolClasses.length === 0 ? "Classes & subjects" : "Teachers"} →</button></p> : <form className="assessment-create-form" onSubmit={createAssessment}>
+              {loadingAssignments || loadingClasses ? <LoadingMessage>Loading assigned classes…</LoadingMessage> : assessmentAssignableClasses.length === 0 ? <p className="empty-search">{schoolClasses.length === 0 ? "Create a class and save its subjects first." : "Assign a teacher to a class subject first."} <button className="inline-action" type="button" onClick={() => setPage(schoolClasses.length === 0 ? "classes" : "teachers")}>Go to {schoolClasses.length === 0 ? "Classes & subjects" : "Teachers"} →</button></p> : <form className="assessment-create-form" onSubmit={createAssessment}>
                 <label><span>Class</span><select className="text-input" required value={assessmentForm.classId} onChange={(event) => {
                   const classId = event.target.value;
                   const subject = teachingAssignments.find((assignment) => assignment.classId === classId)?.subject || "";
@@ -2901,7 +2932,7 @@ function App() {
             <section className="panel assessment-list-panel">
               <div className="panel-heading"><div><h2>{role === "admin" ? "School assessments" : "Your assessments"}</h2><p>{role === "admin" ? "Track progress and review submitted marks." : "Open an assessment to enter or update marks."}</p></div><button className="button button-secondary button-small" type="button" onClick={() => setAssessmentRefresh((previous) => previous + 1)} disabled={loadingAssessments}>Refresh</button></div>
               {assessmentError && <p className="form-error" role="alert">{assessmentError}</p>}
-              {loadingAssessments ? <p className="empty-search">Loading assessments…</p> : assessments.length === 0 ? <p className="empty-search">{role === "admin" ? "No assessments yet. Create one after classes, subjects, and teacher assignments are ready." : "No assessments have been assigned to your classes yet."}</p> : <div className="table-scroll"><table className="assessment-table"><thead><tr><th>ASSESSMENT</th><th>CLASS</th><th>TEACHER</th><th>MARKS ENTERED</th><th>STATUS</th><th></th></tr></thead><tbody>{assessments.map((assessment) => <tr key={assessment.id}>
+              {loadingAssessments ? <LoadingMessage>Loading assessments…</LoadingMessage> : assessments.length === 0 ? <p className="empty-search">{role === "admin" ? "No assessments yet. Create one after classes, subjects, and teacher assignments are ready." : "No assessments have been assigned to your classes yet."}</p> : <div className="table-scroll"><table className="assessment-table"><thead><tr><th>ASSESSMENT</th><th>CLASS</th><th>TEACHER</th><th>MARKS ENTERED</th><th>STATUS</th><th></th></tr></thead><tbody>{assessments.map((assessment) => <tr key={assessment.id}>
                 <td><strong>{assessment.title}</strong><small className="assessment-subtitle">{assessment.subject} · {assessment.term} · out of {assessment.maxScore}</small></td>
                 <td>{assessment.grade} {assessment.section}<small className="assessment-subtitle">{assessment.academicYear}{assessment.dueDate ? ` · Due ${new Date(`${assessment.dueDate}T00:00:00`).toLocaleDateString("en-NG")}` : ""}</small></td>
                 <td>{assessment.teacherEmail || "Assigned teacher"}</td>
@@ -2912,7 +2943,7 @@ function App() {
             </section>
 
             {selectedAssessmentId && <section className="panel assessment-detail-panel">
-              {assessmentDetailLoading ? <p className="empty-search">Loading student marks…</p> : assessmentDetail && <>
+              {assessmentDetailLoading ? <LoadingMessage>Loading student marks…</LoadingMessage> : assessmentDetail && <>
                 <div className="panel-heading"><div><h2>{assessmentDetail.assessment.title}</h2><p>{assessmentDetail.assessment.grade} {assessmentDetail.assessment.section} · {assessmentDetail.assessment.subject} · {assessmentDetail.assessment.term} · Maximum {assessmentDetail.assessment.maxScore}</p></div><button className="quiet-action" type="button" onClick={() => setSelectedAssessmentId("")}>Close</button></div>
                 {assessmentDetail.assessment.reviewNote && <p className={`assessment-review-note ${assessmentDetail.assessment.status === "returned" ? "returned" : ""}`}>{assessmentDetail.assessment.status === "returned" ? "Returned with feedback: " : "Administrator note: "}{assessmentDetail.assessment.reviewNote}</p>}
                 <div className="table-scroll"><table className="assessment-marks-table"><thead><tr><th>STUDENT</th><th>ADMISSION NO.</th><th>MARK / {assessmentDetail.assessment.maxScore}</th></tr></thead><tbody>{assessmentDetail.students.map((student, index) => {
@@ -2963,7 +2994,7 @@ function App() {
                 <button className="button button-secondary button-small" type="button" onClick={() => document.getElementById("teacherName")?.focus()}>Register a teacher</button>
               </div>
               {assignmentError && <p className="form-error" role="alert">{assignmentError}</p>}
-              {loadingAssignments ? <p className="empty-search">Loading teacher assignments…</p> : teacherRoster.length === 0 ? <p className="empty-search">No teachers have activated their accounts yet. Register a teacher above and share their activation link before assigning classes.</p> : <>
+              {loadingAssignments ? <LoadingMessage>Loading teacher assignments…</LoadingMessage> : teacherRoster.length === 0 ? <p className="empty-search">No teachers have activated their accounts yet. Register a teacher above and share their activation link before assigning classes.</p> : <>
                 <form className="assignment-form" onSubmit={assignTeacher}>
                   <label><span>Class</span><select className="text-input" required value={assignmentClassId} onChange={(event) => {
                     const classId = event.target.value;
@@ -2985,7 +3016,7 @@ function App() {
               <div className="panel-heading"><div><h2>Class form masters</h2><p>Choose one active teacher for each class. Form masters can add their own signature to that class’s published reports.</p></div></div>
               {formMasterError && <p className="form-error" role="alert">{formMasterError}</p>}
               {formMasterLoading || loadingClasses || loadingAssignments
-                ? <p className="empty-search">Loading classes and teachers…</p>
+                ? <LoadingMessage>Loading classes and teachers…</LoadingMessage>
                 : schoolClasses.length === 0
                   ? <p className="empty-search">Create a class before assigning a form master. <button className="inline-action" type="button" onClick={() => setPage("classes")}>Go to Classes & subjects →</button></p>
                   : teacherRoster.length === 0
@@ -3012,14 +3043,14 @@ function App() {
             <section className="panel teacher-assignment-panel">
               <div className="panel-heading"><div><h2>Your teaching assignments</h2><p>These are the classes and subjects assigned to your teacher account.</p></div></div>
               {assignmentError && <p className="form-error" role="alert">{assignmentError}</p>}
-              {loadingAssignments ? <p className="empty-search">Loading your assignments…</p> : teachingAssignments.length === 0 ? <p className="empty-search">No classes or subjects are assigned to you yet. Ask your school administrator to assign them.</p> : <div className="class-list teacher-assignment-cards">{teachingAssignments.map((assignment) => <article className="class-card tilt-3d" key={assignment.id}><div className="class-card-top"><span className="class-card-grade">{assignment.grade}</span><span className="class-year-pill">{assignment.academicYear}</span></div><h3>{assignment.section}</h3><p>{assignment.subject}</p></article>)}</div>}
+              {loadingAssignments ? <LoadingMessage>Loading your assignments…</LoadingMessage> : teachingAssignments.length === 0 ? <p className="empty-search">No classes or subjects are assigned to you yet. Ask your school administrator to assign them.</p> : <div className="class-list teacher-assignment-cards">{teachingAssignments.map((assignment) => <article className="class-card tilt-3d" key={assignment.id}><div className="class-card-top"><span className="class-card-grade">{assignment.grade}</span><span className="class-year-pill">{assignment.academicYear}</span></div><h3>{assignment.section}</h3><p>{assignment.subject}</p></article>)}</div>}
             </section>
           </section>}
 
           {page === "students" && role === "admin" && <section className="student-workspace">
             <section className="panel student-form-panel" id="studentForm">
               <div className="panel-heading"><div><h2>{editingStudentId ? "Edit student record" : "Enrol a student"}</h2><p>Only collect the details your school needs to manage enrolment.</p></div></div>
-              {loadingClasses ? <p className="empty-search">Loading classes…</p> : classError ? <p className="form-error" role="alert">{classError}</p> : schoolClasses.length === 0 ? <p className="empty-search">Create a class first. <button className="inline-action" type="button" onClick={() => setPage("classes")}>Go to Classes & subjects →</button></p> : <form className="student-create-form" onSubmit={saveStudent}>
+              {loadingClasses ? <LoadingMessage>Loading classes…</LoadingMessage> : classError ? <p className="form-error" role="alert">{classError}</p> : schoolClasses.length === 0 ? <p className="empty-search">Create a class first. <button className="inline-action" type="button" onClick={() => setPage("classes")}>Go to Classes & subjects →</button></p> : <form className="student-create-form" onSubmit={saveStudent}>
                 <label><span>First name</span><input className="text-input" required maxLength={80} autoComplete="given-name" value={studentForm.firstName} onChange={(event) => setStudentForm((previous) => ({ ...previous, firstName: event.target.value }))} /></label>
                 <label><span>Last name</span><input className="text-input" required maxLength={80} autoComplete="family-name" value={studentForm.lastName} onChange={(event) => setStudentForm((previous) => ({ ...previous, lastName: event.target.value }))} /></label>
                 <label><span>Admission number</span><input className="text-input" required maxLength={32} value={studentForm.admissionNumber} onChange={(event) => setStudentForm((previous) => ({ ...previous, admissionNumber: event.target.value }))} placeholder="e.g. AST/2026/001" /></label>
@@ -3068,7 +3099,7 @@ function App() {
               <div className="table-scroll"><table><thead><tr><th>STUDENT</th><th>ADMISSION NO.</th><th>CLASS</th><th>GUARDIAN CONTACT</th><th>STATUS</th><th>STUDENT PORTAL</th><th>PARENT PORTAL</th><th>ACTIONS</th></tr></thead><tbody>
                 {studentRows.map((student) => <tr key={student.id}><td><strong>{student.firstName} {student.lastName}</strong></td><td>{student.admissionNumber}</td><td>{student.grade} {student.section}</td><td>{student.guardianEmail || student.guardianPhone || "—"}</td><td><span className={`status-pill ${student.isActive ? "approved" : "draft"}`}><i />{student.isActive ? "Active" : "Archived"}</span></td><td>{student.isPortalLinked ? <span className="student-portal-linked" title={student.portalEmail || "Portal account linked"}>Linked{student.portalEmail ? ` · ${student.portalEmail}` : ""}</span> : <button className="quiet-action" type="button" onClick={() => inviteStudent(student)} disabled={linkingStudentId === student.id}>{linkingStudentId === student.id ? "Creating…" : "Invite"}</button>}</td><td>{student.isParentPortalLinked ? <span className="student-portal-linked">Linked</span> : student.parentInvitationPending ? <span className="field-hint">Invited</span> : <button className="quiet-action" type="button" onClick={() => inviteParent(student)} disabled={!student.isActive || !student.guardianEmail || linkingStudentId === student.id}>{linkingStudentId === student.id ? "Creating…" : student.guardianEmail ? "Invite guardian" : "Add guardian email"}</button>}</td><td><div className="student-row-actions"><button className="quiet-action" type="button" onClick={() => editStudent(student)}>Edit</button><button className="quiet-action" type="button" onClick={() => toggleStudentStatus(student)}>{student.isActive ? "Archive" : "Reactivate"}</button></div></td></tr>)}
               </tbody></table>
-                {loadingStudents && <div className="empty-search">Loading student records…</div>}
+                {loadingStudents && <LoadingMessage>Loading student records…</LoadingMessage>}
                 {!loadingStudents && studentRows.length === 0 && <div className="empty-search">No students found. Add your first student above or adjust the filters.</div>}
               </div>
               <div className="table-footer student-pagination"><span>Page {studentPage} of {Math.max(1, Math.ceil(studentTotal / 100))}</span><div><button className="button button-secondary button-small" type="button" disabled={studentPage <= 1 || loadingStudents} onClick={() => setStudentPage((previous) => previous - 1)}>Previous</button><button className="button button-secondary button-small" type="button" disabled={studentPage >= Math.ceil(studentTotal / 100) || loadingStudents} onClick={() => setStudentPage((previous) => previous + 1)}>Next</button></div></div>
@@ -3083,7 +3114,7 @@ function App() {
             <section className="panel invitation-manager-panel">
               <div className="panel-heading"><div><h2>Outstanding invitations</h2><p>Review and manage links for people who have not activated their school access yet.</p></div><button className="button button-secondary button-small" type="button" onClick={() => setInvitationRefresh((previous) => previous + 1)} disabled={loadingInvitations}>Refresh</button></div>
               {invitationErrorForCurrentSchool && <p className="form-error" role="alert">{invitationErrorForCurrentSchool}</p>}
-              {invitationsPending ? <p className="empty-search">Loading invitations…</p>
+              {invitationsPending ? <LoadingMessage>Loading invitations…</LoadingMessage>
                 : invitationsForCurrentSchool?.length ? <div className="table-scroll"><table className="invitation-manager-table"><thead><tr><th>INVITEE</th><th>EMAIL</th><th>ACCESS</th><th>EXPIRES</th><th>STATUS</th><th>ACTIONS</th></tr></thead><tbody>
                   {invitationsForCurrentSchool.map((invitation) => {
                     const invitee = invitation.inviteeName || invitation.email;
@@ -3103,7 +3134,7 @@ function App() {
             </section>
           </>}
 
-          {page === "overview" && dashboardPending && <section className="panel dashboard-message" role="status">Loading your school overview…</section>}
+          {page === "overview" && dashboardPending && <section className="panel dashboard-message"><LoadingMessage>Loading your school overview…</LoadingMessage></section>}
           {page === "overview" && dashboardErrorForCurrentSchool && <section className="panel dashboard-message dashboard-error" role="alert"><span>{dashboardErrorForCurrentSchool}</span><button className="button button-secondary button-small" type="button" onClick={() => setDashboardRefresh((previous) => previous + 1)}>Retry</button></section>}
           {page === "overview" && !dashboardPending && !dashboardErrorForCurrentSchool && dashboardForCurrentSchool && <>
             <section className="stats-grid" aria-label="School summary">
@@ -3118,7 +3149,7 @@ function App() {
                 <button className="button button-secondary button-small" type="button" onClick={() => setPage("results")}>Open assessments</button>
               </div>
               {loadingAssessments
-                ? <p className="empty-search">Loading your assessment tasks…</p>
+                ? <LoadingMessage>Loading your assessment tasks…</LoadingMessage>
                 : assessmentError
                   ? <div className="dashboard-message dashboard-error" role="alert"><span>{assessmentError}</span><button className="button button-secondary button-small" type="button" onClick={() => setAssessmentRefresh((previous) => previous + 1)}>Retry</button></div>
                   : teacherAssessmentActions.length
@@ -3186,7 +3217,7 @@ function App() {
                 ? <article className="panel student-performance-history-panel">
                   <div className="panel-heading"><div><h2>My performance history</h2><p>Average scores from your published reports, in publication order.</p></div></div>
                   {loadingStudentResults || (!studentResultData && !studentResultError)
-                    ? <p className="empty-search">Loading your published results…</p>
+                    ? <LoadingMessage>Loading your published results…</LoadingMessage>
                     : studentResultError
                       ? <div className="dashboard-message dashboard-error" role="alert"><span>{studentResultError}</span><button className="button button-secondary button-small" type="button" onClick={() => setStudentResultsRefresh((previous) => previous + 1)}>Retry</button></div>
                       : !studentResultData?.linked

@@ -55,10 +55,37 @@ async function getReadyDatabase() {
             updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
             CONSTRAINT school_billing_settings_plan_check CHECK (
               (billing_status = 'paid' AND plan_id IS NOT NULL
-                AND plan_id IN ('starter', 'growth', 'scale'))
+                AND plan_id IN ('starter', 'growth', 'scale', 'custom'))
               OR (billing_status <> 'paid' AND plan_id IS NULL)
             )
           )
+        `,
+        database.sql`
+          DO $$
+          BEGIN
+            IF EXISTS (
+              SELECT 1 FROM pg_constraint
+              WHERE conname = 'school_billing_settings_plan_check'
+                AND conrelid = 'school_billing_settings'::regclass
+                AND pg_get_constraintdef(oid) NOT LIKE '%custom%'
+            ) THEN
+              ALTER TABLE school_billing_settings
+                DROP CONSTRAINT school_billing_settings_plan_check;
+            END IF;
+            IF NOT EXISTS (
+              SELECT 1 FROM pg_constraint
+              WHERE conname = 'school_billing_settings_plan_check'
+                AND conrelid = 'school_billing_settings'::regclass
+            ) THEN
+              ALTER TABLE school_billing_settings
+                ADD CONSTRAINT school_billing_settings_plan_check CHECK (
+                  (billing_status = 'paid' AND plan_id IS NOT NULL
+                    AND plan_id IN ('starter', 'growth', 'scale', 'custom'))
+                  OR (billing_status <> 'paid' AND plan_id IS NULL)
+                );
+            END IF;
+          END;
+          $$
         `,
         database.sql`
           CREATE TABLE IF NOT EXISTS school_grading_settings (

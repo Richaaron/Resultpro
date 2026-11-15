@@ -1,7 +1,7 @@
-import { subscriptionPlans } from "../shared/billing-plans.js";
+import { billablePlans } from "../shared/billing-plans.js";
 
 const platformBillingStatuses = new Set(["pending", "exempt", "paid"]);
-const platformBillingPlanIds = new Set(subscriptionPlans.map((plan) => plan.id));
+const platformBillingPlanIds = new Set(billablePlans.map((plan) => plan.id));
 const platformSchoolPageSize = 50;
 
 export function isPlatformAdminEmail(email, configuredEmails = process.env.PLATFORM_ADMIN_EMAILS || "") {

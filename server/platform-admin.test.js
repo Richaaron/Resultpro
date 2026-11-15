@@ -32,8 +32,12 @@ test("validates per-school billing decisions and requires an approved plan for p
     billingStatus: "paid",
     planId: "growth",
   });
+  assert.deepEqual(normalizePlatformSchoolBillingDecision({ billingStatus: "paid", planId: "custom" }), {
+    billingStatus: "paid",
+    planId: "custom",
+  });
   assert.equal(normalizePlatformSchoolBillingDecision({ billingStatus: "paid" }), null);
-  assert.equal(normalizePlatformSchoolBillingDecision({ billingStatus: "paid", planId: "custom" }), null);
+  assert.equal(normalizePlatformSchoolBillingDecision({ billingStatus: "paid", planId: "free" }), null);
   assert.equal(normalizePlatformSchoolBillingDecision({ billingStatus: "exempt", planId: "starter" }), null);
   assert.equal(normalizePlatformSchoolBillingDecision({ billingStatus: "overdue" }), null);
 });
