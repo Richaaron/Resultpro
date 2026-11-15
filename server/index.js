@@ -2,6 +2,7 @@ import express from "express";
 import dotenv from "dotenv";
 import {
   acceptInvitation,
+  claimAccountWelcomeEmail,
   countSchoolStudents,
   createInvitation,
   createSchoolAssessment,
@@ -18,6 +19,7 @@ import {
   getSchoolClassAttendanceReport,
   getSchoolGradingSettings,
   getSchoolRole,
+  finishAccountWelcomeEmail,
   listSchoolAcademicCalendar,
   createSchoolAcademicSession,
   setCurrentSchoolAcademicSession,
@@ -101,6 +103,7 @@ import {
   normalizePlatformSchoolDirectoryQuery,
 } from "./platform-admin.js";
 import { sendInvitationEmail } from "./invitation-email.js";
+import { sendAccountWelcomeEmail, sendTeacherRegistrationEmail } from "./account-email.js";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -121,6 +124,29 @@ app.use(express.json({ limit: "128kb" }));
 
 app.get("/api/health", (_request, response) => {
   response.json({ status: "ok" });
+});
+
+app.post("/api/account/welcome-email", requireAuth, async (request, response) => {
+  try {
+    const claim = await claimAccountWelcomeEmail(request.auth.userId);
+    if (!claim.claimed) {
+      return response.json({
+        emailDelivery: claim.alreadySent
+          ? { status: "sent", message: "Your Aster sign-in details were already emailed to your verified address." }
+          : { status: "sending", message: "Your Aster sign-in details email is already being prepared." },
+      });
+    }
+
+    const emailDelivery = await sendAccountWelcomeEmail({
+      email: request.auth.email,
+      userId: request.auth.userId,
+    });
+    await finishAccountWelcomeEmail(request.auth.userId, emailDelivery.status === "sent");
+    response.set("Cache-Control", "no-store");
+    return response.json({ emailDelivery });
+  } catch (error) {
+    return handleDatabaseError(error, response);
+  }
 });
 
 app.get("/api/platform/access", requireAuth, (request, response) => {
@@ -1363,7 +1389,16 @@ app.post("/api/schools/:schoolId/invitations", requireAuth, async (request, resp
       });
     }
     const emailDelivery = await sendInvitationEmail(invitation);
-    return response.status(201).json({ invitation, emailDelivery });
+    const adminNotification = role === "teacher"
+      ? await sendTeacherRegistrationEmail({
+        adminEmail: request.auth.email,
+        teacherEmail: invitation.email,
+        teacherName: invitation.teacherName,
+        teacherCode: invitation.teacherCode,
+        schoolName: invitation.schoolName,
+      })
+      : null;
+    return response.status(201).json({ invitation, emailDelivery, adminNotification });
   } catch (error) {
     return handleDatabaseError(error, response);
   }

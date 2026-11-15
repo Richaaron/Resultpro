@@ -91,6 +91,7 @@ export default function AuthScreen({ authClient, notice, initialEmail = "", init
   const [name, setName] = useState("");
   const [schoolName, setSchoolName] = useState("");
   const [pendingSchoolSetup, setPendingSchoolSetup] = useState(false);
+  const [pendingWelcomeEmail, setPendingWelcomeEmail] = useState("");
   const [email, setEmail] = useState(initialEmail);
   const [password, setPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
@@ -133,6 +134,7 @@ export default function AuthScreen({ authClient, notice, initialEmail = "", init
       if (result.error) throw new Error(result.error.message || "Authentication failed.");
 
       if (registeringAccount) setPendingSchoolSetup(Boolean(schoolNameForSetup));
+      if (registeringAccount) setPendingWelcomeEmail(email.trim().toLowerCase());
       if (schoolNameForSetup) {
         try {
           window.sessionStorage.setItem(pendingSchoolNameKey, schoolNameForSetup);
@@ -146,8 +148,10 @@ export default function AuthScreen({ authClient, notice, initialEmail = "", init
         setMessage(`Enter the verification code sent to your email before continuing.${schoolNameForSetup && !schoolNameSaved ? " Keep this page open so we can carry your school name into setup." : ""}`);
         return;
       }
+      const newAccount = registeringAccount || pendingWelcomeEmail === email.trim().toLowerCase();
       await onAuthenticated({
         schoolName: registeringAccount || pendingSchoolSetup ? schoolNameForSetup : "",
+        newAccount,
         signInData: result.data,
       });
     } catch (requestError) {
@@ -167,7 +171,11 @@ export default function AuthScreen({ authClient, notice, initialEmail = "", init
       if (result.error) throw new Error(result.error.message || "That verification code could not be accepted.");
       const session = await authClient.getSession();
       if (session.data?.session?.user?.emailVerified) {
-        await onAuthenticated({ schoolName: pendingSchoolSetup && !hasInvitation ? schoolName.trim() : "", signInData: session.data?.session });
+        await onAuthenticated({
+          schoolName: pendingSchoolSetup && !hasInvitation ? schoolName.trim() : "",
+          newAccount: pendingWelcomeEmail === email.trim().toLowerCase(),
+          signInData: session.data?.session,
+        });
       } else {
         setVerifyingEmail(false);
         setMode("sign-in");
@@ -275,8 +283,8 @@ export default function AuthScreen({ authClient, notice, initialEmail = "", init
                 ? "Enter your account email and we’ll send you a link to reset your password."
                 : mode === "sign-up"
                   ? hasInvitation
-                    ? "Create your account to accept your school invitation."
-                    : "Create your account. School setup is optional; platform-owner access requires an approved email address."
+                    ? "Create your account with the email that received your school invitation, then activate your access with a private password."
+                    : "Create your account with your email and a private password; school setup is optional. After email verification, we’ll send your account reference and sign-in instructions."
                   : "Sign in to continue to your school workspace."}
         </p>
         {notice && <p className="auth-message" role="status">{notice}</p>}

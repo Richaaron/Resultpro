@@ -1721,6 +1721,10 @@ function App() {
       setTeacherRegistration({
         ...payload.invitation,
         emailDelivery,
+        adminNotification: payload.adminNotification || {
+          status: "unavailable",
+          message: "The administrator notification status is unavailable.",
+        },
         activationUrl: `${window.location.origin}${school.portalUrl || `/school/${school.slug}`}#invite=${encodeURIComponent(payload.invitation.token)}`,
       });
       setTeacherName("");
@@ -2570,7 +2574,7 @@ function App() {
     }
   }
 
-  async function restoreSession({ schoolName = "", signInData = null } = {}) {
+  async function restoreSession({ schoolName = "", signInData = null, newAccount = false } = {}) {
     const result = await authClient.getSession();
     if (result.error) throw new Error(result.error.message || "Could not load your account.");
     let session = result.data?.session || null;
@@ -2594,6 +2598,14 @@ function App() {
     }
     setAuthNotice("");
     setSession(session);
+    if (newAccount) {
+      try {
+        const { emailDelivery } = await apiRequest("/api/account/welcome-email", { method: "POST" });
+        setToast(emailDelivery.message);
+      } catch (requestError) {
+        setToast(`Your account is ready, but the sign-in details email could not be sent: ${requestError.message}`);
+      }
+    }
   }
 
   async function signOut() {
@@ -3341,7 +3353,7 @@ function App() {
 
           {page === "teachers" && role === "admin" && <section className="teacher-workspace">
             <section className="panel teacher-registration-panel">
-              <div className="panel-heading"><div><h2>Register a teacher</h2><p>Add the teacher’s name and email. Aster creates a staff code and a seven-day activation link; the teacher sets their own password when they activate the account.</p></div></div>
+              <div className="panel-heading"><div><h2>Register a teacher</h2><p>Add the teacher’s name and email. Aster sends the teacher a seven-day activation link and emails you their staff ID. The teacher sets their own password securely.</p></div></div>
               <form className="invite-form" onSubmit={registerTeacher}>
                 <label className="field-label" htmlFor="teacherName">Teacher’s full name</label>
                 <input className="text-input" id="teacherName" autoComplete="name" required minLength={2} maxLength={120} value={teacherName} onChange={(event) => setTeacherName(event.target.value)} placeholder="e.g. Ada Okafor" />
@@ -3354,11 +3366,12 @@ function App() {
                 <p className="auth-kicker">TEACHER ACCOUNT READY TO ACTIVATE</p>
                 <p><strong>{teacherRegistration.teacherName}</strong> · {teacherRegistration.email}</p>
                 <p className={teacherRegistration.emailDelivery.status === "sent" ? "field-hint" : "form-error"} role="status">{teacherRegistration.emailDelivery.message}</p>
+                <p className={teacherRegistration.adminNotification.status === "sent" ? "field-hint" : "form-error"} role="status">{teacherRegistration.adminNotification.message}</p>
                 <label className="field-label" htmlFor="teacherCode">Generated teacher code</label>
                 <input className="text-input" id="teacherCode" readOnly value={teacherRegistration.teacherCode} />
                 <label className="field-label" htmlFor="teacherActivationUrl">One-time activation link</label>
                 <div><input className="text-input" id="teacherActivationUrl" readOnly value={teacherRegistration.activationUrl} /><button className="button button-secondary" type="button" onClick={copyTeacherActivationLink}>Copy link</button></div>
-                <p className="field-hint">This seven-day link is a backup. Share it only with the registered teacher; they verify their email and create their own password.</p>
+                <p className="field-hint">This seven-day link is a backup. Share it only with the registered teacher; they verify their email and create their own password. Passwords are never sent to administrators.</p>
               </div>}
             </section>
             {teacherRoster.length > 0 && <section className="panel teacher-roster-panel">

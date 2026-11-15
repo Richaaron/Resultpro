@@ -46,6 +46,13 @@ async function getReadyDatabase() {
           )
         `,
         database.sql`
+          CREATE TABLE IF NOT EXISTS account_welcome_email_deliveries (
+            user_id TEXT PRIMARY KEY,
+            claimed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            sent_at TIMESTAMPTZ
+          )
+        `,
+        database.sql`
           ALTER TABLE schools ADD COLUMN IF NOT EXISTS logo_data TEXT
             CHECK (logo_data IS NULL OR
               (length(logo_data) <= 88000 AND logo_data LIKE 'data:image/png;base64,%'))
@@ -803,6 +810,43 @@ export async function createSchool(school, userId) {
     `,
   ]);
   return { ...created, role: "admin", portalUrl: `/school/${slug}` };
+}
+
+export async function claimAccountWelcomeEmail(userId) {
+  const sql = await getReadyDatabase();
+  const [claimed] = await sql`
+    INSERT INTO account_welcome_email_deliveries (user_id)
+    VALUES (${userId})
+    ON CONFLICT (user_id) DO UPDATE
+    SET claimed_at = NOW()
+    WHERE account_welcome_email_deliveries.sent_at IS NULL
+      AND account_welcome_email_deliveries.claimed_at < NOW() - INTERVAL '5 minutes'
+    RETURNING user_id
+  `;
+  if (claimed) return { claimed: true, alreadySent: false };
+
+  const [existing] = await sql`
+    SELECT sent_at IS NOT NULL AS "alreadySent"
+    FROM account_welcome_email_deliveries
+    WHERE user_id = ${userId}
+  `;
+  return { claimed: false, alreadySent: existing?.alreadySent === true };
+}
+
+export async function finishAccountWelcomeEmail(userId, sent) {
+  const sql = await getReadyDatabase();
+  if (sent) {
+    await sql`
+      UPDATE account_welcome_email_deliveries
+      SET sent_at = NOW()
+      WHERE user_id = ${userId}
+    `;
+  } else {
+    await sql`
+      DELETE FROM account_welcome_email_deliveries
+      WHERE user_id = ${userId} AND sent_at IS NULL
+    `;
+  }
 }
 
 export async function getSchoolRole(schoolId, userId) {
