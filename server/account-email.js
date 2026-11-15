@@ -83,7 +83,7 @@ export async function sendTeacherRegistrationEmail({
   return sendEmail({
     to: adminEmail,
     subject: `Teacher registered for ${schoolName}`,
-    text: `${teacherName} has been registered as a teacher for ${schoolName}.\n\nTeacher ID: ${teacherCode}\nTeacher sign-in email: ${teacherEmail}\n\nThe one-time activation link is sent separately to the teacher, who creates their own password. For security, passwords are never emailed or shared with school administrators.`,
-    html: `<p><strong>${safeTeacherName}</strong> has been registered as a teacher for <strong>${safeSchoolName}</strong>.</p><p>Teacher ID: <strong>${safeTeacherCode}</strong><br>Teacher sign-in email: <strong>${safeTeacherEmail}</strong></p><p>The one-time activation link is sent separately to the teacher, who creates their own password. For security, passwords are never emailed or shared with school administrators.</p>`,
+    text: `${teacherName} has been registered as a teacher for ${schoolName}.\n\nTeacher ID: ${teacherCode}\nTeacher sign-in email: ${teacherEmail}\n\nThe generated password is shown once in Aster and is not included in this email. Share the ID and password with the teacher through a private channel. They use these credentials to create a new account or link an existing account, then verify the registered email.`,
+    html: `<p><strong>${safeTeacherName}</strong> has been registered as a teacher for <strong>${safeSchoolName}</strong>.</p><p>Teacher ID: <strong>${safeTeacherCode}</strong><br>Teacher sign-in email: <strong>${safeTeacherEmail}</strong></p><p>The generated password is shown once in Aster and is not included in this email. Share the ID and password with the teacher through a private channel. They use these credentials to create a new account or link an existing account, then verify the registered email.</p>`,
   }, options);
 }

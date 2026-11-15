@@ -1,5 +1,5 @@
 import { neon } from "@neondatabase/serverless";
-import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID, scryptSync, timingSafeEqual } from "node:crypto";
 import { createSchoolSlug } from "./school-input.js";
 import {
   applyGradingSettingsToRows,
@@ -221,6 +221,30 @@ async function getReadyDatabase() {
           CREATE UNIQUE INDEX IF NOT EXISTS school_invitations_teacher_code_idx
           ON school_invitations (school_id, teacher_code)
           WHERE teacher_code IS NOT NULL
+        `,
+        database.sql`
+          CREATE TABLE IF NOT EXISTS school_teacher_setup_credentials (
+            school_id UUID NOT NULL REFERENCES schools(id) ON DELETE CASCADE,
+            teacher_code VARCHAR(24) NOT NULL,
+            email VARCHAR(254) NOT NULL,
+            teacher_name VARCHAR(120) NOT NULL,
+            password_salt CHAR(32),
+            password_hash CHAR(128),
+            created_by TEXT NOT NULL,
+            expires_at TIMESTAMPTZ NOT NULL,
+            failed_attempts INTEGER NOT NULL DEFAULT 0,
+            locked_until TIMESTAMPTZ,
+            setup_verified_at TIMESTAMPTZ,
+            credential_version INTEGER NOT NULL DEFAULT 0,
+            activated_at TIMESTAMPTZ,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            PRIMARY KEY (school_id, teacher_code),
+            UNIQUE (school_id, email)
+          )
+        `,
+        database.sql`
+          CREATE UNIQUE INDEX IF NOT EXISTS school_teacher_setup_credentials_code_idx
+          ON school_teacher_setup_credentials (teacher_code)
         `,
         database.sql`
           CREATE TABLE IF NOT EXISTS school_subjects (
@@ -2308,6 +2332,159 @@ export async function listSchoolTeachers(schoolId) {
     WHERE school_id = ${schoolId} AND role = 'teacher' AND email IS NOT NULL
     ORDER BY display_name, email
   `;
+}
+
+export async function createTeacherSetupCredential({ schoolId, email, teacherName, userId }) {
+  const sql = await getReadyDatabase();
+  const [school] = await sql`
+    SELECT name AS "schoolName"
+    FROM schools
+    WHERE id = ${schoolId}
+  `;
+  if (!school) return null;
+
+  const [existingMember] = await sql`
+    SELECT 1
+    FROM school_members
+    WHERE school_id = ${schoolId} AND LOWER(email) = LOWER(${email})
+  `;
+  if (existingMember) return null;
+
+  const setupPassword = randomBytes(18).toString("base64url");
+  const passwordSalt = randomBytes(16).toString("hex");
+  const passwordHash = scryptSync(setupPassword, passwordSalt, 64).toString("hex");
+  const [existingCredential] = await sql`
+    SELECT teacher_code AS "teacherCode", credential_version AS "credentialVersion"
+    FROM school_teacher_setup_credentials
+    WHERE school_id = ${schoolId}
+      AND LOWER(email) = LOWER(${email})
+      AND activated_at IS NULL
+  `;
+
+  let credential;
+  if (existingCredential) {
+    [credential] = await sql`
+      UPDATE school_teacher_setup_credentials
+      SET teacher_name = ${teacherName},
+          password_salt = ${passwordSalt},
+          password_hash = ${passwordHash},
+          created_by = ${userId},
+          expires_at = NOW() + INTERVAL '30 days',
+          failed_attempts = 0,
+          locked_until = NULL,
+          setup_verified_at = NULL,
+          credential_version = credential_version + 1,
+          created_at = NOW()
+      WHERE school_id = ${schoolId}
+        AND teacher_code = ${existingCredential.teacherCode}
+        AND credential_version = ${existingCredential.credentialVersion}
+        AND activated_at IS NULL
+      RETURNING teacher_code AS "teacherCode", email, teacher_name AS "teacherName"
+    `;
+  } else {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const teacherCode = `TCH-${randomBytes(8).toString("hex").toUpperCase()}`;
+      [credential] = await sql`
+        INSERT INTO school_teacher_setup_credentials
+          (school_id, teacher_code, email, teacher_name, password_salt,
+           password_hash, created_by, expires_at)
+        SELECT
+          ${schoolId}, ${teacherCode}, ${email}, ${teacherName}, ${passwordSalt},
+          ${passwordHash}, ${userId}, NOW() + INTERVAL '30 days'
+        WHERE NOT EXISTS (
+          SELECT 1 FROM school_members WHERE teacher_code = ${teacherCode}
+          UNION ALL
+          SELECT 1 FROM school_invitations WHERE teacher_code = ${teacherCode}
+        )
+        ON CONFLICT DO NOTHING
+        RETURNING teacher_code AS "teacherCode", email, teacher_name AS "teacherName"
+      `;
+      if (credential) break;
+    }
+  }
+  if (!credential) return null;
+
+  await sql`
+    UPDATE school_invitations
+    SET revoked_at = NOW()
+    WHERE school_id = ${schoolId}
+      AND LOWER(email) = LOWER(${email})
+      AND role = 'teacher'
+      AND accepted_at IS NULL
+      AND revoked_at IS NULL
+  `;
+  return { ...credential, ...school, setupPassword };
+}
+
+export async function verifyTeacherSetupCredential(teacherCode, setupPassword) {
+  const sql = await getReadyDatabase();
+  const [credential] = await sql`
+    UPDATE school_teacher_setup_credentials
+    SET failed_attempts = CASE
+          WHEN failed_attempts >= 9 THEN 0
+          ELSE failed_attempts + 1
+        END,
+        locked_until = CASE
+          WHEN failed_attempts >= 9 THEN NOW() + INTERVAL '15 minutes'
+          ELSE locked_until
+        END
+    WHERE teacher_code = ${teacherCode}
+      AND activated_at IS NULL
+      AND expires_at > NOW()
+      AND (locked_until IS NULL OR locked_until <= NOW())
+      AND failed_attempts < 10
+    RETURNING school_id AS "schoolId", email,
+              teacher_name AS "teacherName", password_salt AS "passwordSalt",
+              password_hash AS "passwordHash",
+              credential_version AS "credentialVersion"
+  `;
+  if (!credential || typeof credential.passwordHash !== "string"
+    || typeof credential.passwordSalt !== "string") return null;
+
+  const storedHash = Buffer.from(credential.passwordHash, "hex");
+  if (storedHash.length !== 64) return null;
+  const suppliedHash = scryptSync(setupPassword, credential.passwordSalt, storedHash.length);
+  if (storedHash.length !== suppliedHash.length || !timingSafeEqual(storedHash, suppliedHash)) return null;
+  const [verified] = await sql`
+    UPDATE school_teacher_setup_credentials
+    SET failed_attempts = 0, locked_until = NULL, setup_verified_at = NOW()
+    WHERE school_id = ${credential.schoolId}
+      AND teacher_code = ${teacherCode}
+      AND credential_version = ${credential.credentialVersion}
+      AND activated_at IS NULL
+    RETURNING teacher_code
+  `;
+  if (!verified) return null;
+  return { email: credential.email, teacherName: credential.teacherName };
+}
+
+export async function completeTeacherSetupCredential({ teacherCode, email, userId }) {
+  const sql = await getReadyDatabase();
+  const [membership] = await sql`
+    WITH claimed AS (
+      UPDATE school_teacher_setup_credentials c
+      SET activated_at = NOW(), password_salt = NULL, password_hash = NULL,
+          setup_verified_at = NULL
+      WHERE c.teacher_code = ${teacherCode}
+        AND LOWER(c.email) = LOWER(${email})
+        AND c.activated_at IS NULL
+        AND c.expires_at > NOW()
+        AND c.setup_verified_at > NOW() - INTERVAL '2 hours'
+        AND NOT EXISTS (
+          SELECT 1 FROM school_members m
+          WHERE m.school_id = c.school_id
+            AND (m.user_id = ${userId} OR LOWER(m.email) = LOWER(c.email))
+        )
+      RETURNING c.school_id, c.email, c.teacher_name, c.teacher_code
+    )
+    INSERT INTO school_members
+      (school_id, user_id, role, email, display_name, teacher_code)
+    SELECT school_id, ${userId}, 'teacher', email, teacher_name, teacher_code
+    FROM claimed
+    RETURNING school_id AS "schoolId", user_id AS "userId",
+              email, display_name AS "teacherName", teacher_code AS "teacherCode"
+  `;
+  return membership ?? null;
 }
 
 export async function getTeacherLoginDetails(teacherCode) {

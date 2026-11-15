@@ -31,7 +31,7 @@ test("emails new users their sign-in ID and password setup guidance without disc
   assert.doesNotMatch(payload.text, /temporary password|password: \S+/i);
 });
 
-test("notifies the school admin with the teacher code without sending the teacher activation secret", async () => {
+test("notifies the school admin with the teacher code but never emails the generated password", async () => {
   let payload;
   const result = await sendTeacherRegistrationEmail({
     adminEmail: "admin@example.com",
@@ -51,7 +51,8 @@ test("notifies the school admin with the teacher code without sending the teache
   assert.deepEqual(payload.to, ["admin@example.com"]);
   assert.match(payload.text, /Teacher ID: TCH-12345678/);
   assert.match(payload.text, /Teacher sign-in email: teacher@example\.com/);
-  assert.match(payload.text, /creates their own password/);
+  assert.match(payload.text, /password is shown once in Aster/);
+  assert.match(payload.text, /private channel/);
   assert.doesNotMatch(payload.text, /https?:\/\//i);
   assert.doesNotMatch(payload.html, /href=/i);
 });

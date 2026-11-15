@@ -4,7 +4,9 @@ import {
   acceptInvitation,
   claimAccountWelcomeEmail,
   countSchoolStudents,
+  completeTeacherSetupCredential,
   createInvitation,
+  createTeacherSetupCredential,
   createSchoolAssessment,
   createSchool,
   createSchoolClass,
@@ -20,6 +22,7 @@ import {
   getSchoolGradingSettings,
   getSchoolRole,
   getTeacherLoginDetails,
+  verifyTeacherSetupCredential,
   finishAccountWelcomeEmail,
   listSchoolAcademicCalendar,
   createSchoolAcademicSession,
@@ -147,6 +150,53 @@ app.post("/api/auth/teacher-login", async (request, response) => {
       return response.status(401).json({ error: "We couldn’t find an active teacher account for that ID." });
     }
     return response.json({ email: teacher.email });
+  } catch (error) {
+    return handleDatabaseError(error, response);
+  }
+});
+
+app.post("/api/auth/teacher-setup", async (request, response) => {
+  response.set("Cache-Control", "no-store");
+  const teacherCode = typeof request.body?.teacherCode === "string"
+    ? request.body.teacherCode.trim().toUpperCase()
+    : "";
+  const setupPassword = typeof request.body?.setupPassword === "string"
+    ? request.body.setupPassword
+    : "";
+  if (!/^TCH-[A-F0-9]{16}$/.test(teacherCode) || setupPassword.length < 8 || setupPassword.length > 128) {
+    return response.status(400).json({ error: "Enter the teacher ID and generated password exactly as provided." });
+  }
+
+  try {
+    const teacher = await verifyTeacherSetupCredential(teacherCode, setupPassword);
+    if (!teacher) return response.status(401).json({ error: "That teacher ID or generated password is not valid or has expired." });
+    return response.json({ teacher });
+  } catch (error) {
+    return handleDatabaseError(error, response);
+  }
+});
+
+app.post("/api/auth/teacher-setup/complete", requireAuth, async (request, response) => {
+  response.set("Cache-Control", "no-store");
+  const teacherCode = typeof request.body?.teacherCode === "string"
+    ? request.body.teacherCode.trim().toUpperCase()
+    : "";
+  if (!/^TCH-[A-F0-9]{16}$/.test(teacherCode)) {
+    return response.status(400).json({ error: "Enter a valid teacher ID." });
+  }
+
+  try {
+    const membership = await completeTeacherSetupCredential({
+      teacherCode,
+      email: request.auth.email,
+      userId: request.auth.userId,
+    });
+    if (!membership) {
+      return response.status(409).json({
+        error: "The verified account does not match an active teacher setup credential, or it has already been used.",
+      });
+    }
+    return response.json({ membership });
   } catch (error) {
     return handleDatabaseError(error, response);
   }
@@ -1376,18 +1426,14 @@ app.post("/api/schools/:schoolId/invitations", requireAuth, async (request, resp
   const { schoolId } = request.params;
   const role = request.body?.role;
   const studentId = request.body?.studentId;
-  const teacher = role === "teacher" ? normalizeTeacherRegistrationInput(request.body) : null;
-  const email = role === "teacher"
-    ? teacher?.email
-    : typeof request.body?.email === "string" ? request.body.email.trim().toLowerCase() : "";
+  const email = typeof request.body?.email === "string" ? request.body.email.trim().toLowerCase() : "";
   if (!isUuid(schoolId) || !email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254
-    || !["teacher", "student", "parent"].includes(role)
-    || (role === "teacher" && !teacher)
+    || !["student", "parent"].includes(role)
     || (studentId !== undefined && (!isUuid(studentId) || !["student", "parent"].includes(role)))
     || (["student", "parent"].includes(role) && !studentId)) {
     return response.status(400).json({
       error: role === "teacher"
-        ? "Enter the teacher’s full name and a valid email address."
+        ? "Teacher accounts use generated ID and password credentials. Use the Teachers page to register a teacher."
         : "Enter a valid email address; student and parent invitations must target a student record.",
     });
   }
@@ -1403,7 +1449,6 @@ app.post("/api/schools/:schoolId/invitations", requireAuth, async (request, resp
       role,
       userId: request.auth.userId,
       studentId,
-      teacherName: teacher?.teacherName,
     });
     if (!invitation) {
       return response.status(409).json({
@@ -1415,16 +1460,55 @@ app.post("/api/schools/:schoolId/invitations", requireAuth, async (request, resp
       });
     }
     const emailDelivery = await sendInvitationEmail(invitation);
-    const adminNotification = role === "teacher"
-      ? await sendTeacherRegistrationEmail({
-        adminEmail: request.auth.email,
-        teacherEmail: invitation.email,
-        teacherName: invitation.teacherName,
-        teacherCode: invitation.teacherCode,
-        schoolName: invitation.schoolName,
-      })
-      : null;
-    return response.status(201).json({ invitation, emailDelivery, adminNotification });
+    return response.status(201).json({ invitation, emailDelivery });
+  } catch (error) {
+    return handleDatabaseError(error, response);
+  }
+});
+
+app.post("/api/schools/:schoolId/teacher-credentials", requireAuth, async (request, response) => {
+  response.set("Cache-Control", "no-store");
+  const { schoolId } = request.params;
+  const teacher = normalizeTeacherRegistrationInput(request.body);
+  if (!isUuid(schoolId) || !teacher) {
+    return response.status(400).json({ error: "Enter the teacher’s full name and a valid email address." });
+  }
+
+  try {
+    const membershipRole = await getSchoolRole(schoolId, request.auth.userId);
+    if (!membershipRole) return response.status(404).json({ error: "School not found." });
+    if (membershipRole !== "admin") {
+      return response.status(403).json({ error: "Only a school administrator can create teacher credentials." });
+    }
+
+    const credential = await createTeacherSetupCredential({
+      schoolId,
+      email: teacher.email,
+      teacherName: teacher.teacherName,
+      userId: request.auth.userId,
+    });
+    if (!credential) {
+      return response.status(409).json({
+        error: "This email already belongs to an active teacher or a credential could not be created.",
+      });
+    }
+
+    const adminNotification = await sendTeacherRegistrationEmail({
+      adminEmail: request.auth.email,
+      teacherEmail: credential.email,
+      teacherName: credential.teacherName,
+      teacherCode: credential.teacherCode,
+      schoolName: credential.schoolName,
+    });
+    return response.status(201).json({
+      credential: {
+        email: credential.email,
+        teacherName: credential.teacherName,
+        teacherCode: credential.teacherCode,
+        teacherPassword: credential.setupPassword,
+      },
+      adminNotification,
+    });
   } catch (error) {
     return handleDatabaseError(error, response);
   }

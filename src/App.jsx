@@ -1710,26 +1710,20 @@ function App() {
     setTeacherRegistrationError("");
     setTeacherRegistration(null);
     try {
-      const payload = await apiRequest(`/api/schools/${school.id}/invitations`, {
+      const payload = await apiRequest(`/api/schools/${school.id}/teacher-credentials`, {
         method: "POST",
-        body: JSON.stringify({ email: inviteEmail, role: "teacher", teacherName }),
+        body: JSON.stringify({ email: inviteEmail, teacherName }),
       });
-      const emailDelivery = payload.emailDelivery || {
-        status: "unavailable",
-        message: "Email delivery status is unavailable. Copy the activation link and send it manually.",
-      };
       setTeacherRegistration({
-        ...payload.invitation,
-        emailDelivery,
+        ...payload.credential,
         adminNotification: payload.adminNotification || {
           status: "unavailable",
           message: "The administrator notification status is unavailable.",
         },
-        activationUrl: `${window.location.origin}${school.portalUrl || `/school/${school.slug}`}#invite=${encodeURIComponent(payload.invitation.token)}`,
       });
       setTeacherName("");
       setInviteEmail("");
-      setToast(emailDelivery.message);
+      setToast("Teacher ID and generated password are ready. Share them through a private channel.");
     } catch (requestError) {
       setTeacherRegistrationError(requestError.message || "Could not register this teacher.");
     } finally {
@@ -1737,16 +1731,14 @@ function App() {
     }
   }
 
-  async function copyTeacherActivationLink() {
+  async function copyTeacherCredentials() {
     try {
-      await navigator.clipboard.writeText(teacherRegistration.activationUrl);
-      setToast(teacherRegistration.emailDelivery.status === "sent"
-        ? "Teacher activation link copied as a backup."
-        : "Teacher activation link copied. Send it to the teacher’s registered email.");
+      await navigator.clipboard.writeText(
+        `Teacher ID: ${teacherRegistration.teacherCode}\nPassword: ${teacherRegistration.teacherPassword}\nSign-in email: ${teacherRegistration.email}`,
+      );
+      setToast("Teacher credentials copied. Share them directly and privately with the teacher.");
     } catch {
-      setToast(teacherRegistration.emailDelivery.status === "sent"
-        ? "The teacher was emailed. You can copy the activation link from the field as a backup."
-        : "Copy the activation link and send it to the teacher’s registered email.");
+      setToast("Could not copy the credentials. Select the ID and password fields to copy them manually.");
     }
   }
 
@@ -2586,6 +2578,29 @@ function App() {
     return payload.email;
   }
 
+  async function lookupTeacherSetupCredential(teacherCode, setupPassword) {
+    const response = await fetch(apiUrl("/api/auth/teacher-setup"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ teacherCode, setupPassword }),
+    });
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.error || "Could not verify the teacher credentials.");
+    if (!payload.teacher?.email || !payload.teacher?.teacherName) {
+      throw new Error("The teacher credentials could not be verified.");
+    }
+    return payload.teacher;
+  }
+
+  async function completeTeacherSetup(teacherCode) {
+    const payload = await apiRequest("/api/auth/teacher-setup/complete", {
+      method: "POST",
+      body: JSON.stringify({ teacherCode }),
+    });
+    if (!payload?.membership) throw new Error("The teacher account could not be activated.");
+    return payload.membership;
+  }
+
   async function restoreSession({ schoolName = "", signInData = null, newAccount = false } = {}) {
     const result = await authClient.getSession();
     if (result.error) throw new Error(result.error.message || "Could not load your account.");
@@ -2758,6 +2773,8 @@ function App() {
           verificationRequired={Boolean(session?.user && !session.user.emailVerified)}
           onAuthenticated={restoreSession}
           resolveTeacherLogin={resolveTeacherLogin}
+          lookupTeacherSetupCredential={lookupTeacherSetupCredential}
+          completeTeacherSetup={completeTeacherSetup}
           onDemo={openDemo}
           onWatchVideo={() => setExplainerOpen(true)}
           resetToken={resetToken}
@@ -3366,7 +3383,7 @@ function App() {
 
           {page === "teachers" && role === "admin" && <section className="teacher-workspace">
             <section className="panel teacher-registration-panel">
-              <div className="panel-heading"><div><h2>Register a teacher</h2><p>Add the teacher’s name and email. Aster sends the teacher a seven-day activation link and emails you their staff ID. After activating once, they can sign in with that ID and their own password.</p></div></div>
+              <div className="panel-heading"><div><h2>Register a teacher</h2><p>Add the teacher’s name and email. Aster generates a teacher ID and password for you to share privately. The teacher uses those credentials to create a new account or link an existing one, then verifies the registered email—there is no invitation link.</p></div></div>
               <form className="invite-form" onSubmit={registerTeacher}>
                 <label className="field-label" htmlFor="teacherName">Teacher’s full name</label>
                 <input className="text-input" id="teacherName" autoComplete="name" required minLength={2} maxLength={120} value={teacherName} onChange={(event) => setTeacherName(event.target.value)} placeholder="e.g. Ada Okafor" />
@@ -3376,19 +3393,19 @@ function App() {
                 <button className="button button-primary" type="submit" disabled={inviting}>{inviting ? "Registering…" : "Register teacher"}</button>
               </form>
               {teacherRegistration && <div className="invitation-link teacher-activation">
-                <p className="auth-kicker">TEACHER ACCOUNT READY TO ACTIVATE</p>
+                <p className="auth-kicker">GENERATED TEACHER CREDENTIALS</p>
                 <p><strong>{teacherRegistration.teacherName}</strong> · {teacherRegistration.email}</p>
-                <p className={teacherRegistration.emailDelivery.status === "sent" ? "field-hint" : "form-error"} role="status">{teacherRegistration.emailDelivery.message}</p>
                 <p className={teacherRegistration.adminNotification.status === "sent" ? "field-hint" : "form-error"} role="status">{teacherRegistration.adminNotification.message}</p>
                 <label className="field-label" htmlFor="teacherCode">Generated teacher code</label>
                 <input className="text-input" id="teacherCode" readOnly value={teacherRegistration.teacherCode} />
-                <label className="field-label" htmlFor="teacherActivationUrl">One-time activation link</label>
-                <div><input className="text-input" id="teacherActivationUrl" readOnly value={teacherRegistration.activationUrl} /><button className="button button-secondary" type="button" onClick={copyTeacherActivationLink}>Copy link</button></div>
-                <p className="field-hint">This seven-day link is a backup. Share it only with the registered teacher; they verify their email and create their own password. If they miss the email, resend the invitation from Portal access. After activation, they can sign in with their teacher ID and password.</p>
+                <label className="field-label" htmlFor="teacherPassword">Generated password</label>
+                <input className="text-input" id="teacherPassword" readOnly value={teacherRegistration.teacherPassword} />
+                <p className="field-hint">This password is shown only once. It becomes the sign-in password for a new account; teachers with an existing Aster account use it to verify setup, then sign in with their existing password. Email delivery never includes it. Share it through a private channel. Unused credentials expire in 30 days; register the same email again to generate a fresh password.</p>
+                <div className="form-row-actions"><button className="button button-secondary" type="button" onClick={copyTeacherCredentials}>Copy credentials</button><button className="quiet-action" type="button" onClick={() => setTeacherRegistration(null)}>Hide credentials</button></div>
               </div>}
             </section>
             {teacherRoster.length > 0 && <section className="panel teacher-roster-panel">
-              <div className="panel-heading"><div><h2>Active teacher accounts</h2><p>Teachers appear here after accepting their activation link.</p></div></div>
+              <div className="panel-heading"><div><h2>Active teacher accounts</h2><p>Teachers appear here after creating their account with the generated credentials and verifying their email.</p></div></div>
               <div className="table-scroll"><table><thead><tr><th>TEACHER</th><th>STAFF CODE</th><th>EMAIL</th></tr></thead><tbody>{teacherRoster.map((teacher) => <tr key={teacher.userId}><td>{teacher.teacherName || "Teacher"}</td><td><strong>{teacher.teacherCode || "—"}</strong></td><td>{teacher.email}</td></tr>)}</tbody></table></div>
             </section>}
             <section className="panel teacher-assignment-panel">
@@ -3397,7 +3414,7 @@ function App() {
                 <button className="button button-secondary button-small" type="button" onClick={() => document.getElementById("teacherName")?.focus()}>Register a teacher</button>
               </div>
               {assignmentError && <p className="form-error" role="alert">{assignmentError}</p>}
-              {loadingAssignments ? <LoadingMessage>Loading teacher assignments…</LoadingMessage> : teacherRoster.length === 0 ? <p className="empty-search">No teachers have activated their accounts yet. Register a teacher above and share their activation link before assigning classes.</p> : <>
+              {loadingAssignments ? <LoadingMessage>Loading teacher assignments…</LoadingMessage> : teacherRoster.length === 0 ? <p className="empty-search">No teachers have set up their accounts yet. Register a teacher above and share their ID and password privately before assigning classes.</p> : <>
                 <form className="assignment-form" onSubmit={assignTeacher}>
                   <label><span>Class</span><select className="text-input" required value={assignmentClassId} onChange={(event) => {
                     const classId = event.target.value;
