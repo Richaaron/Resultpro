@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   createSchoolSlug,
+  normalizeSchoolLogoData,
   normalizeSignatureData,
   normalizeTeacherRegistrationInput,
 } from "./school-input.js";
@@ -54,4 +55,27 @@ test("accepts only small, dimension-limited PNG signatures", () => {
 
   image.writeUInt32BE(1601, 16);
   assert.equal(normalizeSignatureData(`data:image/png;base64,${image.toString("base64")}`), null);
+});
+
+test("accepts only small PNG school logos with bounded dimensions", () => {
+  const image = Buffer.alloc(24);
+  Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]).copy(image);
+  image.write("IHDR", 12, "ascii");
+  image.writeUInt32BE(512, 16);
+  image.writeUInt32BE(512, 20);
+  const logo = `data:image/png;base64,${image.toString("base64")}`;
+
+  assert.equal(normalizeSchoolLogoData(logo), logo);
+  assert.equal(normalizeSchoolLogoData(logo.replace("image/png", "image/svg+xml")), null);
+  assert.equal(normalizeSchoolLogoData(`data:image/png;base64,${Buffer.alloc(24).toString("base64")}`), null);
+
+  image.writeUInt32BE(513, 16);
+  assert.equal(normalizeSchoolLogoData(`data:image/png;base64,${image.toString("base64")}`), null);
+  image.writeUInt32BE(512, 16);
+  image.writeUInt32BE(513, 20);
+  assert.equal(normalizeSchoolLogoData(`data:image/png;base64,${image.toString("base64")}`), null);
+  assert.equal(
+    normalizeSchoolLogoData(`data:image/png;base64,${Buffer.concat([image, Buffer.alloc(65_537)]).toString("base64")}`),
+    null,
+  );
 });

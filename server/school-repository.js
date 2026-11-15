@@ -38,9 +38,17 @@ async function getReadyDatabase() {
             access_mode VARCHAR(20) NOT NULL
               CHECK (access_mode IN ('invite', 'school-code', 'public')),
             slug VARCHAR(64) NOT NULL UNIQUE,
+            logo_data TEXT
+              CHECK (logo_data IS NULL OR
+                (length(logo_data) <= 88000 AND logo_data LIKE 'data:image/png;base64,%')),
             created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
             archived_at TIMESTAMPTZ
           )
+        `,
+        database.sql`
+          ALTER TABLE schools ADD COLUMN IF NOT EXISTS logo_data TEXT
+            CHECK (logo_data IS NULL OR
+              (length(logo_data) <= 88000 AND logo_data LIKE 'data:image/png;base64,%'))
         `,
         database.sql`
           ALTER TABLE schools ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ
@@ -574,6 +582,38 @@ export async function listSchools(userId) {
       AND s.archived_at IS NULL
     ORDER BY s.created_at DESC
   `;
+}
+
+export async function getSchoolLogo(schoolId) {
+  const sql = await getReadyDatabase();
+  const [school] = await sql`
+    SELECT logo_data AS "logoData"
+    FROM schools
+    WHERE id = ${schoolId}
+  `;
+  return school?.logoData ?? null;
+}
+
+export async function saveSchoolLogo(schoolId, logoData) {
+  const sql = await getReadyDatabase();
+  const [school] = await sql`
+    UPDATE schools
+    SET logo_data = ${logoData}
+    WHERE id = ${schoolId}
+    RETURNING logo_data AS "logoData"
+  `;
+  return school?.logoData ?? null;
+}
+
+export async function removeSchoolLogo(schoolId) {
+  const sql = await getReadyDatabase();
+  const [school] = await sql`
+    UPDATE schools
+    SET logo_data = NULL
+    WHERE id = ${schoolId}
+    RETURNING id
+  `;
+  return Boolean(school);
 }
 
 export async function getPlatformOverview({ page, pageSize, search }) {

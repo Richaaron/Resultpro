@@ -416,6 +416,18 @@ select.text-input { color: #58645a; }
 .signature-upload-form input[type="file"] { max-width: 100%; color: #637065; font-size: 9px; }
 .signature-upload-preview { max-width: min(100%, 300px); max-height: 90px; padding: 8px; border: 1px solid #dce5dc; border-radius: 8px; background: #fff; object-fit: contain; }
 .signature-upload-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.school-logo-panel { display: grid; gap: 15px; }
+.school-logo-current { display: flex; align-items: center; gap: 13px; }
+.school-logo-current > img, .school-logo-placeholder { display: grid; width: 76px; height: 76px; flex: 0 0 auto; place-items: center; padding: 7px; border: 1px solid #dce9dd; border-radius: 12px; background: #fff; color: #31583a; object-fit: contain; font: 800 17px var(--font-display); }
+.school-logo-current > div { display: grid; gap: 5px; }
+.school-logo-current strong { color: #425446; font-size: 10px; }
+.school-logo-current small { color: #78877d; font-size: 9px; line-height: 1.5; }
+.school-logo-upload-form { display: grid; justify-items: start; gap: 12px; }
+.school-logo-upload-form label { display: grid; gap: 6px; color: #637065; font-size: 9px; font-weight: 600; }
+.school-logo-upload-form label small { color: #78877d; font-size: 8px; font-weight: 400; }
+.school-logo-upload-form input[type="file"] { max-width: 100%; color: #637065; font-size: 9px; }
+.school-logo-upload-preview { width: 86px; height: 86px; padding: 8px; border: 1px solid #dce5dc; border-radius: 10px; background: #fff; object-fit: contain; }
+.school-logo-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .teacher-assignment-cards { margin-top: 18px; }
 .teacher-assignment-cards .class-card > p { color: #5e715f; font-size: 10px; }
 .assessment-workspace { display: grid; gap: 14px; }
@@ -495,6 +507,7 @@ select.text-input { color: #58645a; }
 .class-report-print-root { display: none; }
 .student-report-print-heading { display: grid; gap: 17px; margin-bottom: 18px; padding-bottom: 17px; border-bottom: 1px solid #e5ebe5; }
 .student-report-school-brand { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.student-report-school-logo { display: block; flex: 0 0 46px; width: 46px; height: 46px; padding: 3px; border: 1px solid #dce9dd; border-radius: 10px; background: #fff; object-fit: contain; }
 .student-report-school-mark { display: grid; flex: 0 0 46px; width: 46px; height: 46px; place-items: center; border: 1px solid #dce9dd; border-radius: 13px; background: linear-gradient(145deg, #f1f7f0, #e4efe5); color: #31583a; font: 800 14px var(--font-display); }
 .student-report-school-details { display: grid; flex: 1; min-width: 0; gap: 3px; }
 .student-report-school-details strong { color: #31583a; font: 800 16px/1.2 var(--font-display); letter-spacing: -.3px; overflow-wrap: anywhere; }
@@ -676,6 +689,8 @@ select.text-input { color: #58645a; }
   .result-sheet-panel, .result-sheet-panel * { visibility: visible !important; }
   .result-sheet-panel { position: absolute; inset: 0; width: 100%; padding: 0; border: 0; box-shadow: none; }
   .result-sheet-print-heading { display: grid; gap: 5px; margin: 18px 0 12px; color: #26352a; }
+  .result-sheet-print-brand { display: flex; align-items: center; gap: 11px; }
+  .result-sheet-print-brand img { width: 46px; height: 46px; padding: 3px; border: 1px solid #d5e0d5; border-radius: 8px; background: #fff; object-fit: contain; }
   .result-sheet-print-heading strong { font-size: 18px; }
   .result-sheet-print-heading span { font-size: 12px; }
   .result-sheet-print-heading small { color: #667269; font-size: 9px; }
@@ -1029,6 +1044,10 @@ h1, .panel-heading h2, .stat-number { color: #f0f7f1; }
 .platform-school-status-feedback { color: #a2d6a5; }
 .platform-school-search-field { color: #d4e1d7; }
 .platform-directory-pagination { color: #b0c0b4; }
+.school-logo-current strong, .school-logo-upload-form label { color: #d4e1d7; }
+.school-logo-current small, .school-logo-upload-form label small, .school-logo-upload-form input[type="file"] { color: #a9b9ac; }
+.school-logo-current > img, .school-logo-placeholder, .school-logo-upload-preview { border-color: #36513b; background: #fff; color: #31583a; }
+.student-report-school-logo { border-color: #dce9dd; background: #fff; }
 .platform-student-pricing-band { color: #a2d6a5; }
 .platform-billing-field { color: #d4e1d7; }
 .platform-billing-feedback { color: #a2d6a5; }

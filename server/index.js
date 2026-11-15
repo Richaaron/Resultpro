@@ -18,6 +18,7 @@ import {
   getSchoolClassAttendanceReport,
   getSchoolGradingSettings,
   getSchoolRole,
+  getSchoolLogo,
   getSchoolMemberSignature,
   getSchoolPrincipalUser,
   getSchoolReportSignatures,
@@ -54,6 +55,8 @@ import {
   saveSchoolEducationalLevels,
   saveSchoolGradingSettings,
   saveSchoolMemberSignature,
+  saveSchoolLogo,
+  removeSchoolLogo,
   saveTeachingAssignment,
   setSchoolStudentActive,
   submitSchoolAssessment,
@@ -61,6 +64,7 @@ import {
 } from "./school-repository.js";
 import {
   normalizeSchoolInput,
+  normalizeSchoolLogoData,
   normalizeSignatureData,
   normalizeTeacherRegistrationInput,
 } from "./school-input.js";
@@ -198,6 +202,61 @@ app.post("/api/schools", requireAuth, async (request, response) => {
   try {
     const school = await createSchool(normalized, request.auth.userId);
     return response.status(201).json({ school });
+  } catch (error) {
+    return handleDatabaseError(error, response);
+  }
+});
+
+app.get("/api/schools/:schoolId/logo", requireAuth, async (request, response) => {
+  const { schoolId } = request.params;
+  if (!isUuid(schoolId)) return response.status(400).json({ error: "Enter a valid school." });
+
+  try {
+    if (!await getSchoolRole(schoolId, request.auth.userId)) {
+      return response.status(404).json({ error: "School not found." });
+    }
+    const logoData = await getSchoolLogo(schoolId);
+    response.set("Cache-Control", "no-store");
+    return response.json({ logoData });
+  } catch (error) {
+    return handleDatabaseError(error, response);
+  }
+});
+
+app.put("/api/schools/:schoolId/logo", requireAuth, async (request, response) => {
+  const { schoolId } = request.params;
+  const logoData = normalizeSchoolLogoData(request.body?.logoData);
+  if (!isUuid(schoolId) || !logoData) {
+    return response.status(400).json({ error: "Upload a valid PNG school logo no larger than 64 KB and 512 × 512 pixels." });
+  }
+
+  try {
+    const membershipRole = await getSchoolRole(schoolId, request.auth.userId);
+    if (!membershipRole) return response.status(404).json({ error: "School not found." });
+    if (membershipRole !== "admin") {
+      return response.status(403).json({ error: "Only a school administrator can update the school logo." });
+    }
+    const savedLogo = await saveSchoolLogo(schoolId, logoData);
+    if (!savedLogo) return response.status(404).json({ error: "School not found." });
+    response.set("Cache-Control", "no-store");
+    return response.json({ logoData: savedLogo });
+  } catch (error) {
+    return handleDatabaseError(error, response);
+  }
+});
+
+app.delete("/api/schools/:schoolId/logo", requireAuth, async (request, response) => {
+  const { schoolId } = request.params;
+  if (!isUuid(schoolId)) return response.status(400).json({ error: "Enter a valid school." });
+
+  try {
+    const membershipRole = await getSchoolRole(schoolId, request.auth.userId);
+    if (!membershipRole) return response.status(404).json({ error: "School not found." });
+    if (membershipRole !== "admin") {
+      return response.status(403).json({ error: "Only a school administrator can remove the school logo." });
+    }
+    if (!await removeSchoolLogo(schoolId)) return response.status(404).json({ error: "School not found." });
+    return response.status(204).end();
   } catch (error) {
     return handleDatabaseError(error, response);
   }

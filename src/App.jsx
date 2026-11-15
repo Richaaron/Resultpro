@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import AuthScreen from "./AuthScreen.jsx";
 import AsterLogoMark from "./AsterLogo.jsx";
 import EducationBackground from "./EducationBackground.jsx";
@@ -180,7 +180,44 @@ async function prepareSignatureImage(file) {
   }
 }
 
-function StudentReportCard({ school, result, rows, signatures }) {
+async function prepareSchoolLogoImage(file) {
+  if (!["image/png", "image/jpeg", "image/webp"].includes(file.type)) {
+    throw new Error("Choose a PNG, JPEG, or WebP school logo.");
+  }
+  if (file.size > 5 * 1024 * 1024) throw new Error("Choose a logo image smaller than 5 MB.");
+
+  const imageUrl = URL.createObjectURL(file);
+  try {
+    const image = await new Promise((resolve, reject) => {
+      const loadedImage = new Image();
+      loadedImage.onload = () => resolve(loadedImage);
+      loadedImage.onerror = () => reject(new Error("That image could not be opened. Choose another file."));
+      loadedImage.src = imageUrl;
+    });
+    const scale = Math.min(1, 512 / image.naturalWidth, 512 / image.naturalHeight);
+    let width = Math.max(1, Math.round(image.naturalWidth * scale));
+    let height = Math.max(1, Math.round(image.naturalHeight * scale));
+    const canvas = document.createElement("canvas");
+    const context = canvas.getContext("2d");
+    if (!context) throw new Error("Your browser could not prepare the school logo.");
+
+    while (Math.max(width, height) >= 128) {
+      canvas.width = width;
+      canvas.height = height;
+      context.clearRect(0, 0, width, height);
+      context.drawImage(image, 0, 0, width, height);
+      const logoData = canvas.toDataURL("image/png");
+      if (logoData.length <= 88_000) return logoData;
+      width = Math.round(width * 0.8);
+      height = Math.round(height * 0.8);
+    }
+    throw new Error("This logo is too detailed to optimize. Try a simpler image smaller than 64 KB.");
+  } finally {
+    URL.revokeObjectURL(imageUrl);
+  }
+}
+
+function StudentReportCard({ school, result, rows, signatures, logoData }) {
   const summary = summarizePublishedResultRows(rows);
   const student = rows[0];
   const schoolCode = school.slug || school.id;
@@ -189,7 +226,9 @@ function StudentReportCard({ school, result, rows, signatures }) {
   return <article className="student-report-card">
     <header className="student-report-print-heading">
       <div className="student-report-school-brand">
-        <span className="student-report-school-mark" aria-hidden="true">{schoolMark}</span>
+        {logoData
+          ? <img className="student-report-school-logo" src={logoData} alt={`${school.name} logo`} />
+          : <span className="student-report-school-mark" aria-hidden="true">{schoolMark}</span>}
         <div className="student-report-school-details">
           <strong>{school.name}</strong>
           <span>{[school.schoolType, school.country].filter(Boolean).join(" · ") || "School"}</span>
@@ -409,6 +448,13 @@ function App() {
   const [signatureSaving, setSignatureSaving] = useState(false);
   const [signatureError, setSignatureError] = useState("");
   const [signatureRefresh, setSignatureRefresh] = useState(0);
+  const [schoolLogoData, setSchoolLogoData] = useState(null);
+  const [schoolLogoSchoolId, setSchoolLogoSchoolId] = useState("");
+  const [schoolLogoFileData, setSchoolLogoFileData] = useState("");
+  const [schoolLogoLoading, setSchoolLogoLoading] = useState(false);
+  const [schoolLogoSaving, setSchoolLogoSaving] = useState(false);
+  const [schoolLogoError, setSchoolLogoError] = useState("");
+  const schoolLogoFileInputRef = useRef(null);
   const [assessments, setAssessments] = useState([]);
   const [loadingAssessments, setLoadingAssessments] = useState(false);
   const [assessmentError, setAssessmentError] = useState("");
@@ -487,6 +533,7 @@ function App() {
     !== JSON.stringify(savedEducationalLevelCodes);
   const activeGradeOptionsKey = activeGradeOptions.join("|");
   const dashboardForCurrentSchool = dashboardData && dashboardData.schoolId === school?.id ? dashboardData : null;
+  const schoolLogoForCurrentSchool = schoolLogoSchoolId === school?.id ? schoolLogoData : null;
   const dashboardErrorForCurrentSchool = dashboardError && dashboardError.schoolId === school?.id
     ? dashboardError.message
     : "";
@@ -569,7 +616,7 @@ function App() {
     const finishPrinting = () => setPrintingClassReports(false);
     document.body.classList.add("printing-class-reports");
     window.addEventListener("afterprint", finishPrinting, { once: true });
-    const frame = window.requestAnimationFrame(() => window.print());
+    const frame = window.requestAnimationFrame(() => { void printCurrentReports(); });
     return () => {
       window.cancelAnimationFrame(frame);
       window.removeEventListener("afterprint", finishPrinting);
@@ -635,6 +682,34 @@ function App() {
   const gradingSettingsChanged = !gradingSettings
     || !normalizedGradingDraft
     || JSON.stringify(normalizedGradingDraft) !== JSON.stringify(gradingSettings);
+
+  useEffect(() => {
+    let active = true;
+    if (!school?.id || !["profile", "results"].includes(page)) {
+      setSchoolLogoData(null);
+      setSchoolLogoSchoolId("");
+      setSchoolLogoFileData("");
+      setSchoolLogoLoading(false);
+      setSchoolLogoError("");
+      return () => { active = false; };
+    }
+
+    setSchoolLogoData(null);
+    setSchoolLogoSchoolId(school.id);
+    setSchoolLogoLoading(true);
+    setSchoolLogoError("");
+    apiRequest(`/api/schools/${school.id}/logo`)
+      .then(({ logoData }) => {
+        if (active) setSchoolLogoData(logoData);
+      })
+      .catch((requestError) => {
+        if (active) setSchoolLogoError(requestError.message || "Could not load the school logo.");
+      })
+      .finally(() => {
+        if (active) setSchoolLogoLoading(false);
+      });
+    return () => { active = false; };
+  }, [school?.id, page]);
 
   useEffect(() => {
     let active = true;
@@ -2026,6 +2101,58 @@ function App() {
     }
   }
 
+  async function prepareSchoolLogoFile(event) {
+    const file = event.target.files?.[0];
+    setSchoolLogoError("");
+    setSchoolLogoFileData("");
+    if (!file) return;
+    try {
+      setSchoolLogoFileData(await prepareSchoolLogoImage(file));
+    } catch (requestError) {
+      setSchoolLogoError(requestError.message || "Could not prepare that school logo.");
+      event.target.value = "";
+    }
+  }
+
+  async function saveSchoolLogoUpload(event) {
+    event.preventDefault();
+    if (!school || !schoolLogoFileData || role !== "admin") return;
+    setSchoolLogoSaving(true);
+    setSchoolLogoError("");
+    try {
+      const { logoData } = await apiRequest(`/api/schools/${school.id}/logo`, {
+        method: "PUT",
+        body: JSON.stringify({ logoData: schoolLogoFileData }),
+      });
+      setSchoolLogoData(logoData);
+      setSchoolLogoSchoolId(school.id);
+      setSchoolLogoFileData("");
+      if (schoolLogoFileInputRef.current) schoolLogoFileInputRef.current.value = "";
+      setToast("School logo saved. It will appear on printed result reports.");
+    } catch (requestError) {
+      setSchoolLogoError(requestError.message || "Could not save the school logo.");
+    } finally {
+      setSchoolLogoSaving(false);
+    }
+  }
+
+  async function removeSchoolLogoUpload() {
+    if (!school || !window.confirm("Remove the school logo from future printed reports?")) return;
+    setSchoolLogoSaving(true);
+    setSchoolLogoError("");
+    try {
+      await apiRequest(`/api/schools/${school.id}/logo`, { method: "DELETE" });
+      setSchoolLogoData(null);
+      setSchoolLogoFileData("");
+      if (schoolLogoFileInputRef.current) schoolLogoFileInputRef.current.value = "";
+      setToast("School logo removed from future reports.");
+    } catch (requestError) {
+      setSchoolLogoError(requestError.message || "Could not remove the school logo.");
+    } finally {
+      setSchoolLogoSaving(false);
+    }
+  }
+
   async function saveMySignature(event) {
     event.preventDefault();
     if (!school || !signatureFileData || !signatureCanUpload) return;
@@ -2371,8 +2498,19 @@ function App() {
     setToast("The result sheet has been exported.");
   }
 
+  async function printCurrentReports() {
+    try {
+      const reportImages = [...document.querySelectorAll(".student-report-card img, .result-sheet-print-brand img")];
+      await Promise.all(reportImages.map((image) => image.decode()));
+      window.print();
+    } catch {
+      setToast("Could not prepare report images for printing. Please check the uploaded logo and signatures.");
+      setPrintingClassReports(false);
+    }
+  }
+
   function printResultSheet() {
-    if (resultSheet?.rows.length) window.print();
+    if (resultSheet?.rows.length) void printCurrentReports();
   }
 
   function printClassReportCards() {
@@ -2382,7 +2520,7 @@ function App() {
   }
 
   function printStudentReport() {
-    if (selectedStudentResult?.rows.length) window.print();
+    if (selectedStudentResult?.rows.length) void printCurrentReports();
   }
 
   async function openStudentResultNotification(notification) {
@@ -2572,6 +2710,27 @@ function App() {
             {page === "overview" && <HeroScene />}
             {page !== "platform" && page !== "classes" && page !== "students" && page !== "teachers" && page !== "results" && page !== "attendance" && page !== "grading" && !(page === "overview" && role === "parent") && <div className="welcome-actions"><button className="button button-secondary" type="button" onClick={async () => { try { await navigator.clipboard.writeText(`${window.location.origin}${school.portalUrl || `/school/${school.slug}`}`); setToast("Your school workspace link has been copied. Only invited school members can access it."); } catch { setToast("Could not copy the school link. Please try again."); } }}>↗ Copy school workspace link</button><button className="button button-primary" type="button" onClick={() => page === "profile" ? showSetup() : page === "access" ? document.getElementById("inviteEmail")?.focus() : setPage(role === "admin" ? "students" : "results")}>＋ {page === "access" ? "Invite a member" : role === "teacher" ? "Enter marks" : ["student", "parent"].includes(role) ? role === "parent" ? "View child results" : "View my results" : "Add a student"}</button></div>}
           </section>
+
+          {page === "profile" && role === "admin" && <section className="panel school-logo-panel">
+            <div className="panel-heading"><div><h2>School logo</h2><p>Add your school identity to published report cards and printed result sheets.</p></div></div>
+            {schoolLogoError && <p className="form-error" role="alert">{schoolLogoError}</p>}
+            {schoolLogoLoading
+              ? <LoadingMessage>Loading school logo…</LoadingMessage>
+              : <div className="school-logo-current">
+                {schoolLogoForCurrentSchool
+                  ? <img src={schoolLogoForCurrentSchool} alt={`${school.name} logo`} />
+                  : <span className="school-logo-placeholder" aria-hidden="true">{school.name.split(/\s+/).slice(0, 2).map((part) => part[0]).join("").toUpperCase()}</span>}
+                <div><strong>{schoolLogoForCurrentSchool ? "Current school logo" : "No school logo uploaded"}</strong><small>Appears on student report cards and printed class result sheets.</small></div>
+              </div>}
+            <form className="school-logo-upload-form" onSubmit={saveSchoolLogoUpload}>
+              <label htmlFor="schoolLogoFile">Choose a logo image<input ref={schoolLogoFileInputRef} id="schoolLogoFile" type="file" accept="image/png,image/jpeg,image/webp" onChange={prepareSchoolLogoFile} disabled={schoolLogoSaving} /><small>PNG, JPG, or WebP; maximum 5 MB. Aster optimizes it to a PNG up to 512 × 512 pixels and 64 KB.</small></label>
+              {schoolLogoFileData && <img className="school-logo-upload-preview" src={schoolLogoFileData} alt="Preview of school logo to save" />}
+              <div className="school-logo-actions">
+                <button className="button button-primary" type="submit" disabled={!schoolLogoFileData || schoolLogoSaving}>{schoolLogoSaving ? "Saving…" : "Save school logo"}</button>
+                {schoolLogoForCurrentSchool && <button className="button button-secondary" type="button" onClick={removeSchoolLogoUpload} disabled={schoolLogoSaving}>{schoolLogoSaving ? "Saving…" : "Remove logo"}</button>}
+              </div>
+            </form>
+          </section>}
 
           {page === "platform" && platformAdmin && <section className="platform-overview">
             <section className="panel platform-summary-panel">
@@ -2870,6 +3029,7 @@ function App() {
 
           {page === "results" && ["student", "parent"].includes(role) && <section className="panel student-results-panel">
             <div className="panel-heading"><div><h2>{role === "parent" ? "Your children’s published results" : "Published term results"}</h2><p>{role === "parent" ? "Only reports for students explicitly linked to your verified parent account are shown." : "Your school releases results after administrator approval. Only your linked student record is shown here."}</p></div></div>
+            {schoolLogoError && <p className="form-error" role="alert">{schoolLogoError}</p>}
             {studentResultError && <p className="form-error" role="alert">{studentResultError}</p>}
             {loadingStudentResults ? <LoadingMessage>Loading your published results…</LoadingMessage>
               : !studentResultData ? <p className="empty-search">Your results could not be loaded. Please try again.</p>
@@ -2885,10 +3045,10 @@ function App() {
                         }}><option value="">Select a student</option>{studentResultData.children.map((child) => <option key={child.studentId} value={child.studentId}>{child.firstName} {child.lastName} · {child.admissionNumber}</option>)}</select></label>}
                         <label><span>Published result sheet</span><select className="text-input" value={selectedStudentResultId} onChange={(event) => setSelectedStudentResultId(event.target.value)} disabled={!availableStudentSheets.length}><option value="">Select a result sheet</option>{availableStudentSheets.map((sheet) => <option key={sheet.id} value={sheet.id}>{sheet.grade} {sheet.section} · {sheet.academicYear} · {sheet.term}</option>)}</select></label>
                         {selectedStudentResult?.publishedAt && <span className="result-sheet-summary">Published {new Date(selectedStudentResult.publishedAt).toLocaleDateString("en-NG")}</span>}
-                        <button className="button button-secondary button-small report-print-button" type="button" onClick={printStudentReport} disabled={!selectedStudentResult?.rows.length}>Print report card</button>
+                        <button className="button button-secondary button-small report-print-button" type="button" onClick={printStudentReport} disabled={!selectedStudentResult?.rows.length || schoolLogoLoading}>Print report card</button>
                       </div>
                       {selectedStudentResult?.rows.length
-                        ? <StudentReportCard school={school} result={selectedStudentResult} rows={selectedStudentResult.rows} signatures={selectedStudentResult.reportSignatures} />
+                        ? <StudentReportCard school={school} result={selectedStudentResult} rows={selectedStudentResult.rows} signatures={selectedStudentResult.reportSignatures} logoData={schoolLogoForCurrentSchool} />
                         : <p className="empty-search">{role === "parent" ? "No result sheets have been published for this student yet." : "Select one of your published result sheets to view its subjects."}</p>}
                     </>}
           </section>}
@@ -2897,9 +3057,10 @@ function App() {
             <section className="panel result-sheet-panel">
               <div className="panel-heading result-sheet-heading">
                 <div><h2>Term result sheet</h2><p>Only administrator-approved assessments are included. Letter grades and class positions follow this school’s saved grading rules.</p></div>
-                <div className="result-sheet-actions">{role === "admin" && <>{resultSheet?.published && <button className="button button-secondary button-small" type="button" onClick={printClassReportCards} disabled={printingClassReports || !classReportGroups.length}>Print report cards</button>}<button className="button button-primary button-small" type="button" onClick={publishResultSheet} disabled={loadingResultSheet || !resultSheet?.rows.some((row) => row.percentage != null) || Boolean(resultSheet?.published)}>{resultSheet?.published ? "Published" : "Publish results"}</button></>}<button className="button button-secondary button-small" type="button" onClick={printResultSheet} disabled={loadingResultSheet || !resultSheet?.rows.length}>Print</button><button className="button button-secondary button-small" type="button" onClick={exportResultSheet} disabled={loadingResultSheet || !resultSheet?.rows.length}>Export CSV</button></div>
+                <div className="result-sheet-actions">{role === "admin" && <>{resultSheet?.published && <button className="button button-secondary button-small" type="button" onClick={printClassReportCards} disabled={printingClassReports || !classReportGroups.length || schoolLogoLoading}>Print report cards</button>}<button className="button button-primary button-small" type="button" onClick={publishResultSheet} disabled={loadingResultSheet || !resultSheet?.rows.some((row) => row.percentage != null) || Boolean(resultSheet?.published)}>{resultSheet?.published ? "Published" : "Publish results"}</button></>}<button className="button button-secondary button-small" type="button" onClick={printResultSheet} disabled={loadingResultSheet || !resultSheet?.rows.length || schoolLogoLoading}>Print</button><button className="button button-secondary button-small" type="button" onClick={exportResultSheet} disabled={loadingResultSheet || !resultSheet?.rows.length}>Export CSV</button></div>
               </div>
-              {resultSheet?.schoolClass && <div className="result-sheet-print-heading"><strong>{school.name}</strong><span>School ref: {school.slug || school.id}</span><span>{resultSheet.schoolClass.grade} {resultSheet.schoolClass.section} · {resultSheet.schoolClass.academicYear} · {resultSheet.term}</span><small>{resultSheet.published ? `Published result snapshot · ${new Date(resultSheet.published.publishedAt).toLocaleDateString("en-NG")}` : "Calculated from administrator-approved assessments only"}</small></div>}
+              {schoolLogoError && <p className="form-error" role="alert">{schoolLogoError}</p>}
+              {resultSheet?.schoolClass && <div className="result-sheet-print-heading"><div className="result-sheet-print-brand">{schoolLogoForCurrentSchool && <img src={schoolLogoForCurrentSchool} alt={`${school.name} logo`} />}<strong>{school.name}</strong></div><span>School ref: {school.slug || school.id}</span><span>{resultSheet.schoolClass.grade} {resultSheet.schoolClass.section} · {resultSheet.schoolClass.academicYear} · {resultSheet.term}</span><small>{resultSheet.published ? `Published result snapshot · ${new Date(resultSheet.published.publishedAt).toLocaleDateString("en-NG")}` : "Calculated from administrator-approved assessments only"}</small></div>}
               <div className="result-sheet-filters">
                 <label><span>Class</span><select className="text-input" value={resultSheetClassId} onChange={(event) => setResultSheetClassId(event.target.value)} disabled={loadingClasses || !schoolClasses.length}><option value="">Select a class</option>{schoolClasses.map((item) => <option key={item.id} value={item.id}>{item.grade} {item.section} · {item.academicYear}</option>)}</select></label>
                 <label><span>Term</span><select className="text-input" value={resultSheetTerm} onChange={(event) => setResultSheetTerm(event.target.value)}><option>Term 1</option><option>Term 2</option><option>Term 3</option></select></label>
@@ -2931,6 +3092,7 @@ function App() {
                     result={{ ...resultSheet.schoolClass, term: resultSheet.term, publishedAt: resultSheet.published.publishedAt }}
                     rows={rows}
                     signatures={resultSheet.reportSignatures}
+                    logoData={schoolLogoForCurrentSchool}
                   />
                 </div>)}
               </div>}

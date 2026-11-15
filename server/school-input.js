@@ -67,6 +67,28 @@ export function normalizeSignatureData(value) {
   return value;
 }
 
+export function normalizeSchoolLogoData(value) {
+  if (typeof value !== "string" || value.length > 88_000) return null;
+  const match = /^data:image\/png;base64,([A-Za-z0-9+/]+={0,2})$/.exec(value);
+  if (!match) return null;
+
+  const image = Buffer.from(match[1], "base64");
+  if (
+    image.length < 24
+    || image.length > 65_536
+    || image.toString("base64") !== match[1]
+    || !image.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
+    || image.toString("ascii", 12, 16) !== "IHDR"
+  ) {
+    return null;
+  }
+
+  const width = image.readUInt32BE(16);
+  const height = image.readUInt32BE(20);
+  if (width < 1 || width > 512 || height < 1 || height > 512) return null;
+  return value;
+}
+
 export function createSchoolSlug(name, id) {
   const base = name
     .toLowerCase()
