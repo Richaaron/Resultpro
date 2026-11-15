@@ -1,6 +1,23 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { curriculumByGrade, curriculumGrades, normalizeSubjectSelection } from "./curriculum.js";
+import {
+  curriculumByGrade,
+  curriculumGrades,
+  normalizeEducationalLevelSelection,
+  normalizeSubjectSelection,
+} from "./curriculum.js";
+
+test("accepts one or more supported educational levels", () => {
+  assert.deepEqual(normalizeEducationalLevelSelection(["primary", "seniorSecondary"]), ["primary", "seniorSecondary"]);
+  assert.deepEqual(normalizeEducationalLevelSelection(["juniorSecondary"]), ["juniorSecondary"]);
+});
+
+test("rejects empty, duplicate, or unsupported educational levels", () => {
+  assert.equal(normalizeEducationalLevelSelection([]), null);
+  assert.equal(normalizeEducationalLevelSelection(["primary", "primary"]), null);
+  assert.equal(normalizeEducationalLevelSelection(["Year 10"]), null);
+  assert.equal(normalizeEducationalLevelSelection("primary"), null);
+});
 
 test("provides subject options for every primary, junior, and senior grade", () => {
   const grades = [

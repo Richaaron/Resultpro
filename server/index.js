@@ -10,6 +10,7 @@ import {
   createSchoolStudent,
   deleteSchoolClass,
   getSchoolDashboard,
+  getSchoolEducationalLevels,
   getPlatformOverview,
   setPlatformSchoolBillingDecision,
   setPlatformSchoolArchived,
@@ -21,6 +22,7 @@ import {
   getSchoolPrincipalUser,
   getSchoolReportSignatures,
   importSchoolStudents,
+  isSchoolGradeEnabled,
   listSchoolInvitations,
   listSchoolFormMasterClasses,
   listSchoolFormMasters,
@@ -49,6 +51,7 @@ import {
   saveSchoolAssessmentMarks,
   saveSchoolClassAttendance,
   saveSchoolFormMaster,
+  saveSchoolEducationalLevels,
   saveSchoolGradingSettings,
   saveSchoolMemberSignature,
   saveTeachingAssignment,
@@ -61,7 +64,10 @@ import {
   normalizeSignatureData,
   normalizeTeacherRegistrationInput,
 } from "./school-input.js";
-import { normalizeSubjectSelection } from "../shared/curriculum.js";
+import {
+  normalizeEducationalLevelSelection,
+  normalizeSubjectSelection,
+} from "../shared/curriculum.js";
 import {
   normalizeClassInput,
   normalizeAssessmentInput,
@@ -225,6 +231,46 @@ app.get("/api/schools/:schoolId/subjects", requireAuth, async (request, response
   }
 });
 
+app.get("/api/schools/:schoolId/educational-levels", requireAuth, async (request, response) => {
+  const { schoolId } = request.params;
+  if (!isUuid(schoolId)) return response.status(400).json({ error: "Enter a valid school." });
+
+  try {
+    const membershipRole = await getSchoolRole(schoolId, request.auth.userId);
+    if (!membershipRole) return response.status(404).json({ error: "School not found." });
+    if (["student", "parent"].includes(membershipRole)) {
+      return response.status(403).json({ error: "Educational-level settings are not available to student or parent accounts." });
+    }
+    const levels = await getSchoolEducationalLevels(schoolId);
+    return response.json({ levels });
+  } catch (error) {
+    return handleDatabaseError(error, response);
+  }
+});
+
+app.put("/api/schools/:schoolId/educational-levels", requireAuth, async (request, response) => {
+  const { schoolId } = request.params;
+  const levelCodes = normalizeEducationalLevelSelection(request.body?.levelCodes);
+  if (!isUuid(schoolId) || !levelCodes) {
+    return response.status(400).json({ error: "Select at least one valid educational level." });
+  }
+
+  try {
+    const membershipRole = await getSchoolRole(schoolId, request.auth.userId);
+    if (!membershipRole) return response.status(404).json({ error: "School not found." });
+    if (membershipRole !== "admin") {
+      return response.status(403).json({ error: "Only a school administrator can update educational levels." });
+    }
+    const levels = await saveSchoolEducationalLevels(schoolId, levelCodes);
+    return response.json({ levels });
+  } catch (error) {
+    if (error.code === "EDUCATIONAL_LEVEL_HAS_CLASSES") {
+      return response.status(409).json({ error: error.message });
+    }
+    return handleDatabaseError(error, response);
+  }
+});
+
 app.put("/api/schools/:schoolId/subjects", requireAuth, async (request, response) => {
   const { schoolId } = request.params;
   if (!isUuid(schoolId)) return response.status(400).json({ error: "Enter a valid school." });
@@ -239,6 +285,9 @@ app.put("/api/schools/:schoolId/subjects", requireAuth, async (request, response
     if (!membershipRole) return response.status(404).json({ error: "School not found." });
     if (membershipRole !== "admin") {
       return response.status(403).json({ error: "Only a school administrator can update subjects." });
+    }
+    if (!await isSchoolGradeEnabled(schoolId, grade)) {
+      return response.status(409).json({ error: "Enable this educational level before updating its subjects." });
     }
     await replaceSchoolSubjects(schoolId, grade, normalizedSubjects);
     return response.json({ grade, subjects: normalizedSubjects });
@@ -931,6 +980,9 @@ app.post("/api/schools/:schoolId/classes", requireAuth, async (request, response
     if (!membershipRole) return response.status(404).json({ error: "School not found." });
     if (membershipRole !== "admin") {
       return response.status(403).json({ error: "Only a school administrator can create classes." });
+    }
+    if (!await isSchoolGradeEnabled(schoolId, classDetails.grade)) {
+      return response.status(409).json({ error: "Enable this educational level before creating a class." });
     }
     const schoolClass = await createSchoolClass(schoolId, classDetails);
     return response.status(201).json({ schoolClass });

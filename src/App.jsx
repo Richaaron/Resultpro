@@ -4,7 +4,11 @@ import AsterLogoMark from "./AsterLogo.jsx";
 import EducationBackground from "./EducationBackground.jsx";
 import ExplainerVideo from "./ExplainerVideo.jsx";
 import { authClient, pendingSchoolNameKey } from "./auth.js";
-import { curriculumByGrade, curriculumGrades } from "../shared/curriculum.js";
+import {
+  curriculumByGrade,
+  curriculumGrades,
+  normalizeEducationalLevelSelection,
+} from "../shared/curriculum.js";
 import { subscriptionPlans } from "../shared/billing-plans.js";
 import {
   defaultGradingSettings,
@@ -287,6 +291,11 @@ function App() {
   const [invitationRefresh, setInvitationRefresh] = useState(0);
   const [busyInvitationId, setBusyInvitationId] = useState("");
   const [selectedGrade, setSelectedGrade] = useState(curriculumGrades.primary[0]);
+  const [educationalLevels, setEducationalLevels] = useState([]);
+  const [draftEducationalLevelCodes, setDraftEducationalLevelCodes] = useState([]);
+  const [loadingEducationalLevels, setLoadingEducationalLevels] = useState(false);
+  const [savingEducationalLevels, setSavingEducationalLevels] = useState(false);
+  const [educationalLevelError, setEducationalLevelError] = useState("");
   const [savedSubjects, setSavedSubjects] = useState({});
   const [draftSubjects, setDraftSubjects] = useState({});
   const [loadingSubjects, setLoadingSubjects] = useState(false);
@@ -435,6 +444,13 @@ function App() {
   const visibleNavigation = school
     ? navigation.filter(([id]) => role === "admin" || (role === "teacher" && ["overview", "results", "attendance", "classes"].includes(id)) || (["student", "parent"].includes(role) && ["overview", "results"].includes(id)))
     : [];
+  const activeEducationalLevels = educationalLevels.filter((level) => level.active);
+  const activeGradeOptions = activeEducationalLevels.flatMap((level) => level.grades);
+  const savedEducationalLevelCodes = activeEducationalLevels.map((level) => level.code).sort();
+  const normalizedEducationalLevelDraft = normalizeEducationalLevelSelection(draftEducationalLevelCodes);
+  const educationalLevelsChanged = JSON.stringify([...draftEducationalLevelCodes].sort())
+    !== JSON.stringify(savedEducationalLevelCodes);
+  const activeGradeOptionsKey = activeGradeOptions.join("|");
   const dashboardForCurrentSchool = dashboardData && dashboardData.schoolId === school?.id ? dashboardData : null;
   const dashboardErrorForCurrentSchool = dashboardError && dashboardError.schoolId === school?.id
     ? dashboardError.message
@@ -808,6 +824,44 @@ function App() {
       });
     return () => { active = false; };
   }, [school?.id, role, page, invitationRefresh]);
+
+  useEffect(() => {
+    let active = true;
+    if (!school?.id || page !== "classes" || !["admin", "teacher"].includes(role)) {
+      setLoadingEducationalLevels(false);
+      return () => { active = false; };
+    }
+
+    setEducationalLevels([]);
+    setDraftEducationalLevelCodes([]);
+    setLoadingEducationalLevels(true);
+    setEducationalLevelError("");
+    apiRequest(`/api/schools/${school.id}/educational-levels`)
+      .then(({ levels }) => {
+        const levelCodes = Array.isArray(levels) ? levels.filter((level) => level.active).map((level) => level.code) : [];
+        if (!normalizeEducationalLevelSelection(levelCodes)) {
+          throw new Error("The school’s saved educational levels are invalid.");
+        }
+        if (!active) return;
+        setEducationalLevels(levels);
+        setDraftEducationalLevelCodes(levelCodes);
+      })
+      .catch((requestError) => {
+        if (active) setEducationalLevelError(requestError.message || "Could not load educational levels.");
+      })
+      .finally(() => {
+        if (active) setLoadingEducationalLevels(false);
+      });
+    return () => { active = false; };
+  }, [school?.id, role, page]);
+
+  useEffect(() => {
+    if (!activeGradeOptions.length) return;
+    if (!activeGradeOptions.includes(selectedGrade)) setSelectedGrade(activeGradeOptions[0]);
+    if (!activeGradeOptions.includes(classForm.grade)) {
+      setClassForm((previous) => ({ ...previous, grade: activeGradeOptions[0] }));
+    }
+  }, [activeGradeOptionsKey, selectedGrade, classForm.grade]);
 
   useEffect(() => {
     let active = true;
@@ -1616,6 +1670,38 @@ function App() {
       ...previous,
       rows: previous.rows.map((row) => row.studentId === studentId ? { ...row, status } : row),
     }));
+  }
+
+  function toggleEducationalLevel(code) {
+    setDraftEducationalLevelCodes((previous) => {
+      if (previous.includes(code)) {
+        return previous.length > 1 ? previous.filter((item) => item !== code) : previous;
+      }
+      return [...previous, code];
+    });
+  }
+
+  async function saveEducationalLevels() {
+    if (!school || !normalizedEducationalLevelDraft) {
+      setEducationalLevelError("Keep at least one educational level selected.");
+      return;
+    }
+
+    setSavingEducationalLevels(true);
+    setEducationalLevelError("");
+    try {
+      const { levels } = await apiRequest(`/api/schools/${school.id}/educational-levels`, {
+        method: "PUT",
+        body: JSON.stringify({ levelCodes: normalizedEducationalLevelDraft }),
+      });
+      setEducationalLevels(levels);
+      setDraftEducationalLevelCodes(levels.filter((level) => level.active).map((level) => level.code));
+      setToast("Educational levels saved. Class and subject setup now follows your selected levels.");
+    } catch (requestError) {
+      setEducationalLevelError(requestError.message || "Could not save educational levels.");
+    } finally {
+      setSavingEducationalLevels(false);
+    }
   }
 
   function toggleSubject(subject) {
@@ -2613,14 +2699,38 @@ function App() {
           {page === "classes" && <section className="panel curriculum-panel">
             <div className="panel-heading curriculum-heading">
               <div><h2>Subject setup</h2><p>Select the subjects taught in each grade. Changes are saved to this school.</p></div>
-              <label className="grade-picker"><span>Grade</span><select className="text-input" value={selectedGrade} onChange={(event) => setSelectedGrade(event.target.value)} aria-label="Select grade">{Object.keys(curriculumByGrade).map((grade) => <option key={grade}>{grade}</option>)}</select></label>
+              <label className="grade-picker"><span>Grade</span><select className="text-input" value={selectedGrade} onChange={(event) => setSelectedGrade(event.target.value)} aria-label="Select grade" disabled={loadingEducationalLevels || !activeGradeOptions.length}>{activeGradeOptions.map((grade) => <option key={grade}>{grade}</option>)}</select></label>
             </div>
+            <section className="educational-levels-settings" aria-labelledby="educational-levels-heading">
+              <div className="educational-levels-heading">
+                <div><h3 id="educational-levels-heading">Educational levels</h3><p>Choose the levels your school offers. Class and subject setup follows this selection.</p></div>
+              </div>
+              {loadingEducationalLevels ? <p className="empty-search">Loading this school’s educational levels…</p>
+                : educationalLevels.length > 0 && <div className="educational-level-options">
+                  {educationalLevels.map((level) => {
+                    const checked = draftEducationalLevelCodes.includes(level.code);
+                    return <label className={`educational-level-option ${checked ? "selected" : ""} ${role !== "admin" ? "readonly" : ""}`} key={level.code}>
+                      <input type="checkbox" checked={checked} disabled={role !== "admin" || savingEducationalLevels || (checked && draftEducationalLevelCodes.length <= 1)} onChange={() => toggleEducationalLevel(level.code)} />
+                      <span className="curriculum-check" aria-hidden="true">{checked ? "✓" : ""}</span>
+                      <span className="educational-level-copy"><strong>{level.label}</strong><small>{level.grades[0]} – {level.grades[level.grades.length - 1]}</small></span>
+                    </label>;
+                  })}
+                </div>}
+              {educationalLevelError && <p className="form-error" role="alert">{educationalLevelError}</p>}
+              {role === "admin" && !loadingEducationalLevels && <div className="educational-level-footer">
+                <span>{draftEducationalLevelCodes.length} level{draftEducationalLevelCodes.length === 1 ? "" : "s"} selected{educationalLevelsChanged ? " · Unsaved changes" : " · All changes saved"}</span>
+                <div>
+                  {educationalLevelsChanged && <button className="button button-secondary button-small" type="button" onClick={() => setDraftEducationalLevelCodes(savedEducationalLevelCodes)} disabled={savingEducationalLevels}>Discard</button>}
+                  <button className="button button-primary button-small" type="button" onClick={saveEducationalLevels} disabled={savingEducationalLevels || !educationalLevelsChanged || !normalizedEducationalLevelDraft}>{savingEducationalLevels ? "Saving…" : "Save levels"}</button>
+                </div>
+              </div>}
+            </section>
             <p className="curriculum-note">This starting catalogue follows the grade structure in NERDC’s revised Basic Education and Senior Secondary curriculum pages. Optional offerings can vary; confirm your school’s current subjects with the official grade-level curriculum and your state authority.</p>
             <div className="curriculum-grid" aria-label={`${selectedGrade} subjects`}>
-              {curriculumByGrade[selectedGrade].map((subject) => {
+              {(curriculumByGrade[selectedGrade] || []).map((subject) => {
                 const checked = gradeDraftSubjects.includes(subject);
                 return <label className={`curriculum-subject ${checked ? "selected" : ""} ${role !== "admin" ? "readonly" : ""}`} key={subject}>
-                  <input type="checkbox" checked={checked} disabled={loadingSubjects || role !== "admin"} onChange={() => toggleSubject(subject)} />
+                  <input type="checkbox" checked={checked} disabled={loadingSubjects || loadingEducationalLevels || !activeGradeOptions.includes(selectedGrade) || role !== "admin"} onChange={() => toggleSubject(subject)} />
                   <span className="curriculum-check" aria-hidden="true">{checked ? "✓" : ""}</span>
                   <span>{subject}</span>
                 </label>;
@@ -2628,17 +2738,17 @@ function App() {
             </div>
             <div className="curriculum-footer">
               <span>{loadingSubjects ? "Loading saved subjects…" : `${gradeDraftSubjects.length} selected${role === "admin" ? ` · ${subjectChangesPending ? "Unsaved changes" : "All changes saved"}` : ""}`}</span>
-              {role === "admin" && <button className="button button-primary" type="button" onClick={saveSubjects} disabled={loadingSubjects || savingSubjects || !subjectChangesPending}>{savingSubjects ? "Saving…" : "Save subjects"}</button>}
+              {role === "admin" && <button className="button button-primary" type="button" onClick={saveSubjects} disabled={loadingSubjects || loadingEducationalLevels || savingSubjects || !activeGradeOptions.includes(selectedGrade) || !subjectChangesPending}>{savingSubjects ? "Saving…" : "Save subjects"}</button>}
             </div>
             {subjectError && <p className="form-error" role="alert">{subjectError}</p>}
             <p className="curriculum-source">Official references: <a href="https://nerdc.gov.ng/content_manager/new_curriculum_home.html" target="_blank" rel="noreferrer">NERDC revised Basic Education Curriculum</a> · <a href="https://nerdc.gov.ng/content_manager/new_senior_curriculum_home.html" target="_blank" rel="noreferrer">NERDC revised Senior Secondary Curriculum</a></p>
             <div className="class-management">
               <div className="panel-heading"><div><h2>School classes</h2><p>Create class groups using this grade’s saved subjects.</p></div><span className="class-year-pill">{classForm.academicYear}</span></div>
               {role === "admin" && <form className="class-create-form" onSubmit={createClass}>
-                <label><span>Grade</span><select className="text-input" value={classForm.grade} onChange={(event) => setClassForm((previous) => ({ ...previous, grade: event.target.value }))}>{Object.keys(curriculumByGrade).map((grade) => <option key={grade}>{grade}</option>)}</select></label>
+                <label><span>Grade</span><select className="text-input" value={classForm.grade} onChange={(event) => setClassForm((previous) => ({ ...previous, grade: event.target.value }))} disabled={loadingEducationalLevels || !activeGradeOptions.length}>{activeGradeOptions.map((grade) => <option key={grade}>{grade}</option>)}</select></label>
                 <label><span>Class / stream</span><input className="text-input" required maxLength={24} value={classForm.section} onChange={(event) => setClassForm((previous) => ({ ...previous, section: event.target.value }))} placeholder="e.g. A or Blue" /></label>
                 <label><span>Academic year</span><input className="text-input" required pattern="\d{4}/\d{4}" title="Use the format 2026/2027" value={classForm.academicYear} onChange={(event) => setClassForm((previous) => ({ ...previous, academicYear: event.target.value }))} /></label>
-                <button className="button button-primary" type="submit" disabled={creatingClass || loadingClasses}>{creatingClass ? "Creating…" : "Create class"}</button>
+                <button className="button button-primary" type="submit" disabled={creatingClass || loadingClasses || loadingEducationalLevels || !activeGradeOptions.includes(classForm.grade)}>{creatingClass ? "Creating…" : "Create class"}</button>
               </form>}
               {classError && <p className="form-error" role="alert">{classError}</p>}
               {loadingClasses ? <p className="empty-search">Loading classes…</p> : schoolClasses.length === 0 ? <p className="empty-search">No classes yet. Save subjects for a grade, then create its first class.</p> : <div className="class-list">

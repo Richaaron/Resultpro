@@ -4,6 +4,23 @@ export const curriculumGrades = {
   seniorSecondary: ["SSS 1", "SSS 2", "SSS 3"],
 };
 
+export const curriculumLevels = [
+  { code: "primary", label: "Primary school", grades: curriculumGrades.primary },
+  { code: "juniorSecondary", label: "Junior secondary school", grades: curriculumGrades.juniorSecondary },
+  { code: "seniorSecondary", label: "Senior secondary school", grades: curriculumGrades.seniorSecondary },
+];
+
+export function normalizeEducationalLevelSelection(levelCodes) {
+  const allowedCodes = new Set(curriculumLevels.map((level) => level.code));
+  if (!Array.isArray(levelCodes) || levelCodes.length < 1 || levelCodes.length > allowedCodes.size) {
+    return null;
+  }
+  if (new Set(levelCodes).size !== levelCodes.length || levelCodes.some((code) => !allowedCodes.has(code))) {
+    return null;
+  }
+  return levelCodes;
+}
+
 const subjectsByBand = {
   primary: [
     "English Studies",

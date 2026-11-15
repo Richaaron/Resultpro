@@ -6,6 +6,7 @@ import {
   calculatePointsPercentage,
   defaultGradingSettings,
 } from "../shared/school-data.js";
+import { curriculumLevels } from "../shared/curriculum.js";
 
 let initializedDatabaseUrl;
 let initializePromise;
@@ -179,6 +180,16 @@ async function getReadyDatabase() {
             subject_name VARCHAR(100) NOT NULL,
             created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
             PRIMARY KEY (school_id, grade, subject_name)
+          )
+        `,
+        database.sql`
+          CREATE TABLE IF NOT EXISTS school_educational_levels (
+            school_id UUID NOT NULL REFERENCES schools(id) ON DELETE CASCADE,
+            level_code VARCHAR(32) NOT NULL,
+            label VARCHAR(80) NOT NULL,
+            active BOOLEAN NOT NULL DEFAULT TRUE,
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            PRIMARY KEY (school_id, level_code)
           )
         `,
         database.sql`
@@ -514,6 +525,14 @@ async function getReadyDatabase() {
     await initializePromise;
   }
   return database.sql;
+}
+
+async function ensureSchoolEducationalLevels(sql, schoolId) {
+  await sql.transaction(curriculumLevels.map((level) => sql`
+    INSERT INTO school_educational_levels (school_id, level_code, label)
+    VALUES (${schoolId}, ${level.code}, ${level.label})
+    ON CONFLICT (school_id, level_code) DO NOTHING
+  `));
 }
 
 export async function listSchools(userId) {
@@ -1112,6 +1131,56 @@ export async function listSchoolSubjects(schoolId) {
     WHERE school_id = ${schoolId}
     ORDER BY grade, subject_name
   `;
+}
+
+export async function getSchoolEducationalLevels(schoolId) {
+  const sql = await getReadyDatabase();
+  await ensureSchoolEducationalLevels(sql, schoolId);
+  const rows = await sql`
+    SELECT level_code AS code, label, active
+    FROM school_educational_levels
+    WHERE school_id = ${schoolId}
+  `;
+  const rowsByCode = new Map(rows.map((row) => [row.code, row]));
+  return curriculumLevels.map((level) => ({
+    ...rowsByCode.get(level.code),
+    grades: level.grades,
+  }));
+}
+
+export async function saveSchoolEducationalLevels(schoolId, levelCodes) {
+  const sql = await getReadyDatabase();
+  await ensureSchoolEducationalLevels(sql, schoolId);
+  const selectedCodes = new Set(levelCodes);
+  const classes = await sql`
+    SELECT grade
+    FROM school_classes
+    WHERE school_id = ${schoolId}
+  `;
+  const levelsInUse = curriculumLevels
+    .filter((level) => !selectedCodes.has(level.code)
+      && classes.some(({ grade }) => level.grades.includes(grade)))
+    .map((level) => level.label);
+  if (levelsInUse.length > 0) {
+    const error = new Error(`Move or remove classes before disabling ${levelsInUse.join(", ")}.`);
+    error.code = "EDUCATIONAL_LEVEL_HAS_CLASSES";
+    throw error;
+  }
+
+  await sql.transaction(curriculumLevels.map((level) => sql`
+    INSERT INTO school_educational_levels (school_id, level_code, label, active, updated_at)
+    VALUES (${schoolId}, ${level.code}, ${level.label}, ${selectedCodes.has(level.code)}, NOW())
+    ON CONFLICT (school_id, level_code)
+    DO UPDATE SET active = EXCLUDED.active, updated_at = NOW()
+  `));
+  return getSchoolEducationalLevels(schoolId);
+}
+
+export async function isSchoolGradeEnabled(schoolId, grade) {
+  const level = curriculumLevels.find((item) => item.grades.includes(grade));
+  if (!level) return false;
+  const levels = await getSchoolEducationalLevels(schoolId);
+  return levels.find((item) => item.code === level.code)?.active === true;
 }
 
 export async function replaceSchoolSubjects(schoolId, grade, subjects) {
