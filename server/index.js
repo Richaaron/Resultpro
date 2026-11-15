@@ -33,11 +33,13 @@ import {
   listSchoolAssessments,
   listSchoolResultSheet,
   listStudentPublishedResultSheets,
+  listStudentResultNotifications,
   listParentPublishedResultSheets,
   listTeachingAssignments,
   getSchoolAssessment,
   removeTeachingAssignment,
   publishSchoolResultSheet,
+  markStudentResultNotificationRead,
   renewSchoolInvitation,
   removeSchoolFormMaster,
   removeSchoolMemberSignature,
@@ -721,6 +723,45 @@ app.get("/api/schools/:schoolId/my-results", requireAuth, async (request, respon
       };
     response.set("Cache-Control", "no-store");
     return response.json(withSignatures);
+  } catch (error) {
+    return handleDatabaseError(error, response);
+  }
+});
+
+app.get("/api/schools/:schoolId/notifications", requireAuth, async (request, response) => {
+  const { schoolId } = request.params;
+  if (!isUuid(schoolId)) return response.status(400).json({ error: "Enter a valid school." });
+
+  try {
+    const membershipRole = await getSchoolRole(schoolId, request.auth.userId);
+    if (!membershipRole) return response.status(404).json({ error: "School not found." });
+    if (membershipRole !== "student") {
+      return response.status(403).json({ error: "Result notifications are only available to student accounts." });
+    }
+    const result = await listStudentResultNotifications(schoolId, request.auth.userId);
+    response.set("Cache-Control", "no-store");
+    return response.json(result);
+  } catch (error) {
+    return handleDatabaseError(error, response);
+  }
+});
+
+app.post("/api/schools/:schoolId/notifications/:notificationId/read", requireAuth, async (request, response) => {
+  const { schoolId, notificationId } = request.params;
+  if (!isUuid(schoolId) || !isUuid(notificationId)) {
+    return response.status(400).json({ error: "Enter a valid notification." });
+  }
+
+  try {
+    const membershipRole = await getSchoolRole(schoolId, request.auth.userId);
+    if (!membershipRole) return response.status(404).json({ error: "School not found." });
+    if (membershipRole !== "student") {
+      return response.status(403).json({ error: "Result notifications are only available to student accounts." });
+    }
+    const updated = await markStudentResultNotificationRead(schoolId, request.auth.userId, notificationId);
+    if (!updated) return response.status(404).json({ error: "Notification not found." });
+    response.set("Cache-Control", "no-store");
+    return response.json({ read: true });
   } catch (error) {
     return handleDatabaseError(error, response);
   }

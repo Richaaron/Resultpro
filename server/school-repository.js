@@ -480,6 +480,27 @@ async function getReadyDatabase() {
           CREATE INDEX IF NOT EXISTS school_published_results_student_idx
           ON school_published_results (school_id, student_id, publication_id)
         `,
+        database.sql`
+          CREATE TABLE IF NOT EXISTS school_result_notifications (
+            id UUID PRIMARY KEY,
+            school_id UUID NOT NULL,
+            recipient_user_id TEXT NOT NULL,
+            publication_id UUID NOT NULL,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            read_at TIMESTAMPTZ,
+            UNIQUE (school_id, recipient_user_id, publication_id),
+            CONSTRAINT school_result_notifications_member_fk
+              FOREIGN KEY (school_id, recipient_user_id)
+              REFERENCES school_members(school_id, user_id) ON DELETE CASCADE,
+            CONSTRAINT school_result_notifications_publication_fk
+              FOREIGN KEY (school_id, publication_id)
+              REFERENCES school_result_publications(school_id, id) ON DELETE CASCADE
+          )
+        `,
+        database.sql`
+          CREATE INDEX IF NOT EXISTS school_result_notifications_recipient_idx
+          ON school_result_notifications (school_id, recipient_user_id, created_at DESC)
+        `,
       ]).then(() => {
         initializedDatabaseUrl = database.databaseUrl;
       }).catch((error) => {
@@ -1027,7 +1048,60 @@ export async function getSchoolDashboard(schoolId, userId, role) {
       LIMIT 4
     `;
 
-  return { summary, activity };
+  const teacherPerformanceHistory = role === "teacher"
+    ? await sql`
+      WITH published_subject_averages AS (
+        SELECT p.id AS publication_id,
+               p.class_id,
+               c.grade,
+               c.section,
+               p.academic_year,
+               p.term,
+               p.published_at,
+               r.subject_name,
+               AVG(r.percentage)::float8 AS average_percentage,
+               COUNT(DISTINCT r.student_id)
+                 FILTER (WHERE r.percentage IS NOT NULL)::int AS graded_student_count
+        FROM school_result_publications p
+        JOIN school_classes c
+          ON c.school_id = p.school_id AND c.id = p.class_id
+        JOIN school_published_results r
+          ON r.school_id = p.school_id AND r.publication_id = p.id
+        JOIN school_teaching_assignments ta
+          ON ta.school_id = p.school_id
+          AND ta.class_id = p.class_id
+          AND ta.subject_name = r.subject_name
+          AND ta.teacher_user_id = ${userId}
+        WHERE p.school_id = ${schoolId}
+        GROUP BY p.id, p.class_id, c.grade, c.section,
+                 p.academic_year, p.term, p.published_at, r.subject_name
+      ),
+      ranked_performance AS (
+        SELECT published_subject_averages.*,
+               ROW_NUMBER() OVER (
+                 PARTITION BY class_id, subject_name
+                 ORDER BY academic_year DESC, term DESC, published_at DESC
+               ) AS report_rank
+        FROM published_subject_averages
+      )
+      SELECT publication_id AS "publicationId",
+             class_id AS "classId",
+             grade,
+             section,
+             academic_year AS "academicYear",
+             term,
+             published_at AS "publishedAt",
+             subject_name AS subject,
+             average_percentage AS "averagePercentage",
+             graded_student_count AS "gradedStudentCount",
+             report_rank AS "reportRank"
+      FROM ranked_performance
+      WHERE report_rank <= 2
+      ORDER BY grade, section, subject, report_rank
+    `
+    : [];
+
+  return { summary, activity, teacherPerformanceHistory };
 }
 
 export async function listSchoolSubjects(schoolId) {
@@ -1599,9 +1673,27 @@ export async function publishSchoolResultSheet(schoolId, classId, term, publishe
       FROM graded_snapshot_rows snapshot
       CROSS JOIN created_publication publication
       ON CONFLICT (publication_id, student_id, subject_name) DO NOTHING
-      RETURNING publication_id
+      RETURNING publication_id, student_id
+    ),
+    result_notifications AS (
+      INSERT INTO school_result_notifications
+        (id, school_id, recipient_user_id, publication_id)
+      SELECT gen_random_uuid(), publication.school_id, st.user_id, publication.id
+      FROM created_publication publication
+      JOIN (SELECT DISTINCT student_id FROM saved_results) result_students ON TRUE
+      JOIN school_students st
+        ON st.school_id = publication.school_id AND st.id = result_students.student_id
+      JOIN school_members member
+        ON member.school_id = st.school_id
+        AND member.user_id = st.user_id
+        AND member.role = 'student'
+      WHERE st.user_id IS NOT NULL
+      ON CONFLICT (school_id, recipient_user_id, publication_id) DO NOTHING
+      RETURNING id
     )
-    SELECT id FROM created_publication
+    SELECT publication.id
+    FROM created_publication publication
+    CROSS JOIN (SELECT COUNT(*) FROM result_notifications) notification_count
   `;
   if (created) return { published: true, publicationId: created.id };
 
@@ -1698,6 +1790,56 @@ export async function listStudentPublishedResultSheets(schoolId, userId) {
     });
   }
   return { linked: true, sheets: [...sheetsById.values()] };
+}
+
+export async function listStudentResultNotifications(schoolId, userId) {
+  const sql = await getReadyDatabase();
+  const rows = await sql`
+    SELECT notification.id,
+           notification.publication_id AS "publicationId",
+           notification.created_at AS "createdAt",
+           notification.read_at AS "readAt",
+           publication.term,
+           publication.academic_year AS "academicYear",
+           publication.published_at AS "publishedAt",
+           school_class.grade,
+           school_class.section,
+           (
+             SELECT COUNT(*)::int
+             FROM school_result_notifications unread
+             WHERE unread.school_id = notification.school_id
+               AND unread.recipient_user_id = notification.recipient_user_id
+               AND unread.read_at IS NULL
+           ) AS "unreadCount"
+    FROM school_result_notifications notification
+    JOIN school_result_publications publication
+      ON publication.school_id = notification.school_id
+      AND publication.id = notification.publication_id
+    JOIN school_classes school_class
+      ON school_class.school_id = publication.school_id
+      AND school_class.id = publication.class_id
+    WHERE notification.school_id = ${schoolId}
+      AND notification.recipient_user_id = ${userId}
+    ORDER BY notification.created_at DESC, notification.id
+    LIMIT 20
+  `;
+  return {
+    notifications: rows.map(({ unreadCount, ...notification }) => notification),
+    unreadCount: rows[0]?.unreadCount ?? 0,
+  };
+}
+
+export async function markStudentResultNotificationRead(schoolId, userId, notificationId) {
+  const sql = await getReadyDatabase();
+  const [updated] = await sql`
+    UPDATE school_result_notifications
+    SET read_at = COALESCE(read_at, NOW())
+    WHERE school_id = ${schoolId}
+      AND recipient_user_id = ${userId}
+      AND id = ${notificationId}
+    RETURNING id
+  `;
+  return Boolean(updated);
 }
 
 export async function listParentPublishedResultSheets(schoolId, userId) {

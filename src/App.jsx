@@ -65,6 +65,25 @@ const localDateInputValue = () => {
   const date = new Date();
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 };
+const assessmentDueDateInfo = (dueDate) => {
+  if (!dueDate) return { label: "No due date", daysUntil: null };
+  const [year, month, day] = dueDate.split("-").map(Number);
+  const dueTimestamp = Date.UTC(year, month - 1, day);
+  const parsedDate = new Date(dueTimestamp);
+  if (parsedDate.getUTCFullYear() !== year || parsedDate.getUTCMonth() !== month - 1 || parsedDate.getUTCDate() !== day) {
+    return { label: "Due date unavailable", daysUntil: null };
+  }
+  const now = new Date();
+  const todayTimestamp = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
+  const daysUntil = Math.round((dueTimestamp - todayTimestamp) / 86400000);
+  if (daysUntil < 0) return { label: `Overdue by ${Math.abs(daysUntil)} day${daysUntil === -1 ? "" : "s"}`, daysUntil };
+  if (daysUntil === 0) return { label: "Due today", daysUntil };
+  if (daysUntil <= 7) return { label: `Due in ${daysUntil} day${daysUntil === 1 ? "" : "s"}`, daysUntil };
+  return {
+    label: `Due ${new Intl.DateTimeFormat("en-NG", { day: "numeric", month: "short" }).format(new Date(year, month - 1, day))}`,
+    daysUntil,
+  };
+};
 const localMonthStartInputValue = () => `${localDateInputValue().slice(0, 7)}-01`;
 const accessOptions = [
   ["invite", "Invite-only portals", "Only verified people invited by a school administrator can join."],
@@ -361,6 +380,14 @@ function App() {
   const [selectedStudentResultId, setSelectedStudentResultId] = useState("");
   const [loadingStudentResults, setLoadingStudentResults] = useState(false);
   const [studentResultError, setStudentResultError] = useState("");
+  const [studentResultsRefresh, setStudentResultsRefresh] = useState(0);
+  const [studentNotifications, setStudentNotifications] = useState([]);
+  const [studentNotificationsSchoolId, setStudentNotificationsSchoolId] = useState("");
+  const [studentNotificationUnreadCount, setStudentNotificationUnreadCount] = useState(0);
+  const [studentNotificationsLoading, setStudentNotificationsLoading] = useState(false);
+  const [studentNotificationsError, setStudentNotificationsError] = useState("");
+  const [studentNotificationRefresh, setStudentNotificationRefresh] = useState(0);
+  const [studentNotificationsOpen, setStudentNotificationsOpen] = useState(false);
   const [linkingStudentId, setLinkingStudentId] = useState("");
   const [teacherName, setTeacherName] = useState("");
   const [teacherRegistration, setTeacherRegistration] = useState(null);
@@ -424,7 +451,27 @@ function App() {
   const availableStudentSheets = role === "parent"
     ? selectedParentStudent?.sheets || []
     : studentResultData?.sheets || [];
+  const notificationsMatchCurrentSchool = studentNotificationsSchoolId === school?.id;
+  const notificationsForCurrentSchool = notificationsMatchCurrentSchool ? studentNotifications : [];
+  const unreadNotificationsForCurrentSchool = notificationsMatchCurrentSchool ? studentNotificationUnreadCount : 0;
+  const loadingNotificationsForCurrentSchool = studentNotificationsLoading || (role === "student" && !notificationsMatchCurrentSchool);
+  const notificationsErrorForCurrentSchool = notificationsMatchCurrentSchool ? studentNotificationsError : "";
   const selectedStudentResult = availableStudentSheets.find((sheet) => sheet.id === selectedStudentResultId) || null;
+  const studentPerformanceHistory = role === "student" && studentResultData?.linked
+    ? [...studentResultData.sheets]
+      .map((sheet) => ({
+        ...sheet,
+        summary: summarizePublishedResultRows(sheet.rows),
+      }))
+      .sort((left, right) => new Date(left.publishedAt) - new Date(right.publishedAt))
+    : [];
+  const visibleStudentPerformanceHistory = studentPerformanceHistory.slice(-6);
+  const latestStudentHistory = studentPerformanceHistory[studentPerformanceHistory.length - 1];
+  const previousStudentHistory = studentPerformanceHistory[studentPerformanceHistory.length - 2];
+  const studentHistoryChange = latestStudentHistory?.summary.averagePercentage != null
+    && previousStudentHistory?.summary.averagePercentage != null
+    ? Number((latestStudentHistory.summary.averagePercentage - previousStudentHistory.summary.averagePercentage).toFixed(1))
+    : null;
   const attendanceReportForSelection = attendanceReportData
     && attendanceReportData.schoolId === school?.id
     && attendanceReportData.classId === attendanceClassId
@@ -442,6 +489,25 @@ function App() {
     () => groupPublishedResultRowsByStudent(resultSheet?.rows),
     [resultSheet?.rows],
   );
+  const teacherPerformanceTrends = useMemo(() => {
+    if (role !== "teacher") return [];
+    const groups = new Map();
+    for (const report of dashboardForCurrentSchool?.teacherPerformanceHistory || []) {
+      const key = `${report.classId}:${report.subject}`;
+      const group = groups.get(key) || { reports: [] };
+      group.reports.push(report);
+      groups.set(key, group);
+    }
+    return [...groups.values()]
+      .map(({ reports }) => {
+        const [latest, previous] = reports;
+        const change = latest?.averagePercentage != null && previous?.averagePercentage != null
+          ? Number((latest.averagePercentage - previous.averagePercentage).toFixed(1))
+          : null;
+        return { ...latest, change };
+      })
+      .sort((left, right) => new Date(right.publishedAt) - new Date(left.publishedAt));
+  }, [role, dashboardForCurrentSchool]);
   useEffect(() => {
     if (!printingClassReports) return undefined;
     const finishPrinting = () => setPrintingClassReports(false);
@@ -478,6 +544,18 @@ function App() {
         ["Assessments", dashboardSummary?.latestAssessmentCount ?? 0, "In your latest published report"],
         ["Latest average", dashboardAverage, "Based on your latest published report"],
       ];
+  const teacherAssessmentActions = role === "teacher"
+    ? assessments
+        .filter((assessment) => ["draft", "returned"].includes(assessment.status))
+        .map((assessment) => ({ ...assessment, dueDateInfo: assessmentDueDateInfo(assessment.dueDate) }))
+        .sort((left, right) => {
+          const leftDaysUntil = left.dueDateInfo.daysUntil ?? Number.POSITIVE_INFINITY;
+          const rightDaysUntil = right.dueDateInfo.daysUntil ?? Number.POSITIVE_INFINITY;
+          if (leftDaysUntil !== rightDaysUntil) return leftDaysUntil - rightDaysUntil;
+          if (left.status !== right.status) return left.status === "returned" ? -1 : 1;
+          return left.title.localeCompare(right.title);
+        })
+    : [];
   const gradeSavedSubjects = savedSubjects[selectedGrade] || [];
   const gradeDraftSubjects = draftSubjects[selectedGrade] || [];
   const selectedAssignmentClass = schoolClasses.find((item) => item.id === assignmentClassId);
@@ -893,7 +971,8 @@ function App() {
 
   useEffect(() => {
     let active = true;
-    if (!school?.id || page !== "results" || !["student", "parent"].includes(role)) {
+    const shouldLoadStudentResults = page === "results" || (role === "student" && page === "overview");
+    if (!school?.id || !shouldLoadStudentResults || !["student", "parent"].includes(role)) {
       setStudentResultData(null);
       setSelectedParentStudentId("");
       setSelectedStudentResultId("");
@@ -932,7 +1011,48 @@ function App() {
         if (active) setLoadingStudentResults(false);
       });
     return () => { active = false; };
-  }, [school?.id, page, role]);
+  }, [school?.id, page, role, studentResultsRefresh]);
+
+  useEffect(() => {
+    let active = true;
+    if (!school?.id || role !== "student") {
+      setStudentNotifications([]);
+      setStudentNotificationsSchoolId("");
+      setStudentNotificationUnreadCount(0);
+      setStudentNotificationsLoading(false);
+      setStudentNotificationsError("");
+      setStudentNotificationsOpen(false);
+      return () => { active = false; };
+    }
+
+    setStudentNotifications([]);
+    setStudentNotificationsSchoolId(school.id);
+    setStudentNotificationUnreadCount(0);
+    setStudentNotificationsLoading(true);
+    setStudentNotificationsError("");
+    apiRequest(`/api/schools/${school.id}/notifications`)
+      .then(({ notifications, unreadCount }) => {
+        if (!active) return;
+        setStudentNotifications(notifications);
+        setStudentNotificationsSchoolId(school.id);
+        setStudentNotificationUnreadCount(unreadCount);
+      })
+      .catch((requestError) => {
+        if (!active) return;
+        setStudentNotificationsError(requestError.message || "Could not load notifications.");
+      })
+      .finally(() => {
+        if (active) setStudentNotificationsLoading(false);
+      });
+      const refreshNotifications = () => setStudentNotificationRefresh((previous) => previous + 1);
+      const notificationInterval = window.setInterval(refreshNotifications, 60_000);
+      window.addEventListener("focus", refreshNotifications);
+      return () => {
+        active = false;
+        window.clearInterval(notificationInterval);
+        window.removeEventListener("focus", refreshNotifications);
+      };
+  }, [school?.id, role, studentNotificationRefresh]);
 
   useEffect(() => {
     let active = true;
@@ -1026,7 +1146,8 @@ function App() {
 
   useEffect(() => {
     let active = true;
-    if (!school?.id || page !== "results" || ["student", "parent"].includes(role)) {
+    const shouldLoadAssessments = page === "results" || (role === "teacher" && page === "overview");
+    if (!school?.id || !shouldLoadAssessments || ["student", "parent"].includes(role)) {
       setAssessments([]);
       setLoadingAssessments(false);
       setAssessmentDetail(null);
@@ -1435,7 +1556,7 @@ function App() {
         body: JSON.stringify({ classId: resultSheetClassId, term: resultSheetTerm }),
       });
       setAssessmentRefresh((previous) => previous + 1);
-      setToast("Result sheet published. This term's results are now frozen.");
+      setToast("Result sheet published and frozen. Linked students can now see a notification.");
     } catch (requestError) {
       setResultSheetError(requestError.message || "Could not publish the result sheet.");
     }
@@ -2126,6 +2247,26 @@ function App() {
     if (selectedStudentResult?.rows.length) window.print();
   }
 
+  async function openStudentResultNotification(notification) {
+    if (!school) return;
+    setStudentNotificationsOpen(false);
+    setSelectedStudentResultId(notification.publicationId);
+    setPage("results");
+    if (notification.readAt) return;
+
+    try {
+      await apiRequest(`/api/schools/${school.id}/notifications/${notification.id}/read`, { method: "POST" });
+      setStudentNotifications((previous) => previous.map((item) => (
+        item.id === notification.id ? { ...item, readAt: new Date().toISOString() } : item
+      )));
+      setStudentNotificationUnreadCount((previous) => Math.max(0, previous - 1));
+    } catch (requestError) {
+      const message = requestError.message || "Could not mark this notification as read.";
+      setStudentNotificationsError(message);
+      setToast(message);
+    }
+  }
+
   function updateForm(field, value) {
     setForm((previous) => ({ ...previous, [field]: value }));
   }
@@ -2222,7 +2363,52 @@ function App() {
       </aside>
 
       <main className="main-content">
-        <header className="topbar"><button className="mobile-menu" type="button" aria-label={sidebarOpen ? "Close navigation menu" : "Open navigation menu"} aria-expanded={sidebarOpen} onClick={() => setSidebarOpen((open) => !open)}><span aria-hidden="true">{sidebarOpen ? "×" : "☰"}</span></button><div className="breadcrumb"><span>Workspace</span><span className="breadcrumb-slash">/</span><strong>{page}</strong></div><div className="topbar-actions"><button className="topbar-video" type="button" onClick={() => setExplainerOpen(true)}><span aria-hidden="true">▶</span> How it works</button><span className="role-select" aria-label={platformAdmin ? "Your platform role" : school ? "Your school role" : "Account status"}>{accountRoleLabel}</span><button className="icon-button" type="button" onClick={() => setToast("You’re all caught up on school notifications.")} aria-label="Notifications">♧</button><button className="topbar-signout" type="button" aria-label={`Sign out ${userName}`} onClick={signOut}>Sign out</button></div></header>
+        <header className="topbar">
+          <button className="mobile-menu" type="button" aria-label={sidebarOpen ? "Close navigation menu" : "Open navigation menu"} aria-expanded={sidebarOpen} onClick={() => setSidebarOpen((open) => !open)}><span aria-hidden="true">{sidebarOpen ? "×" : "☰"}</span></button>
+          <div className="breadcrumb"><span>Workspace</span><span className="breadcrumb-slash">/</span><strong>{page}</strong></div>
+          <div className="topbar-actions">
+            <button className="topbar-video" type="button" onClick={() => setExplainerOpen(true)}><span aria-hidden="true">▶</span> How it works</button>
+            <span className="role-select" aria-label={platformAdmin ? "Your platform role" : school ? "Your school role" : "Account status"}>{accountRoleLabel}</span>
+            {role === "student"
+              ? <div className="notification-menu-wrap">
+                <button
+                  className="icon-button notification-button"
+                  type="button"
+                  onClick={() => {
+                    const opening = !studentNotificationsOpen;
+                    setStudentNotificationsOpen(opening);
+                    if (opening) setStudentNotificationRefresh((previous) => previous + 1);
+                  }}
+                  aria-label={`Notifications${unreadNotificationsForCurrentSchool ? `, ${unreadNotificationsForCurrentSchool} unread` : ""}`}
+                  aria-expanded={studentNotificationsOpen}
+                  aria-controls="student-notifications"
+                >
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 9a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9" /><path d="M10 21h4" /></svg>
+                  {unreadNotificationsForCurrentSchool > 0 && <span className="notification-count">{unreadNotificationsForCurrentSchool > 99 ? "99+" : unreadNotificationsForCurrentSchool}</span>}
+                </button>
+                {studentNotificationsOpen && <div className="notification-popover" id="student-notifications" role="region" aria-label="Result notifications">
+                  <div className="notification-popover-heading"><strong>Notifications</strong><small>{unreadNotificationsForCurrentSchool ? `${unreadNotificationsForCurrentSchool} unread` : "Your latest result updates"}</small></div>
+                  {notificationsErrorForCurrentSchool
+                    ? <div className="notification-popover-message" role="alert"><span>{notificationsErrorForCurrentSchool}</span><button className="quiet-action" type="button" onClick={() => setStudentNotificationRefresh((previous) => previous + 1)}>Retry</button></div>
+                    : loadingNotificationsForCurrentSchool
+                      ? <p className="notification-popover-message" role="status">Loading notifications…</p>
+                      : notificationsForCurrentSchool.length
+                        ? <div className="student-notification-list">{notificationsForCurrentSchool.map((notification) => <button
+                          className={`student-notification-item${notification.readAt ? "" : " unread"}`}
+                          type="button"
+                          key={notification.id}
+                          onClick={() => openStudentResultNotification(notification)}
+                        >
+                          <span className="student-notification-indicator" aria-hidden="true" />
+                          <span><strong>{notification.term} results are ready</strong><small>{notification.grade} {notification.section} · {notification.academicYear}</small><small>Published {new Date(notification.publishedAt).toLocaleDateString("en-NG")}</small></span>
+                        </button>)}</div>
+                        : <p className="notification-popover-message">No published-result notifications yet.</p>}
+                </div>}
+              </div>
+              : <button className="icon-button" type="button" onClick={() => setToast("Result publication notifications are available to linked student accounts.")} aria-label="Notifications">♧</button>}
+            <button className="topbar-signout" type="button" aria-label={`Sign out ${userName}`} onClick={signOut}>Sign out</button>
+          </div>
+        </header>
         <div key={page} className={`page-content page-view ${page === "classes" ? "curriculum-page" : page === "students" ? "students-page" : page === "teachers" ? "teachers-page" : page === "results" ? "results-page" : page === "attendance" ? "attendance-page" : page === "grading" ? "grading-page" : page === "platform" ? "platform-page" : ""}`}>
           <span className="route-sweep" aria-hidden="true" />
           {!school && !(page === "platform" && platformAdmin) ? <section className="panel onboarding-panel"><span className="auth-kicker">WELCOME TO ASTER</span><h1>{platformAdmin ? "Platform owner access" : "No school profile linked"}</h1><p className="page-subtitle">{platformAdmin ? "Your platform workspace is ready. You can create schools from Platform operations when needed." : "Your account is not linked to a school workspace. Platform-owner access is available only to approved email addresses."}</p>{platformAccessError && <p className="form-error" role="alert">Could not check platform access: {platformAccessError}</p>}{platformAccess?.email === verifiedEmail && !platformAccess.isPlatformAdmin && <p className="field-hint" role="status">Platform-owner access has not been confirmed for this account. You can create a school profile later if you need one.</p>}{!platformAdmin && <button className="button button-primary" type="button" onClick={showSetup}>＋ Create school profile</button>}</section> : <>
@@ -2791,12 +2977,125 @@ function App() {
                 <div className="stat-number">{value}</div><div className="stat-foot"><span>{detail}</span></div>
               </article>)}
             </section>
+            {role === "teacher" && <section className="panel teacher-assessment-actions">
+              <div className="panel-heading">
+                <div><h2>Assessment action list</h2><p>Drafts and returned assessments assigned to your classes, ordered by due date.</p></div>
+                <button className="button button-secondary button-small" type="button" onClick={() => setPage("results")}>Open assessments</button>
+              </div>
+              {loadingAssessments
+                ? <p className="empty-search">Loading your assessment tasks…</p>
+                : assessmentError
+                  ? <div className="dashboard-message dashboard-error" role="alert"><span>{assessmentError}</span><button className="button button-secondary button-small" type="button" onClick={() => setAssessmentRefresh((previous) => previous + 1)}>Retry</button></div>
+                  : teacherAssessmentActions.length
+                    ? <div className="attention-list">
+                      {teacherAssessmentActions.slice(0, 6).map((assessment) => <button
+                        className="attention-item"
+                        type="button"
+                        key={assessment.id}
+                        onClick={() => {
+                          setSelectedAssessmentId(assessment.id);
+                          setPage("results");
+                        }}
+                        aria-label={`Open ${assessment.title}, ${assessment.status === "returned" ? "returned for changes" : "draft"}, ${assessment.dueDateInfo.label}`}
+                      >
+                        <span className={`attention-icon ${assessment.status === "returned" ? "amber" : "blue"}`}>{assessment.status === "returned" ? "!" : "▤"}</span>
+                        <span className="attention-copy">
+                          <strong>{assessment.title}</strong>
+                          <small>{assessment.grade} {assessment.section} · {assessment.subject} · {assessment.markedCount} of {assessment.studentCount} marks entered · <span className={assessment.dueDateInfo.daysUntil != null && assessment.dueDateInfo.daysUntil < 0 ? "assessment-deadline-overdue" : assessment.dueDateInfo.daysUntil != null && assessment.dueDateInfo.daysUntil <= 3 ? "assessment-deadline-soon" : ""}>{assessment.dueDateInfo.label}</span></small>
+                        </span>
+                        <span className={`status-pill ${assessment.status === "returned" ? "returned" : "draft"}`}><i />{assessment.status === "returned" ? "Returned" : "Draft"}</span>
+                      </button>)}
+                      <button className="view-all-link" type="button" onClick={() => setPage("results")}>View all assessments →</button>
+                    </div>
+                    : <p className="empty-search">{assessments.length ? "You’re up to date. No draft or returned assessments need action." : "No assessments have been assigned to your classes yet."}</p>}
+            </section>}
             <section className="main-grid">
-              <article className="panel performance-panel tilt-3d">
-                <div className="panel-heading"><div><h2>{role === "student" ? "My latest published results" : role === "parent" ? "Children’s latest published results" : "Published results average"}</h2><p>{role === "student" ? "Only your most recently published report is included." : role === "parent" ? "Based only on published reports for your linked children." : role === "teacher" ? "Based on published results for your assigned classes and subjects." : "Based on saved result snapshots for this school."}</p></div></div>
-                <div className="chart-summary"><strong>{dashboardAverage}</strong><small>{["student", "parent"].includes(role) ? "latest report average" : "average percentage"}</small></div>
-                {dashboardAverage === "—" && <p className="sample-chart-copy">No published result percentages are available yet.</p>}
-              </article>
+              {role === "teacher"
+                ? <article className="panel teacher-performance-panel">
+                  <div className="panel-heading"><div><h2>Published subject performance</h2><p>Class averages for your assigned subjects, compared with the previous published report where available.</p></div></div>
+                  {teacherPerformanceTrends.length
+                    ? <div className="teacher-performance-list">
+                      {teacherPerformanceTrends.slice(0, 6).map((trend) => {
+                        const average = trend.averagePercentage == null ? null : Number(trend.averagePercentage);
+                        const barWidth = average == null ? 0 : Math.max(0, Math.min(100, average));
+                        return <button
+                          className="teacher-performance-item"
+                          type="button"
+                          key={`${trend.classId}-${trend.subject}`}
+                          onClick={() => {
+                            setResultSheetClassId(trend.classId);
+                            setResultSheetTerm(trend.term);
+                            setPage("results");
+                          }}
+                          aria-label={`View ${trend.grade} ${trend.section} ${trend.subject}, ${trend.academicYear} ${trend.term}, ${average == null ? "average not available" : `average ${average.toFixed(1)} percent`}`}
+                        >
+                          <span className="teacher-performance-copy">
+                            <strong>{trend.grade} {trend.section} · {trend.subject}</strong>
+                            <small>{trend.academicYear} · {trend.term} · {trend.gradedStudentCount} students graded</small>
+                          </span>
+                          <span className="teacher-performance-track" aria-hidden="true"><span style={{ width: `${barWidth}%` }} /></span>
+                          <span className="teacher-performance-result">
+                            <strong className="teacher-performance-score">{average == null ? "—" : `${average.toFixed(1)}%`}</strong>
+                            {trend.change != null && <small className={`teacher-performance-change ${trend.change > 0 ? "positive-change" : trend.change < 0 ? "negative-change" : ""}`}>
+                              {trend.change > 0 ? "↑ " : trend.change < 0 ? "↓ " : ""}{trend.change === 0 ? "No change" : `${Math.abs(trend.change).toFixed(1)} pp`}
+                            </small>}
+                          </span>
+                        </button>;
+                      })}
+                      {teacherPerformanceTrends.length > 6 && <p className="teacher-performance-note">Showing the six most recently published class and subject averages.</p>}
+                    </div>
+                    : <p className="empty-search">No published results are available for your assigned subjects yet.</p>}
+                  <button className="view-all-link" type="button" onClick={() => setPage("results")}>Open assigned result sheets →</button>
+                </article>
+                : role === "student"
+                ? <article className="panel student-performance-history-panel">
+                  <div className="panel-heading"><div><h2>My performance history</h2><p>Average scores from your published reports, in publication order.</p></div></div>
+                  {loadingStudentResults || (!studentResultData && !studentResultError)
+                    ? <p className="empty-search">Loading your published results…</p>
+                    : studentResultError
+                      ? <div className="dashboard-message dashboard-error" role="alert"><span>{studentResultError}</span><button className="button button-secondary button-small" type="button" onClick={() => setStudentResultsRefresh((previous) => previous + 1)}>Retry</button></div>
+                      : !studentResultData?.linked
+                        ? <p className="empty-search">Your school administrator needs to link your verified portal email to your student record before results can appear.</p>
+                        : studentPerformanceHistory.length === 0
+                          ? <p className="empty-search">No published results are available yet. Your history will appear here after your school publishes a report.</p>
+                          : <>
+                            <div className="student-history-summary">
+                              <div><small>Latest report average</small><strong>{latestStudentHistory.summary.averagePercentage == null ? "—" : `${latestStudentHistory.summary.averagePercentage.toFixed(1)}%`}</strong></div>
+                              {studentHistoryChange == null
+                                ? <span className="student-history-change">{studentPerformanceHistory.length < 2 ? "A trend appears after another report is published." : "A comparison is unavailable for these reports."}</span>
+                                : <span className={`student-history-change ${studentHistoryChange > 0 ? "positive-change" : studentHistoryChange < 0 ? "negative-change" : ""}`}>
+                                  {studentHistoryChange > 0 ? "↑ " : studentHistoryChange < 0 ? "↓ " : ""}{studentHistoryChange === 0 ? "No change" : `${Math.abs(studentHistoryChange).toFixed(1)} percentage points`} vs previous report
+                                </span>}
+                            </div>
+                            <div className="student-history-list" aria-label="Recent published report averages">
+                              {visibleStudentPerformanceHistory.map((sheet) => {
+                                const average = sheet.summary.averagePercentage;
+                                const barWidth = average == null ? 0 : Math.max(0, Math.min(100, average));
+                                const reportLabel = `${sheet.academicYear} ${sheet.term}`;
+                                return <button
+                                  className="student-history-item"
+                                  type="button"
+                                  key={sheet.id}
+                                  onClick={() => {
+                                    setSelectedStudentResultId(sheet.id);
+                                    setPage("results");
+                                  }}
+                                  aria-label={`View ${reportLabel}, average ${average == null ? "not available" : `${average.toFixed(1)} percent`}`}
+                                >
+                                  <span className="student-history-term"><strong>{sheet.academicYear}</strong><small>{sheet.term} · {sheet.grade} {sheet.section}</small></span>
+                                  <span className="student-history-track" aria-hidden="true"><span style={{ width: `${barWidth}%` }} /></span>
+                                  <strong className="student-history-score">{average == null ? "—" : `${average.toFixed(1)}%`}</strong>
+                                </button>;
+                              })}
+                            </div>
+                            <button className="view-all-link" type="button" onClick={() => setPage("results")}>Open published report cards →</button>
+                          </>}
+                </article>
+                : <article className="panel performance-panel tilt-3d">
+                  <div className="panel-heading"><div><h2>{role === "parent" ? "Children’s latest published results" : "Published results average"}</h2><p>{role === "parent" ? "Based only on published reports for your linked children." : role === "teacher" ? "Based on published results for your assigned classes and subjects." : "Based on saved result snapshots for this school."}</p></div></div>
+                  <div className="chart-summary"><strong>{dashboardAverage}</strong><small>average percentage</small></div>
+                  {dashboardAverage === "—" && <p className="sample-chart-copy">No published result percentages are available yet.</p>}
+                </article>}
               <article className="panel activity-panel tilt-3d">
                 <div className="panel-heading"><div><h2>{["student", "parent"].includes(role) ? "Published report activity" : "Recent assessment activity"}</h2><p>{role === "admin" ? "Latest assessments across your school." : role === "teacher" ? "Latest assessments for your assignments." : role === "parent" ? "Published reports for your linked children." : "Your latest published result sheets."}</p></div></div>
                 <div className="attention-list">
