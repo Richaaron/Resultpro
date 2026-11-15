@@ -54,6 +54,7 @@ const portalData = {
 };
 
 const schoolTypes = ["Primary school", "Secondary school", "All-through school", "College / sixth form"];
+const SESSION_RESTORE_TIMEOUT_MS = 12000;
 const currentAcademicYear = (() => {
   const now = new Date();
   const startYear = now.getMonth() >= 8 ? now.getFullYear() : now.getFullYear() - 1;
@@ -598,12 +599,20 @@ function App() {
 
   useEffect(() => {
     let active = true;
+    let timeoutId;
     if (!authClient) {
       setSessionLoading(false);
       setAuthNotice("Neon Auth is not configured. Set VITE_NEON_AUTH_URL to your Auth Base URL.");
       return () => { active = false; };
     }
-    authClient.getSession()
+    const sessionRequest = Promise.resolve().then(() => authClient.getSession());
+    const timeoutRequest = new Promise((_, reject) => {
+      timeoutId = window.setTimeout(
+        () => reject(new Error("Session restoration timed out. Please sign in again.")),
+        SESSION_RESTORE_TIMEOUT_MS,
+      );
+    });
+    Promise.race([sessionRequest, timeoutRequest])
       .then(({ data, error: sessionError }) => {
         if (sessionError) throw new Error(sessionError.message || "Could not restore your session.");
         if (active) setSession(data?.session || null);
@@ -612,9 +621,13 @@ function App() {
         if (active) setAuthNotice(sessionError.message || "Could not restore your session.");
       })
       .finally(() => {
+        window.clearTimeout(timeoutId);
         if (active) setSessionLoading(false);
       });
-    return () => { active = false; };
+    return () => {
+      active = false;
+      window.clearTimeout(timeoutId);
+    };
   }, []);
 
   useEffect(() => {
@@ -2361,7 +2374,19 @@ function App() {
   const userInitials = userName.split(/\s+/).slice(0, 2).map((part) => part[0]).join("").toUpperCase();
 
   if (sessionLoading) {
-    return <main className="auth-shell"><p className="auth-description">Restoring your secure session…</p></main>;
+    return (
+      <main className="session-restore-shell" aria-busy="true">
+        <section className="session-restore-card" role="status" aria-live="polite">
+          <div className="brand session-restore-brand" aria-label="Aster">
+            <AsterLogoMark /><span className="brand-name">aster<span>.</span></span>
+          </div>
+          <span className="session-restore-spinner" aria-hidden="true" />
+          <h1>Welcome back</h1>
+          <p>Restoring your secure session</p>
+          <small>Your school workspace will be ready in a moment.</small>
+        </section>
+      </main>
+    );
   }
   if (!session?.user || session.user.emailVerified !== true) {
     return (

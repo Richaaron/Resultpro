@@ -1213,6 +1213,41 @@ select.text-input option { background: #101d16; color: #edf5ef; }
   padding: 48px clamp(22px, 5vw, 70px);
   background: transparent;
 }
+.session-restore-shell {
+  display: grid;
+  min-height: 100vh;
+  place-items: center;
+  padding: 24px;
+  background:
+    radial-gradient(ellipse at 18% 28%, rgb(37 102 59 / 24%), transparent 34rem),
+    radial-gradient(ellipse at 85% 85%, rgb(22 66 44 / 19%), transparent 34rem),
+    #08120d;
+}
+.session-restore-card {
+  display: grid;
+  width: min(100%, 390px);
+  justify-items: center;
+  padding: 38px 30px 34px;
+  border: 1px solid #2a4232;
+  border-radius: 18px;
+  background: linear-gradient(150deg, rgb(19 33 25 / 96%), rgb(14 25 18 / 96%));
+  box-shadow: 0 28px 90px rgb(0 0 0 / 35%), inset 0 1px rgb(255 255 255 / 3%);
+  text-align: center;
+  animation: card-arrive .45s ease both;
+}
+.session-restore-brand { color: #f0f6f1; }
+.session-restore-spinner {
+  width: 34px;
+  height: 34px;
+  margin: 28px 0 18px;
+  border: 3px solid #2d4833;
+  border-top-color: #85d494;
+  border-radius: 50%;
+  animation: session-restore-spin .85s linear infinite;
+}
+.session-restore-card h1 { color: #f3f8f3; font: 700 22px/1.3 var(--font-display); }
+.session-restore-card p { margin-top: 8px; color: #d3e2d6; font-size: 13px; }
+.session-restore-card small { margin-top: 8px; color: #9fb3a3; font-size: 10px; line-height: 1.6; }
 .auth-shell::before {
   position: fixed;
   z-index: -1;
@@ -1268,6 +1303,9 @@ select.text-input option { background: #101d16; color: #edf5ef; }
   from { opacity: 0; translate: 0 14px; scale: .99; }
   to { opacity: 1; translate: 0 0; scale: 1; }
 }
+@keyframes session-restore-spin {
+  to { transform: rotate(360deg); }
+}
 @keyframes illustration-drift {
   0%, 100% { transform: translateY(0); }
   50% { transform: translateY(-4px); }
@@ -1283,6 +1321,10 @@ select.text-input option { background: #101d16; color: #edf5ef; }
 @keyframes progress-grow {
   from { transform: scaleX(.72); }
   to { transform: scaleX(1.04); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .session-restore-card { animation: none; }
+  .session-restore-spinner { animation: none; }
 }
 .page-content > .welcome-row,
 .page-content > .panel,
