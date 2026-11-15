@@ -32,6 +32,7 @@ const navigation = [
   ["students", "Students", "♧"],
   ["teachers", "Teachers", "♙"],
   ["classes", "Classes & subjects", "▦"],
+  ["calendar", "Academic calendar", "◷"],
   ["profile", "School profile", "⌂"],
   ["grading", "Grading rules", "A+"],
   ["access", "Portal access", "◈"],
@@ -381,6 +382,14 @@ function App() {
   const [savingGradingSettings, setSavingGradingSettings] = useState(false);
   const [gradingSettingsError, setGradingSettingsError] = useState("");
   const [schoolClasses, setSchoolClasses] = useState([]);
+  const [academicCalendarData, setAcademicCalendarData] = useState(null);
+  const [loadingAcademicCalendar, setLoadingAcademicCalendar] = useState(false);
+  const [academicCalendarError, setAcademicCalendarError] = useState("");
+  const [academicCalendarSaving, setAcademicCalendarSaving] = useState("");
+  const [academicCalendarRefresh, setAcademicCalendarRefresh] = useState(0);
+  const [newAcademicYear, setNewAcademicYear] = useState(currentAcademicYear);
+  const [newAcademicSessionIsCurrent, setNewAcademicSessionIsCurrent] = useState(false);
+  const [academicTermDrafts, setAcademicTermDrafts] = useState({});
   const [classRefresh, setClassRefresh] = useState(0);
   const [loadingClasses, setLoadingClasses] = useState(false);
   const [classError, setClassError] = useState("");
@@ -533,6 +542,12 @@ function App() {
     !== JSON.stringify(savedEducationalLevelCodes);
   const activeGradeOptionsKey = activeGradeOptions.join("|");
   const dashboardForCurrentSchool = dashboardData && dashboardData.schoolId === school?.id ? dashboardData : null;
+  const academicCalendarForCurrentSchool = academicCalendarData && school?.id
+    && academicCalendarData.schoolId === school.id
+    ? academicCalendarData.sessions
+    : [];
+  const currentAcademicSession = academicCalendarForCurrentSchool.find((item) => item.isCurrent) || null;
+  const currentAcademicTerm = currentAcademicSession?.terms.find((item) => item.isCurrent)?.term || "";
   const schoolLogoForCurrentSchool = schoolLogoSchoolId === school?.id ? schoolLogoData : null;
   const dashboardErrorForCurrentSchool = dashboardError && dashboardError.schoolId === school?.id
     ? dashboardError.message
@@ -951,6 +966,48 @@ function App() {
       });
     return () => { active = false; };
   }, [school?.id, role, page, invitationRefresh]);
+
+  useEffect(() => {
+    let active = true;
+    if (!school?.id || role !== "admin") {
+      setAcademicCalendarData(null);
+      setAcademicTermDrafts({});
+      setLoadingAcademicCalendar(false);
+      setAcademicCalendarError("");
+      return () => { active = false; };
+    }
+
+    setAcademicCalendarData(null);
+    setLoadingAcademicCalendar(true);
+    setAcademicCalendarError("");
+    apiRequest(`/api/schools/${school.id}/academic-calendar`)
+      .then(({ calendar }) => {
+        if (!Array.isArray(calendar?.sessions)) throw new Error("The school’s academic calendar could not be read.");
+        if (!active) return;
+        setAcademicCalendarData({ schoolId: school.id, sessions: calendar.sessions });
+        setAcademicTermDrafts(Object.fromEntries(calendar.sessions.map((session) => [
+          session.academicYear,
+          session.terms.map(({ term, startDate, endDate }) => ({ term, startDate: startDate || "", endDate: endDate || "" })),
+        ])));
+        const currentSession = calendar.sessions.find((session) => session.isCurrent);
+        if (currentSession) {
+          setClassForm((previous) => ({ ...previous, academicYear: currentSession.academicYear }));
+        }
+      })
+      .catch((requestError) => {
+        if (active) setAcademicCalendarError(requestError.message || "Could not load the academic calendar.");
+      })
+      .finally(() => {
+        if (active) setLoadingAcademicCalendar(false);
+      });
+    return () => { active = false; };
+  }, [school?.id, role, academicCalendarRefresh]);
+
+  useEffect(() => {
+    if (!currentAcademicTerm) return;
+    setAssessmentForm((previous) => ({ ...previous, term: currentAcademicTerm }));
+    setResultSheetTerm(currentAcademicTerm);
+  }, [school?.id, currentAcademicSession?.academicYear, currentAcademicTerm]);
 
   useEffect(() => {
     let active = true;
@@ -1806,6 +1863,103 @@ function App() {
       }
       return [...previous, code];
     });
+  }
+
+  function applyAcademicCalendar(calendar) {
+    if (!school || !Array.isArray(calendar?.sessions)) return;
+    setAcademicCalendarData({ schoolId: school.id, sessions: calendar.sessions });
+    setAcademicTermDrafts(Object.fromEntries(calendar.sessions.map((session) => [
+      session.academicYear,
+      session.terms.map(({ term, startDate, endDate }) => ({ term, startDate: startDate || "", endDate: endDate || "" })),
+    ])));
+    const currentSession = calendar.sessions.find((session) => session.isCurrent);
+    if (currentSession) {
+      setClassForm((previous) => ({ ...previous, academicYear: currentSession.academicYear }));
+    }
+  }
+
+  function updateAcademicTermDraft(academicYear, term, field, value) {
+    setAcademicTermDrafts((previous) => ({
+      ...previous,
+      [academicYear]: (previous[academicYear] || []).map((item) => (
+        item.term === term ? { ...item, [field]: value } : item
+      )),
+    }));
+  }
+
+  async function createAcademicSession(event) {
+    event.preventDefault();
+    if (!school) return;
+    setAcademicCalendarSaving("new-session");
+    setAcademicCalendarError("");
+    try {
+      const { calendar } = await apiRequest(`/api/schools/${school.id}/academic-calendar/sessions`, {
+        method: "POST",
+        body: JSON.stringify({ academicYear: newAcademicYear, isCurrent: newAcademicSessionIsCurrent }),
+      });
+      applyAcademicCalendar(calendar);
+      setNewAcademicSessionIsCurrent(false);
+      setToast("Academic session added with Term 1, Term 2, and Term 3.");
+    } catch (requestError) {
+      setAcademicCalendarError(requestError.message || "Could not add the academic session.");
+    } finally {
+      setAcademicCalendarSaving("");
+    }
+  }
+
+  async function selectCurrentAcademicSession(academicYear) {
+    if (!school) return;
+    setAcademicCalendarSaving(`session-${academicYear}`);
+    setAcademicCalendarError("");
+    try {
+      const { calendar } = await apiRequest(`/api/schools/${school.id}/academic-calendar/current-session`, {
+        method: "PUT",
+        body: JSON.stringify({ academicYear }),
+      });
+      applyAcademicCalendar(calendar);
+      setToast(`${academicYear} is now the current academic session.`);
+    } catch (requestError) {
+      setAcademicCalendarError(requestError.message || "Could not change the current session.");
+    } finally {
+      setAcademicCalendarSaving("");
+    }
+  }
+
+  async function selectCurrentAcademicTerm(academicYear, term) {
+    if (!school) return;
+    setAcademicCalendarSaving(`term-${academicYear}`);
+    setAcademicCalendarError("");
+    try {
+      const { calendar } = await apiRequest(`/api/schools/${school.id}/academic-calendar/current-term`, {
+        method: "PUT",
+        body: JSON.stringify({ academicYear, term }),
+      });
+      applyAcademicCalendar(calendar);
+      setToast(`${term} is now the current term for ${academicYear}.`);
+    } catch (requestError) {
+      setAcademicCalendarError(requestError.message || "Could not change the current term.");
+    } finally {
+      setAcademicCalendarSaving("");
+    }
+  }
+
+  async function saveAcademicTermDates(event, academicYear) {
+    event.preventDefault();
+    if (!school) return;
+    setAcademicCalendarSaving(`dates-${academicYear}`);
+    setAcademicCalendarError("");
+    try {
+      const { calendar } = await apiRequest(`/api/schools/${school.id}/academic-calendar/terms`, {
+        method: "PUT",
+        body: JSON.stringify({ academicYear, terms: academicTermDrafts[academicYear] || [] }),
+      });
+      applyAcademicCalendar(calendar);
+      setToast(`Term dates saved for ${academicYear}.`);
+    } catch (requestError) {
+      setAcademicCalendarError(requestError.message || "Could not save term dates.");
+    } finally {
+      setAcademicCalendarSaving("");
+    }
   }
 
   async function saveEducationalLevels() {
@@ -2706,10 +2860,45 @@ function App() {
           <span className="route-sweep" aria-hidden="true" />
           {!school && !(page === "platform" && platformAdmin) ? <section className="panel onboarding-panel"><span className="auth-kicker">WELCOME TO ASTER</span><h1>{platformAdmin ? "Platform owner access" : "No school profile linked"}</h1><p className="page-subtitle">{platformAdmin ? "Your platform workspace is ready. You can create schools from Platform operations when needed." : "Your account is not linked to a school workspace. Platform-owner access is available only to approved email addresses."}</p>{platformAccessError && <p className="form-error" role="alert">Could not check platform access: {platformAccessError}</p>}{platformAccess?.email === verifiedEmail && !platformAccess.isPlatformAdmin && <p className="field-hint" role="status">Platform-owner access has not been confirmed for this account. You can create a school profile later if you need one.</p>}{!platformAdmin && <button className="button button-primary" type="button" onClick={showSetup}>＋ Create school profile</button>}</section> : <>
           <section className="welcome-row">
-            <div><div className="eyebrow"><span className="live-dot" /> {currentDateLabel} <span className="eyebrow-divider">·</span> {page === "platform" ? "PLATFORM OPERATIONS" : "SCHOOL WORKSPACE"}</div><h1>{page === "platform" ? "Platform operations" : page === "overview" ? role === "admin" ? `Good morning, ${userName}` : current.title : page === "results" ? role === "student" ? "Results, at a glance" : role === "parent" ? "Your children’s results" : "Result sheet & assessments" : page === "attendance" ? "Daily attendance" : page === "profile" ? "Your school, your story." : page === "classes" ? "Classes & subjects" : page === "grading" ? "Grading rules" : page === "students" ? "Student register" : `${page[0].toUpperCase()}${page.slice(1)}`} <span className="wave">✳</span></h1><p className="page-subtitle">{page === "platform" ? "Monitor aggregate school activity across Aster without opening individual student records." : page === "overview" ? current.subtitle : page === "results" && role === "student" ? "View only the term results your school has published for your linked student record." : page === "results" && role === "parent" ? "View only published reports for children linked to your verified parent account." : page === "results" && role !== "student" && role !== "parent" ? role === "admin" ? "Calculate term percentages from approved marks, publish frozen result sheets, and review submissions." : "View calculated results and enter marks for your assigned classes." : page === "attendance" ? "Record and review daily attendance for your active class roster." : page === "classes" ? "Configure subjects and organise your classes." : page === "grading" ? "Set the grade bands and class-position rules used for new result publications." : page === "students" ? "Enrol students and keep their school records up to date." : `Keep your ${page} organised for the term ahead.`}</p></div>
+            <div><div className="eyebrow"><span className="live-dot" /> {currentDateLabel} <span className="eyebrow-divider">·</span> {page === "platform" ? "PLATFORM OPERATIONS" : "SCHOOL WORKSPACE"}</div><h1>{page === "platform" ? "Platform operations" : page === "overview" ? role === "admin" ? `Good morning, ${userName}` : current.title : page === "results" ? role === "student" ? "Results, at a glance" : role === "parent" ? "Your children’s results" : "Result sheet & assessments" : page === "attendance" ? "Daily attendance" : page === "calendar" ? "Academic calendar" : page === "profile" ? "Your school, your story." : page === "classes" ? "Classes & subjects" : page === "grading" ? "Grading rules" : page === "students" ? "Student register" : `${page[0].toUpperCase()}${page.slice(1)}`} <span className="wave">✳</span></h1><p className="page-subtitle">{page === "platform" ? "Monitor aggregate school activity across Aster without opening individual student records." : page === "overview" ? current.subtitle : page === "results" && role === "student" ? "View only the term results your school has published for your linked student record." : page === "results" && role === "parent" ? "View only published reports for children linked to your verified parent account." : page === "results" && role !== "student" && role !== "parent" ? role === "admin" ? "Calculate term percentages from approved marks, publish frozen result sheets, and review submissions." : "View calculated results and enter marks for your assigned classes." : page === "attendance" ? "Record and review daily attendance for your active class roster." : page === "calendar" ? "Set up academic sessions, term dates, and the current school term." : page === "classes" ? "Configure subjects and organise your classes." : page === "grading" ? "Set the grade bands and class-position rules used for new result publications." : page === "students" ? "Enrol students and keep their school records up to date." : `Keep your ${page} organised for the term ahead.`}</p></div>
             {page === "overview" && <HeroScene />}
-            {page !== "platform" && page !== "classes" && page !== "students" && page !== "teachers" && page !== "results" && page !== "attendance" && page !== "grading" && !(page === "overview" && role === "parent") && <div className="welcome-actions"><button className="button button-secondary" type="button" onClick={async () => { try { await navigator.clipboard.writeText(`${window.location.origin}${school.portalUrl || `/school/${school.slug}`}`); setToast("Your school workspace link has been copied. Only invited school members can access it."); } catch { setToast("Could not copy the school link. Please try again."); } }}>↗ Copy school workspace link</button><button className="button button-primary" type="button" onClick={() => page === "profile" ? showSetup() : page === "access" ? document.getElementById("inviteEmail")?.focus() : setPage(role === "admin" ? "students" : "results")}>＋ {page === "access" ? "Invite a member" : role === "teacher" ? "Enter marks" : ["student", "parent"].includes(role) ? role === "parent" ? "View child results" : "View my results" : "Add a student"}</button></div>}
+            {page !== "platform" && page !== "classes" && page !== "students" && page !== "teachers" && page !== "results" && page !== "attendance" && page !== "calendar" && page !== "grading" && !(page === "overview" && role === "parent") && <div className="welcome-actions"><button className="button button-secondary" type="button" onClick={async () => { try { await navigator.clipboard.writeText(`${window.location.origin}${school.portalUrl || `/school/${school.slug}`}`); setToast("Your school workspace link has been copied. Only invited school members can access it."); } catch { setToast("Could not copy the school link. Please try again."); } }}>↗ Copy school workspace link</button><button className="button button-primary" type="button" onClick={() => page === "profile" ? showSetup() : page === "access" ? document.getElementById("inviteEmail")?.focus() : setPage(role === "admin" ? "students" : "results")}>＋ {page === "access" ? "Invite a member" : role === "teacher" ? "Enter marks" : ["student", "parent"].includes(role) ? role === "parent" ? "View child results" : "View my results" : "Add a student"}</button></div>}
           </section>
+
+          {page === "calendar" && role === "admin" && <section className="panel academic-calendar-panel">
+            <div className="panel-heading"><div><h2>Academic sessions & terms</h2><p>Set the school’s current session and term, and keep each term’s date range up to date.</p></div></div>
+            {academicCalendarError && <div className="academic-calendar-error" role="alert"><span>{academicCalendarError}</span><button className="quiet-action" type="button" onClick={() => setAcademicCalendarRefresh((previous) => previous + 1)} disabled={loadingAcademicCalendar}>Retry loading calendar</button></div>}
+            {loadingAcademicCalendar ? <LoadingMessage>Loading academic sessions…</LoadingMessage> : <>
+              <form className="academic-session-create-form" onSubmit={createAcademicSession}>
+              <label><span>Academic session</span><input className="text-input" type="text" required maxLength={9} pattern="\d{4}/\d{4}" title="Use consecutive years, such as 2026/2027" value={newAcademicYear} onChange={(event) => setNewAcademicYear(event.target.value)} placeholder="2026/2027" disabled={academicCalendarSaving !== ""} /></label>
+              <label className="academic-session-current-choice"><input type="checkbox" checked={newAcademicSessionIsCurrent} onChange={(event) => setNewAcademicSessionIsCurrent(event.target.checked)} disabled={academicCalendarSaving !== ""} />Make this the current session</label>
+              <button className="button button-primary" type="submit" disabled={academicCalendarSaving !== ""}>{academicCalendarSaving === "new-session" ? "Adding…" : "Add session"}</button>
+              </form>
+              <p className="field-hint">Every session starts with Term 1, Term 2, and Term 3; the first session is automatically made current. Term dates are optional, but each date range must include both a start and end date; ranges cannot overlap.</p>
+              {academicCalendarError && !academicCalendarData ? null : academicCalendarForCurrentSchool.length === 0
+                ? <p className="empty-search">No sessions yet. Add the school’s first academic session before creating classes.</p>
+                : <div className="academic-session-list">{academicCalendarForCurrentSchool.map((session) => {
+                  const termDrafts = academicTermDrafts[session.academicYear] || session.terms.map(({ term, startDate, endDate }) => ({ term, startDate: startDate || "", endDate: endDate || "" }));
+                  const termDatesChanged = JSON.stringify(termDrafts) !== JSON.stringify(session.terms.map(({ term, startDate, endDate }) => ({ term, startDate: startDate || "", endDate: endDate || "" })));
+                  const currentTerm = session.terms.find((term) => term.isCurrent)?.term || "";
+                  return <article className="academic-session-card" key={session.academicYear}>
+                    <div className="academic-session-heading">
+                      <div><h3>{session.academicYear}</h3>{session.isCurrent && <span className="academic-current-badge">Current session</span>}</div>
+                      {!session.isCurrent && <button className="button button-secondary button-small" type="button" onClick={() => selectCurrentAcademicSession(session.academicYear)} disabled={academicCalendarSaving !== ""}>{academicCalendarSaving === `session-${session.academicYear}` ? "Updating…" : "Make current"}</button>}
+                    </div>
+                    {session.isCurrent && <label className="academic-current-term-control"><span>Current term</span><select className="text-input" value={currentTerm} onChange={(event) => { void selectCurrentAcademicTerm(session.academicYear, event.target.value); }} disabled={academicCalendarSaving !== ""}>{session.terms.map((term) => <option key={term.term}>{term.term}</option>)}</select></label>}
+                    <form onSubmit={(event) => saveAcademicTermDates(event, session.academicYear)}>
+                      <div className="academic-term-grid">{termDrafts.map((term) => <fieldset className="academic-term-row" key={term.term}>
+                        <legend>{term.term}{session.isCurrent && session.terms.find((item) => item.term === term.term)?.isCurrent ? " · current" : ""}</legend>
+                        <label><span>Start date</span><input className="text-input" type="date" value={term.startDate || ""} onChange={(event) => updateAcademicTermDraft(session.academicYear, term.term, "startDate", event.target.value)} disabled={academicCalendarSaving !== ""} /></label>
+                        <label><span>End date</span><input className="text-input" type="date" value={term.endDate || ""} onChange={(event) => updateAcademicTermDraft(session.academicYear, term.term, "endDate", event.target.value)} disabled={academicCalendarSaving !== ""} /></label>
+                      </fieldset>)}</div>
+                      <div className="academic-term-footer"><span className="field-hint">{termDatesChanged ? "Unsaved term dates" : "Term dates saved"}</span><button className="button button-primary button-small" type="submit" disabled={!termDatesChanged || academicCalendarSaving !== ""}>{academicCalendarSaving === `dates-${session.academicYear}` ? "Saving…" : "Save term dates"}</button></div>
+                    </form>
+                  </article>;
+                })}</div>}
+            </>}
+          </section>}
 
           {page === "profile" && role === "admin" && <section className="panel school-logo-panel">
             <div className="panel-heading"><div><h2>School logo</h2><p>Add your school identity to published report cards and printed result sheets.</p></div></div>
@@ -2987,9 +3176,10 @@ function App() {
               {role === "admin" && <form className="class-create-form" onSubmit={createClass}>
                 <label><span>Grade</span><select className="text-input" value={classForm.grade} onChange={(event) => setClassForm((previous) => ({ ...previous, grade: event.target.value }))} disabled={loadingEducationalLevels || !activeGradeOptions.length}>{activeGradeOptions.map((grade) => <option key={grade}>{grade}</option>)}</select></label>
                 <label><span>Class / stream</span><input className="text-input" required maxLength={24} value={classForm.section} onChange={(event) => setClassForm((previous) => ({ ...previous, section: event.target.value }))} placeholder="e.g. A or Blue" /></label>
-                <label><span>Academic year</span><input className="text-input" required pattern="\d{4}/\d{4}" title="Use the format 2026/2027" value={classForm.academicYear} onChange={(event) => setClassForm((previous) => ({ ...previous, academicYear: event.target.value }))} /></label>
-                <button className="button button-primary" type="submit" disabled={creatingClass || loadingClasses || loadingEducationalLevels || !activeGradeOptions.includes(classForm.grade)}>{creatingClass ? "Creating…" : "Create class"}</button>
+                <label><span>Academic session</span><select className="text-input" required value={classForm.academicYear} onChange={(event) => setClassForm((previous) => ({ ...previous, academicYear: event.target.value }))} disabled={loadingAcademicCalendar || !academicCalendarForCurrentSchool.length}><option value="">Select a session</option>{academicCalendarForCurrentSchool.map((session) => <option key={session.academicYear} value={session.academicYear}>{session.academicYear}{session.isCurrent ? " · current" : ""}</option>)}</select></label>
+                <button className="button button-primary" type="submit" disabled={creatingClass || loadingClasses || loadingEducationalLevels || loadingAcademicCalendar || !academicCalendarForCurrentSchool.length || !activeGradeOptions.includes(classForm.grade)}>{creatingClass ? "Creating…" : "Create class"}</button>
               </form>}
+              {role === "admin" && !loadingAcademicCalendar && academicCalendarForCurrentSchool.length === 0 && <p className="field-hint">Add an academic session before creating classes. <button className="quiet-action" type="button" onClick={() => setPage("calendar")}>Set up academic calendar</button></p>}
               {classError && <p className="form-error" role="alert">{classError}</p>}
               {loadingClasses ? <LoadingMessage>Loading classes…</LoadingMessage> : schoolClasses.length === 0 ? <p className="empty-search">No classes yet. Save subjects for a grade, then create its first class.</p> : <div className="class-list">
                 {schoolClasses.map((schoolClass) => <article className="class-card tilt-3d" key={schoolClass.id}>

@@ -18,6 +18,11 @@ import {
   getSchoolClassAttendanceReport,
   getSchoolGradingSettings,
   getSchoolRole,
+  listSchoolAcademicCalendar,
+  createSchoolAcademicSession,
+  setCurrentSchoolAcademicSession,
+  setCurrentSchoolAcademicTerm,
+  saveSchoolAcademicTermDates,
   getSchoolLogo,
   getSchoolMemberSignature,
   getSchoolPrincipalUser,
@@ -63,6 +68,8 @@ import {
   updateSchoolStudent,
 } from "./school-repository.js";
 import {
+  normalizeAcademicSessionInput,
+  normalizeAcademicTermDates,
   normalizeSchoolInput,
   normalizeSchoolLogoData,
   normalizeSignatureData,
@@ -326,6 +333,114 @@ app.put("/api/schools/:schoolId/educational-levels", requireAuth, async (request
     if (error.code === "EDUCATIONAL_LEVEL_HAS_CLASSES") {
       return response.status(409).json({ error: error.message });
     }
+    return handleDatabaseError(error, response);
+  }
+});
+
+app.get("/api/schools/:schoolId/academic-calendar", requireAuth, async (request, response) => {
+  const { schoolId } = request.params;
+  if (!isUuid(schoolId)) return response.status(400).json({ error: "Enter a valid school." });
+
+  try {
+    const membershipRole = await getSchoolRole(schoolId, request.auth.userId);
+    if (!membershipRole) return response.status(404).json({ error: "School not found." });
+    if (membershipRole !== "admin") {
+      return response.status(403).json({ error: "Only a school administrator can manage academic sessions and terms." });
+    }
+    const calendar = await listSchoolAcademicCalendar(schoolId);
+    return response.json({ calendar });
+  } catch (error) {
+    return handleDatabaseError(error, response);
+  }
+});
+
+app.post("/api/schools/:schoolId/academic-calendar/sessions", requireAuth, async (request, response) => {
+  const { schoolId } = request.params;
+  const session = normalizeAcademicSessionInput(request.body);
+  if (!isUuid(schoolId) || !session) {
+    return response.status(400).json({ error: "Enter a valid academic year, such as 2026/2027." });
+  }
+
+  try {
+    const membershipRole = await getSchoolRole(schoolId, request.auth.userId);
+    if (!membershipRole) return response.status(404).json({ error: "School not found." });
+    if (membershipRole !== "admin") {
+      return response.status(403).json({ error: "Only a school administrator can add academic sessions." });
+    }
+    const calendar = await createSchoolAcademicSession(schoolId, session);
+    return response.status(201).json({ calendar });
+  } catch (error) {
+    if (error.code === "ACADEMIC_SESSION_EXISTS") {
+      return response.status(409).json({ error: error.message });
+    }
+    if (error.code === "23505") {
+      return response.status(409).json({ error: "Another session update conflicted. Refresh the academic calendar and try again." });
+    }
+    return handleDatabaseError(error, response);
+  }
+});
+
+app.put("/api/schools/:schoolId/academic-calendar/current-session", requireAuth, async (request, response) => {
+  const { schoolId } = request.params;
+  const session = normalizeAcademicSessionInput({ academicYear: request.body?.academicYear });
+  if (!isUuid(schoolId) || !session) {
+    return response.status(400).json({ error: "Select a valid academic session." });
+  }
+
+  try {
+    const membershipRole = await getSchoolRole(schoolId, request.auth.userId);
+    if (!membershipRole) return response.status(404).json({ error: "School not found." });
+    if (membershipRole !== "admin") {
+      return response.status(403).json({ error: "Only a school administrator can change the current session." });
+    }
+    const calendar = await setCurrentSchoolAcademicSession(schoolId, session.academicYear);
+    if (!calendar) return response.status(404).json({ error: "Academic session not found." });
+    return response.json({ calendar });
+  } catch (error) {
+    return handleDatabaseError(error, response);
+  }
+});
+
+app.put("/api/schools/:schoolId/academic-calendar/current-term", requireAuth, async (request, response) => {
+  const { schoolId } = request.params;
+  const session = normalizeAcademicSessionInput({ academicYear: request.body?.academicYear });
+  const term = request.body?.term;
+  if (!isUuid(schoolId) || !session || !["Term 1", "Term 2", "Term 3"].includes(term)) {
+    return response.status(400).json({ error: "Select a valid academic session and term." });
+  }
+
+  try {
+    const membershipRole = await getSchoolRole(schoolId, request.auth.userId);
+    if (!membershipRole) return response.status(404).json({ error: "School not found." });
+    if (membershipRole !== "admin") {
+      return response.status(403).json({ error: "Only a school administrator can change the current term." });
+    }
+    const calendar = await setCurrentSchoolAcademicTerm(schoolId, session.academicYear, term);
+    if (!calendar) return response.status(404).json({ error: "Academic session or term not found." });
+    return response.json({ calendar });
+  } catch (error) {
+    return handleDatabaseError(error, response);
+  }
+});
+
+app.put("/api/schools/:schoolId/academic-calendar/terms", requireAuth, async (request, response) => {
+  const { schoolId } = request.params;
+  const session = normalizeAcademicSessionInput({ academicYear: request.body?.academicYear });
+  const terms = normalizeAcademicTermDates(request.body?.terms);
+  if (!isUuid(schoolId) || !session || !terms) {
+    return response.status(400).json({ error: "Enter valid, non-overlapping start and end dates for the three terms." });
+  }
+
+  try {
+    const membershipRole = await getSchoolRole(schoolId, request.auth.userId);
+    if (!membershipRole) return response.status(404).json({ error: "School not found." });
+    if (membershipRole !== "admin") {
+      return response.status(403).json({ error: "Only a school administrator can update term dates." });
+    }
+    const calendar = await saveSchoolAcademicTermDates(schoolId, session.academicYear, terms);
+    if (!calendar) return response.status(404).json({ error: "Academic session not found." });
+    return response.json({ calendar });
+  } catch (error) {
     return handleDatabaseError(error, response);
   }
 });
@@ -1046,6 +1161,9 @@ app.post("/api/schools/:schoolId/classes", requireAuth, async (request, response
     const schoolClass = await createSchoolClass(schoolId, classDetails);
     return response.status(201).json({ schoolClass });
   } catch (error) {
+    if (error.code === "ACADEMIC_SESSION_REQUIRED") {
+      return response.status(409).json({ error: error.message });
+    }
     return handleDatabaseError(error, response);
   }
 });

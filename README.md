@@ -75,6 +75,10 @@ The browser calls the Render API directly. The API allows the production fronten
 - `POST /api/schools` — create a school and make the verified account its first administrator
 - `GET /api/schools/:schoolId/logo` — load the school logo for an authenticated school member
 - `PUT` or `DELETE /api/schools/:schoolId/logo` — add, replace, or remove a school logo (school administrators only; PNG data up to 64 KB and 512 × 512 pixels)
+- `GET /api/schools/:schoolId/academic-calendar` — list sessions, current session/term, and configured term dates (school administrators only)
+- `POST /api/schools/:schoolId/academic-calendar/sessions` — add a consecutive-year session, creating its three terms (school administrators only)
+- `PUT /api/schools/:schoolId/academic-calendar/current-session` and `/current-term` — set the current session or term (school administrators only)
+- `PUT /api/schools/:schoolId/academic-calendar/terms` — save non-overlapping start/end date ranges for Term 1–3 (school administrators only)
 - `GET /api/schools/:schoolId/dashboard` — return role-scoped school metrics and recent activity
 - `GET /api/schools/:schoolId/subjects` — list saved grade subjects for a school member
 - `PUT /api/schools/:schoolId/subjects` — replace a grade's subjects (school administrators only)
@@ -82,7 +86,7 @@ The browser calls the Render API directly. The API allows the production fronten
 - `GET /api/schools/:schoolId/attendance?classId=:classId&date=YYYY-MM-DD` — load the active class roster and saved attendance for a school day
 - `GET /api/schools/:schoolId/attendance/report?classId=:classId&from=YYYY-MM-DD&to=YYYY-MM-DD` — summarize student attendance counts over a range of up to 366 days
 - `PUT /api/schools/:schoolId/attendance` — save complete daily attendance for a class (school administrators and assigned teachers)
-- `POST /api/schools/:schoolId/classes` — create a class using saved grade subjects (school administrators only)
+- `POST /api/schools/:schoolId/classes` — create a class using saved grade subjects and an existing academic session (school administrators only)
 - `DELETE /api/schools/:schoolId/classes/:classId` — delete an empty class without published results (school administrators only)
 - `GET /api/schools/:schoolId/teaching-assignments` — list all assignments and accepted teachers for admins; teachers only see their own assignments
 - `PUT /api/schools/:schoolId/classes/:classId/teaching-assignments` — assign or reassign a teacher to a class subject (school administrators only)
@@ -128,6 +132,8 @@ School administrators can choose and save subjects by Primary 1–6, JSS 1–3, 
 - [Revised Senior Secondary Education Curriculum](https://nerdc.gov.ng/content_manager/new_senior_curriculum_home.html)
 
 ## Data readiness
+
+The **Academic calendar** page lets administrators add consecutive-year school sessions, set the current session and term, and configure non-overlapping dates for Term 1–3. Existing class years are migrated into the calendar; new classes must use a configured session. New schools should add their first session before creating classes.
 
 Login, email verification, school profiles, school memberships, invite-only access, subject selections, classes, student records, student-account links, parent-to-student links, teacher-to-class/subject assignments, daily attendance, assessments, marks, assessment reviews, and published result snapshots are persisted in Neon. Administrators can enrol, search, update, archive, and reactivate student records; class deletion is blocked when student records or published results still reference it. Teacher assignments are visible to the assigned teacher, and teacher class listings, assessments, attendance, and result sheets are limited to their assigned classes and subjects. Each attendance record is scoped to a school, class, date, and active student roster. Each assessment snapshots its active class roster when it is created. Teachers can save incomplete mark drafts, but must enter marks for every student on that snapshot before submission. Administrators can approve submitted marks or return them with a required note. The term result sheet includes approved assessments only and calculates each student-subject percentage as total approved points earned divided by total possible approved points; subjects with no approved marks remain ungraded. Publishing requires every assessment in the selected class and term to be approved, saves an immutable snapshot, and prevents adding further assessments to that term. Linked student accounts can view only their own published snapshots; parent accounts can view only the published snapshots for children explicitly linked through verified, student-specific guardian invitations.
 

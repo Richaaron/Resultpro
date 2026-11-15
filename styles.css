@@ -346,6 +346,26 @@ select.text-input { color: #58645a; }
 .grade-picker { display: grid; min-width: 150px; gap: 5px; color: #778178; font-size: 10px; font-weight: 600; }
 .grade-picker .text-input { height: 35px; }
 .educational-levels-settings { margin-top: 20px; padding: 16px; border: 1px solid #e8ebe6; border-radius: 9px; background: #fbfcfa; }
+.academic-calendar-panel { display: grid; gap: 14px; }
+.academic-calendar-error { display: flex; align-items: center; flex-wrap: wrap; gap: 9px; color: #a63e35; font-size: 10px; }
+.academic-session-create-form { display: grid; grid-template-columns: minmax(180px, 1fr) auto auto; align-items: end; gap: 12px; }
+.academic-session-create-form > label:first-child, .academic-current-term-control { display: grid; gap: 6px; color: #637065; font-size: 9px; font-weight: 600; }
+.academic-session-current-choice { display: flex; align-items: center; gap: 7px; padding-bottom: 10px; color: #637065; font-size: 9px; }
+.academic-session-current-choice input { accent-color: #2f7650; }
+.academic-session-list { display: grid; gap: 12px; }
+.academic-session-card { display: grid; gap: 14px; padding: 16px; border: 1px solid #e1e9e1; border-radius: 12px; background: #fbfcfa; }
+.academic-session-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.academic-session-heading > div { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+.academic-session-heading h3 { margin: 0; color: #31583a; font: 800 15px var(--font-display); }
+.academic-current-badge { padding: 4px 8px; border-radius: 999px; background: #e8f4e9; color: #356c42; font-size: 8px; font-weight: 700; }
+.academic-current-term-control { max-width: 240px; }
+.academic-term-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.academic-term-row { display: grid; gap: 9px; min-width: 0; margin: 0; padding: 12px; border: 1px solid #e1e9e1; border-radius: 9px; }
+.academic-term-row legend { padding: 0 5px; color: #31583a; font-size: 9px; font-weight: 700; }
+.academic-term-row label { display: grid; gap: 5px; color: #637065; font-size: 8px; font-weight: 600; }
+.academic-term-row .text-input { min-width: 0; }
+.academic-term-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 12px; }
+.academic-term-footer .field-hint { margin: 0; }
 .educational-levels-heading h3 { color: #3f4d42; font-size: 12px; }
 .educational-levels-heading p { margin-top: 4px; color: #7d897f; font-size: 9px; line-height: 1.5; }
 .educational-level-options { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 12px; }
@@ -678,6 +698,10 @@ select.text-input { color: #58645a; }
   .student-report-signatures { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 700px) {
+  .academic-session-create-form, .academic-term-grid { grid-template-columns: 1fr; }
+  .academic-session-current-choice { padding: 0; }
+  .academic-session-create-form > .button { width: 100%; }
+  .academic-session-heading, .academic-term-footer { align-items: stretch; flex-direction: column; }
   .form-master-row { grid-template-columns: minmax(0, 1fr); align-items: stretch; gap: 7px; }
   .form-master-row form { align-items: stretch; flex-direction: column; }
   .form-master-row form .button { width: 100%; min-height: 40px; }
@@ -1196,6 +1220,13 @@ select.text-input option { background: #101d16; color: #edf5ef; }
 .assessment-review-note.returned { background: #3a2521; color: #ffd0c7; }
 .curriculum-note { border-color: #524327; background: #2a2417; color: #f0d39a; }
 .educational-levels-settings { border-color: #293f31; background: #14231a; }
+.academic-session-create-form > label:first-child, .academic-session-current-choice, .academic-current-term-control,
+.academic-term-row label { color: #d4e1d7; }
+.academic-calendar-error { color: #ff9a91; }
+.academic-session-card, .academic-term-row { border-color: #2c4233; background: #101d16; }
+.academic-session-heading h3, .academic-term-row legend { color: #d7edda; }
+.academic-current-badge { background: #1c3323; color: #bdddc0; }
+.academic-session-current-choice input { accent-color: #67c184; }
 .educational-levels-heading h3 { color: #e0ede2; }
 .educational-levels-heading p, .educational-level-footer { color: #aebeb1; }
 .educational-level-option { border-color: #2c4233; color: #d2e0d5; }

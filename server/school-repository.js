@@ -240,6 +240,41 @@ async function getReadyDatabase() {
           )
         `,
         database.sql`
+          CREATE TABLE IF NOT EXISTS school_academic_sessions (
+            school_id UUID NOT NULL REFERENCES schools(id) ON DELETE CASCADE,
+            academic_year VARCHAR(9) NOT NULL,
+            is_current BOOLEAN NOT NULL DEFAULT FALSE,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            PRIMARY KEY (school_id, academic_year)
+          )
+        `,
+        database.sql`
+          CREATE UNIQUE INDEX IF NOT EXISTS school_academic_sessions_current_idx
+          ON school_academic_sessions (school_id)
+          WHERE is_current
+        `,
+        database.sql`
+          CREATE TABLE IF NOT EXISTS school_academic_terms (
+            school_id UUID NOT NULL,
+            academic_year VARCHAR(9) NOT NULL,
+            term VARCHAR(12) NOT NULL CHECK (term IN ('Term 1', 'Term 2', 'Term 3')),
+            start_date DATE,
+            end_date DATE,
+            is_current BOOLEAN NOT NULL DEFAULT FALSE,
+            PRIMARY KEY (school_id, academic_year, term),
+            CHECK ((start_date IS NULL AND end_date IS NULL) OR
+              (start_date IS NOT NULL AND end_date IS NOT NULL AND start_date < end_date)),
+            CONSTRAINT school_academic_terms_session_fk
+              FOREIGN KEY (school_id, academic_year)
+              REFERENCES school_academic_sessions(school_id, academic_year) ON DELETE CASCADE
+          )
+        `,
+        database.sql`
+          CREATE UNIQUE INDEX IF NOT EXISTS school_academic_terms_current_idx
+          ON school_academic_terms (school_id, academic_year)
+          WHERE is_current
+        `,
+        database.sql`
           CREATE TABLE IF NOT EXISTS school_class_subjects (
             class_id UUID NOT NULL REFERENCES school_classes(id) ON DELETE CASCADE,
             subject_name VARCHAR(100) NOT NULL,
@@ -474,6 +509,31 @@ async function getReadyDatabase() {
               FOREIGN KEY (school_id, published_by)
               REFERENCES school_members(school_id, user_id) ON DELETE RESTRICT
           )
+        `,
+        database.sql`
+          INSERT INTO school_academic_sessions (school_id, academic_year, is_current)
+          SELECT DISTINCT ON (legacy.school_id)
+                 legacy.school_id, legacy.academic_year, TRUE
+          FROM (
+            SELECT school_id, academic_year FROM school_classes
+            UNION
+            SELECT school_id, academic_year FROM school_result_publications
+          ) legacy
+          WHERE NOT EXISTS (
+            SELECT 1 FROM school_academic_sessions existing
+            WHERE existing.school_id = legacy.school_id
+          )
+          ORDER BY legacy.school_id, legacy.academic_year DESC
+          ON CONFLICT (school_id, academic_year) DO NOTHING
+        `,
+        database.sql`
+          INSERT INTO school_academic_terms
+            (school_id, academic_year, term, is_current)
+          SELECT academic_session.school_id, academic_session.academic_year, term_name.term,
+                 term_name.term = 'Term 1'
+          FROM school_academic_sessions academic_session
+          CROSS JOIN (VALUES ('Term 1'), ('Term 2'), ('Term 3')) term_name(term)
+          ON CONFLICT (school_id, academic_year, term) DO NOTHING
         `,
         database.sql`
           ALTER TABLE school_result_publications
@@ -1261,6 +1321,136 @@ export async function replaceSchoolSubjects(schoolId, grade, subjects) {
   ];
   await sql.transaction(statements);
   return subjects;
+}
+
+export async function listSchoolAcademicCalendar(schoolId) {
+  const sql = await getReadyDatabase();
+  const sessions = await sql`
+    SELECT academic_year AS "academicYear", is_current AS "isCurrent"
+    FROM school_academic_sessions
+    WHERE school_id = ${schoolId}
+    ORDER BY academic_year DESC
+  `;
+  const terms = await sql`
+    SELECT academic_year AS "academicYear", term,
+           start_date::text AS "startDate", end_date::text AS "endDate",
+           is_current AS "isCurrent"
+    FROM school_academic_terms
+    WHERE school_id = ${schoolId}
+    ORDER BY academic_year DESC, term
+  `;
+  return {
+    sessions: sessions.map((session) => ({
+      ...session,
+      terms: terms.filter((term) => term.academicYear === session.academicYear),
+    })),
+  };
+}
+
+export async function createSchoolAcademicSession(schoolId, { academicYear, isCurrent }) {
+  const sql = await getReadyDatabase();
+  const [existing] = await sql`
+    SELECT 1 FROM school_academic_sessions
+    WHERE school_id = ${schoolId} AND academic_year = ${academicYear}
+  `;
+  if (existing) {
+    const error = new Error("This academic session already exists.");
+    error.code = "ACADEMIC_SESSION_EXISTS";
+    throw error;
+  }
+
+  const [current] = await sql`
+    SELECT 1 FROM school_academic_sessions
+    WHERE school_id = ${schoolId} AND is_current
+  `;
+  const makeCurrent = isCurrent || !current;
+  const statements = [];
+  if (makeCurrent) {
+    statements.push(sql`
+      UPDATE school_academic_sessions
+      SET is_current = FALSE
+      WHERE school_id = ${schoolId} AND is_current
+    `);
+  }
+  statements.push(sql`
+    INSERT INTO school_academic_sessions (school_id, academic_year, is_current)
+    VALUES (${schoolId}, ${academicYear}, ${makeCurrent})
+  `);
+  for (const term of ["Term 1", "Term 2", "Term 3"]) {
+    statements.push(sql`
+      INSERT INTO school_academic_terms
+        (school_id, academic_year, term, is_current)
+      VALUES (${schoolId}, ${academicYear}, ${term}, ${term === "Term 1"})
+    `);
+  }
+  await sql.transaction(statements);
+  return listSchoolAcademicCalendar(schoolId);
+}
+
+export async function setCurrentSchoolAcademicSession(schoolId, academicYear) {
+  const sql = await getReadyDatabase();
+  const [session] = await sql`
+    SELECT 1 FROM school_academic_sessions
+    WHERE school_id = ${schoolId} AND academic_year = ${academicYear}
+  `;
+  if (!session) return null;
+  await sql.transaction([
+    sql`
+      UPDATE school_academic_sessions
+      SET is_current = FALSE
+      WHERE school_id = ${schoolId} AND is_current
+    `,
+    sql`
+      UPDATE school_academic_sessions
+      SET is_current = TRUE
+      WHERE school_id = ${schoolId} AND academic_year = ${academicYear}
+    `,
+  ]);
+  return listSchoolAcademicCalendar(schoolId);
+}
+
+export async function setCurrentSchoolAcademicTerm(schoolId, academicYear, term) {
+  const sql = await getReadyDatabase();
+  const [session] = await sql`
+    SELECT 1 FROM school_academic_sessions
+    WHERE school_id = ${schoolId} AND academic_year = ${academicYear} AND is_current
+  `;
+  if (!session) return null;
+  const [academicTerm] = await sql`
+    SELECT 1 FROM school_academic_terms
+    WHERE school_id = ${schoolId} AND academic_year = ${academicYear} AND term = ${term}
+  `;
+  if (!academicTerm) return null;
+  await sql.transaction([
+    sql`
+      UPDATE school_academic_terms
+      SET is_current = FALSE
+      WHERE school_id = ${schoolId} AND academic_year = ${academicYear} AND is_current
+    `,
+    sql`
+      UPDATE school_academic_terms
+      SET is_current = TRUE
+      WHERE school_id = ${schoolId} AND academic_year = ${academicYear} AND term = ${term}
+    `,
+  ]);
+  return listSchoolAcademicCalendar(schoolId);
+}
+
+export async function saveSchoolAcademicTermDates(schoolId, academicYear, terms) {
+  const sql = await getReadyDatabase();
+  const [session] = await sql`
+    SELECT 1 FROM school_academic_sessions
+    WHERE school_id = ${schoolId} AND academic_year = ${academicYear}
+  `;
+  if (!session) return null;
+  await sql.transaction(terms.map(({ term, startDate, endDate }) => sql`
+    INSERT INTO school_academic_terms
+      (school_id, academic_year, term, start_date, end_date, is_current)
+    VALUES (${schoolId}, ${academicYear}, ${term}, ${startDate}::date, ${endDate}::date, FALSE)
+    ON CONFLICT (school_id, academic_year, term)
+    DO UPDATE SET start_date = EXCLUDED.start_date, end_date = EXCLUDED.end_date
+  `));
+  return listSchoolAcademicCalendar(schoolId);
 }
 
 export async function listSchoolClasses(schoolId, academicYear, teacherUserId = null) {
@@ -2560,6 +2750,15 @@ export async function reviewSchoolAssessment(schoolId, assessmentId, reviewerUse
 
 export async function createSchoolClass(schoolId, classDetails) {
   const sql = await getReadyDatabase();
+  const [academicSession] = await sql`
+    SELECT 1 FROM school_academic_sessions
+    WHERE school_id = ${schoolId} AND academic_year = ${classDetails.academicYear}
+  `;
+  if (!academicSession) {
+    const error = new Error("Add the academic session before creating classes for it.");
+    error.code = "ACADEMIC_SESSION_REQUIRED";
+    throw error;
+  }
   const subjects = await sql`
     SELECT subject_name AS subject
     FROM school_subjects

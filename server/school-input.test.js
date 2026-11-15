@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  normalizeAcademicSessionInput,
+  normalizeAcademicTermDates,
   createSchoolSlug,
   normalizeSchoolLogoData,
   normalizeSignatureData,
@@ -38,6 +40,39 @@ test("rejects incomplete or invalid teacher registration details", () => {
   ]) {
     assert.equal(normalizeTeacherRegistrationInput(input), null);
   }
+});
+
+test("normalizes sequential academic sessions", () => {
+  assert.deepEqual(normalizeAcademicSessionInput({ academicYear: " 2026/2027 ", isCurrent: true }), {
+    academicYear: "2026/2027",
+    isCurrent: true,
+  });
+  assert.equal(normalizeAcademicSessionInput({ academicYear: "2026/2028" }), null);
+  assert.equal(normalizeAcademicSessionInput({ academicYear: "2026/2027", isCurrent: "true" }), null);
+});
+
+test("normalizes complete, ordered academic term date ranges", () => {
+  const terms = [
+    { term: "Term 1", startDate: "2026-09-01", endDate: "2026-12-10" },
+    { term: "Term 2", startDate: "2027-01-05", endDate: "2027-04-02" },
+    { term: "Term 3", startDate: "", endDate: "" },
+  ];
+  assert.deepEqual(normalizeAcademicTermDates(terms), [
+    { term: "Term 1", startDate: "2026-09-01", endDate: "2026-12-10" },
+    { term: "Term 2", startDate: "2027-01-05", endDate: "2027-04-02" },
+    { term: "Term 3", startDate: null, endDate: null },
+  ]);
+  assert.equal(normalizeAcademicTermDates([...terms.slice(0, 2)]), null);
+  assert.equal(normalizeAcademicTermDates([
+    terms[0],
+    { ...terms[1], startDate: "2026-12-01" },
+    terms[2],
+  ]), null);
+  assert.equal(normalizeAcademicTermDates([
+    { ...terms[0], startDate: "2026-02-30" },
+    terms[1],
+    terms[2],
+  ]), null);
 });
 
 test("accepts only small, dimension-limited PNG signatures", () => {

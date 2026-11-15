@@ -30,6 +30,44 @@ export function normalizeSchoolInput(body = {}) {
   return school;
 }
 
+export function normalizeAcademicSessionInput(body = {}) {
+  if (!body || typeof body !== "object" || Array.isArray(body)) return null;
+  const academicYear = typeof body.academicYear === "string" ? body.academicYear.trim() : "";
+  const years = /^(\d{4})\/(\d{4})$/.exec(academicYear);
+  if (!years || Number(years[2]) !== Number(years[1]) + 1) return null;
+  if (body.isCurrent !== undefined && typeof body.isCurrent !== "boolean") return null;
+  return { academicYear, isCurrent: body.isCurrent === true };
+}
+
+export function normalizeAcademicTermDates(value) {
+  const termNames = ["Term 1", "Term 2", "Term 3"];
+  if (!Array.isArray(value) || value.length !== termNames.length) return null;
+
+  const normalized = [];
+  for (const termName of termNames) {
+    const matches = value.filter((item) => item?.term === termName);
+    if (matches.length !== 1) return null;
+    const item = matches[0];
+    const startDate = item.startDate === "" || item.startDate == null ? null : item.startDate;
+    const endDate = item.endDate === "" || item.endDate == null ? null : item.endDate;
+    if ((startDate === null) !== (endDate === null)) return null;
+    if (startDate !== null && (!isValidIsoDate(startDate) || !isValidIsoDate(endDate) || startDate >= endDate)) return null;
+    normalized.push({ term: termName, startDate, endDate });
+  }
+
+  const scheduledTerms = normalized.filter((term) => term.startDate !== null);
+  for (let index = 1; index < scheduledTerms.length; index += 1) {
+    if (scheduledTerms[index - 1].endDate >= scheduledTerms[index].startDate) return null;
+  }
+  return normalized;
+}
+
+function isValidIsoDate(value) {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const timestamp = Date.parse(`${value}T00:00:00.000Z`);
+  return Number.isFinite(timestamp) && new Date(timestamp).toISOString().slice(0, 10) === value;
+}
+
 export function normalizeTeacherRegistrationInput(body = {}) {
   const input = body && typeof body === "object" ? body : {};
   const teacherName = typeof input.teacherName === "string" ? input.teacherName.trim() : "";
