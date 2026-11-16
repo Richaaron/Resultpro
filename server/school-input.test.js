@@ -4,6 +4,7 @@ import {
   normalizeAcademicSessionInput,
   normalizeAcademicTermDates,
   createSchoolSlug,
+  normalizeProfilePhotoData,
   normalizeSchoolLogoData,
   normalizeSignatureData,
   normalizeTeacherRegistrationInput,
@@ -111,6 +112,28 @@ test("accepts only small PNG school logos with bounded dimensions", () => {
   assert.equal(normalizeSchoolLogoData(`data:image/png;base64,${image.toString("base64")}`), null);
   assert.equal(
     normalizeSchoolLogoData(`data:image/png;base64,${Buffer.concat([image, Buffer.alloc(65_537)]).toString("base64")}`),
+    null,
+  );
+});
+
+test("accepts only small PNG profile photos with bounded dimensions", () => {
+  const image = Buffer.alloc(24);
+  Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]).copy(image);
+  image.write("IHDR", 12, "ascii");
+  image.writeUInt32BE(128, 16);
+  image.writeUInt32BE(128, 20);
+  const photo = `data:image/png;base64,${image.toString("base64")}`;
+
+  assert.equal(normalizeProfilePhotoData(photo), photo);
+  assert.equal(normalizeProfilePhotoData(photo.replace("image/png", "image/svg+xml")), null);
+  assert.equal(normalizeProfilePhotoData(`data:image/png;base64,${Buffer.alloc(24).toString("base64")}`), null);
+  image.writeUInt32BE(129, 16);
+  assert.equal(normalizeProfilePhotoData(`data:image/png;base64,${image.toString("base64")}`), null);
+  image.writeUInt32BE(128, 16);
+  image.writeUInt32BE(129, 20);
+  assert.equal(normalizeProfilePhotoData(`data:image/png;base64,${image.toString("base64")}`), null);
+  assert.equal(
+    normalizeProfilePhotoData(`data:image/png;base64,${Buffer.concat([image, Buffer.alloc(16_001)]).toString("base64")}`),
     null,
   );
 });

@@ -120,6 +120,8 @@ async function getReadyDatabase() {
             role VARCHAR(20) NOT NULL CHECK (role IN ('admin', 'teacher', 'student', 'parent')),
             email VARCHAR(254),
             created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            photo_data TEXT CHECK (photo_data IS NULL OR
+              (length(photo_data) <= 22000 AND photo_data LIKE 'data:image/png;base64,%')),
             PRIMARY KEY (school_id, user_id)
           )
         `,
@@ -154,6 +156,11 @@ async function getReadyDatabase() {
         `,
         database.sql`
           ALTER TABLE school_members ADD COLUMN IF NOT EXISTS teacher_code VARCHAR(24)
+        `,
+        database.sql`
+          ALTER TABLE school_members ADD COLUMN IF NOT EXISTS photo_data TEXT
+            CHECK (photo_data IS NULL OR
+              (length(photo_data) <= 22000 AND photo_data LIKE 'data:image/png;base64,%'))
         `,
         database.sql`
           CREATE UNIQUE INDEX IF NOT EXISTS school_members_teacher_code_idx
@@ -468,6 +475,8 @@ async function getReadyDatabase() {
             last_name VARCHAR(80) NOT NULL,
             guardian_email VARCHAR(254),
             guardian_phone VARCHAR(24),
+            photo_data TEXT CHECK (photo_data IS NULL OR
+              (length(photo_data) <= 22000 AND photo_data LIKE 'data:image/png;base64,%')),
             user_id TEXT,
             is_active BOOLEAN NOT NULL DEFAULT TRUE,
             created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -487,6 +496,11 @@ async function getReadyDatabase() {
         `,
         database.sql`
           ALTER TABLE school_students ADD COLUMN IF NOT EXISTS user_id TEXT
+        `,
+        database.sql`
+          ALTER TABLE school_students ADD COLUMN IF NOT EXISTS photo_data TEXT
+            CHECK (photo_data IS NULL OR
+              (length(photo_data) <= 22000 AND photo_data LIKE 'data:image/png;base64,%'))
         `,
         database.sql`
           CREATE UNIQUE INDEX IF NOT EXISTS school_students_user_id_idx
@@ -2403,14 +2417,15 @@ export async function listSchoolTeachers(schoolId) {
   const sql = await getReadyDatabase();
   return sql`
     SELECT user_id AS "userId", email, display_name AS "teacherName",
-           teacher_code AS "teacherCode", created_at AS "joinedAt"
+           teacher_code AS "teacherCode", photo_data AS "photoData",
+           created_at AS "joinedAt"
     FROM school_members
     WHERE school_id = ${schoolId} AND role = 'teacher' AND email IS NOT NULL
     ORDER BY display_name, email
   `;
 }
 
-export async function createTeacherCredentials({ schoolId, email, teacherName, userId }) {
+export async function createTeacherCredentials({ schoolId, email, teacherName, userId, photoData }) {
   const sql = await getReadyDatabase();
   const [school] = await sql`
     SELECT name AS "schoolName"
@@ -2504,13 +2519,15 @@ export async function createTeacherCredentials({ schoolId, email, teacherName, u
       RETURNING school_id, teacher_code, email, teacher_name, user_id
     ),
     saved_member AS (
-      INSERT INTO school_members (school_id, user_id, role, email, display_name, teacher_code)
-      SELECT school_id, user_id, 'teacher', email, teacher_name, teacher_code
+      INSERT INTO school_members
+        (school_id, user_id, role, email, display_name, teacher_code, photo_data)
+      SELECT school_id, user_id, 'teacher', email, teacher_name, teacher_code, ${photoData ?? null}
       FROM saved_credential
       ON CONFLICT (school_id, user_id) DO UPDATE
       SET role = 'teacher', email = EXCLUDED.email,
-          display_name = EXCLUDED.display_name, teacher_code = EXCLUDED.teacher_code
-      RETURNING school_id, user_id, email, display_name, teacher_code
+          display_name = EXCLUDED.display_name, teacher_code = EXCLUDED.teacher_code,
+          photo_data = COALESCE(EXCLUDED.photo_data, school_members.photo_data)
+      RETURNING school_id, user_id, email, display_name, teacher_code, photo_data
     ),
     revoked_sessions AS (
       UPDATE school_teacher_sessions s
@@ -2522,7 +2539,8 @@ export async function createTeacherCredentials({ schoolId, email, teacherName, u
       RETURNING s.token_hash
     )
     SELECT c.teacher_code AS "teacherCode", c.email,
-           c.teacher_name AS "teacherName", c.user_id AS "userId"
+           c.teacher_name AS "teacherName", c.user_id AS "userId",
+           m.photo_data AS "photoData"
     FROM saved_credential c
     JOIN saved_member m ON m.school_id = c.school_id AND m.user_id = c.user_id
   `;
@@ -3247,6 +3265,7 @@ export async function listSchoolStudents(schoolId, { classId, search, limit, off
   return sql`
     SELECT st.id, st.admission_number AS "admissionNumber",
            st.first_name AS "firstName", st.last_name AS "lastName",
+           st.photo_data AS "photoData",
            st.guardian_email AS "guardianEmail", st.guardian_phone AS "guardianPhone",
            st.is_active AS "isActive", st.class_id AS "classId",
            (st.user_id IS NOT NULL) AS "isPortalLinked",
@@ -3300,15 +3319,19 @@ export async function countSchoolStudents(schoolId, { classId, search }) {
 
 export async function createSchoolStudent(schoolId, student) {
   const sql = await getReadyDatabase();
+  const photoData = student.photoData ?? null;
   const [created] = await sql`
     INSERT INTO school_students
-      (id, school_id, class_id, admission_number, first_name, last_name, guardian_email, guardian_phone)
+      (id, school_id, class_id, admission_number, first_name, last_name,
+       guardian_email, guardian_phone, photo_data)
     SELECT ${randomUUID()}, ${schoolId}, c.id, ${student.admissionNumber},
-           ${student.firstName}, ${student.lastName}, ${student.guardianEmail}, ${student.guardianPhone}
+           ${student.firstName}, ${student.lastName}, ${student.guardianEmail},
+           ${student.guardianPhone}, ${photoData}
     FROM school_classes c
     WHERE c.school_id = ${schoolId} AND c.id = ${student.classId}
     RETURNING id, admission_number AS "admissionNumber", first_name AS "firstName",
-              last_name AS "lastName", guardian_email AS "guardianEmail",
+              last_name AS "lastName", photo_data AS "photoData",
+              guardian_email AS "guardianEmail",
               guardian_phone AS "guardianPhone", is_active AS "isActive", class_id AS "classId"
   `;
   return created ?? null;
@@ -3380,6 +3403,7 @@ export async function importSchoolStudents(schoolId, classId, students) {
 
 export async function updateSchoolStudent(schoolId, studentId, student) {
   const sql = await getReadyDatabase();
+  const photoData = student.photoData ?? null;
   const [updated] = await sql`
     WITH updated AS (
       UPDATE school_students st
@@ -3387,6 +3411,7 @@ export async function updateSchoolStudent(schoolId, studentId, student) {
           admission_number = ${student.admissionNumber},
           first_name = ${student.firstName},
           last_name = ${student.lastName},
+          photo_data = COALESCE(${photoData}, st.photo_data),
           guardian_email = ${student.guardianEmail},
           guardian_phone = ${student.guardianPhone}
       FROM school_classes c
@@ -3396,6 +3421,7 @@ export async function updateSchoolStudent(schoolId, studentId, student) {
         AND c.id = ${student.classId}
       RETURNING st.id, st.admission_number AS "admissionNumber",
                 st.first_name AS "firstName", st.last_name AS "lastName",
+                st.photo_data AS "photoData",
                 st.guardian_email AS "guardianEmail", st.guardian_phone AS "guardianPhone",
                 st.is_active AS "isActive", st.class_id AS "classId"
     ),

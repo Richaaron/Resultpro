@@ -83,15 +83,15 @@ export function normalizeTeacherRegistrationInput(body = {}) {
   return { teacherName, email };
 }
 
-export function normalizeSignatureData(value) {
-  if (typeof value !== "string" || value.length > 88_000) return null;
+function normalizePngData(value, { maxLength, maxBytes, maxWidth, maxHeight }) {
+  if (typeof value !== "string" || value.length > maxLength) return null;
   const match = /^data:image\/png;base64,([A-Za-z0-9+/]+={0,2})$/.exec(value);
   if (!match) return null;
 
   const image = Buffer.from(match[1], "base64");
   if (
     image.length < 24
-    || image.length > 65_536
+    || image.length > maxBytes
     || image.toString("base64") !== match[1]
     || !image.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
     || image.toString("ascii", 12, 16) !== "IHDR"
@@ -101,30 +101,20 @@ export function normalizeSignatureData(value) {
 
   const width = image.readUInt32BE(16);
   const height = image.readUInt32BE(20);
-  if (width < 1 || width > 1600 || height < 1 || height > 600) return null;
+  if (width < 1 || width > maxWidth || height < 1 || height > maxHeight) return null;
   return value;
 }
 
+export function normalizeSignatureData(value) {
+  return normalizePngData(value, { maxLength: 88_000, maxBytes: 65_536, maxWidth: 1600, maxHeight: 600 });
+}
+
 export function normalizeSchoolLogoData(value) {
-  if (typeof value !== "string" || value.length > 88_000) return null;
-  const match = /^data:image\/png;base64,([A-Za-z0-9+/]+={0,2})$/.exec(value);
-  if (!match) return null;
+  return normalizePngData(value, { maxLength: 88_000, maxBytes: 65_536, maxWidth: 512, maxHeight: 512 });
+}
 
-  const image = Buffer.from(match[1], "base64");
-  if (
-    image.length < 24
-    || image.length > 65_536
-    || image.toString("base64") !== match[1]
-    || !image.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
-    || image.toString("ascii", 12, 16) !== "IHDR"
-  ) {
-    return null;
-  }
-
-  const width = image.readUInt32BE(16);
-  const height = image.readUInt32BE(20);
-  if (width < 1 || width > 512 || height < 1 || height > 512) return null;
-  return value;
+export function normalizeProfilePhotoData(value) {
+  return normalizePngData(value, { maxLength: 22_000, maxBytes: 16_000, maxWidth: 128, maxHeight: 128 });
 }
 
 export function createSchoolSlug(name, id) {

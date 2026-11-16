@@ -252,6 +252,46 @@ async function prepareSchoolLogoImage(file) {
   }
 }
 
+async function prepareProfilePhotoImage(file) {
+  if (!["image/png", "image/jpeg", "image/webp"].includes(file.type)) {
+    throw new Error("Choose a PNG, JPEG, or WebP profile photo.");
+  }
+  if (file.size > 5 * 1024 * 1024) throw new Error("Choose a profile photo smaller than 5 MB.");
+
+  const imageUrl = URL.createObjectURL(file);
+  try {
+    const image = await new Promise((resolve, reject) => {
+      const loadedImage = new Image();
+      loadedImage.onload = () => resolve(loadedImage);
+      loadedImage.onerror = () => reject(new Error("That image could not be opened. Choose another file."));
+      loadedImage.src = imageUrl;
+    });
+    if (image.naturalWidth < 1 || image.naturalHeight < 1) {
+      throw new Error("That image has invalid dimensions. Choose another file.");
+    }
+    const scale = Math.min(1, 128 / image.naturalWidth, 128 / image.naturalHeight);
+    let width = Math.max(1, Math.round(image.naturalWidth * scale));
+    let height = Math.max(1, Math.round(image.naturalHeight * scale));
+    const canvas = document.createElement("canvas");
+    const context = canvas.getContext("2d");
+    if (!context) throw new Error("Your browser could not prepare the profile photo.");
+
+    while (Math.max(width, height) > 32) {
+      canvas.width = width;
+      canvas.height = height;
+      context.clearRect(0, 0, width, height);
+      context.drawImage(image, 0, 0, width, height);
+      const photoData = canvas.toDataURL("image/png");
+      if (photoData.length <= 21_300) return photoData;
+      width = Math.round(width * 0.8);
+      height = Math.round(height * 0.8);
+    }
+    throw new Error("This photo is too detailed to optimize. Try a simpler image.");
+  } finally {
+    URL.revokeObjectURL(imageUrl);
+  }
+}
+
 function StudentReportCard({ school, result, rows, signatures, logoData }) {
   const summary = summarizePublishedResultRows(rows);
   const student = rows[0];
@@ -464,7 +504,11 @@ function App() {
     classId: "",
     guardianEmail: "",
     guardianPhone: "",
+    photoData: "",
   });
+  const studentPhotoInputRef = useRef(null);
+  const [teacherPhotoData, setTeacherPhotoData] = useState("");
+  const teacherPhotoInputRef = useRef(null);
   const [editingStudentId, setEditingStudentId] = useState("");
   const [savingStudent, setSavingStudent] = useState(false);
   const [teacherRoster, setTeacherRoster] = useState([]);
@@ -1778,7 +1822,7 @@ function App() {
     try {
       const payload = await apiRequest(`/api/schools/${school.id}/teacher-credentials`, {
         method: "POST",
-        body: JSON.stringify({ email: inviteEmail, teacherName }),
+        body: JSON.stringify({ email: inviteEmail, teacherName, photoData: teacherPhotoData }),
       });
       setTeacherRoster((previous) => [
         ...previous.filter((teacher) => teacher.userId !== payload.credential.userId),
@@ -1787,6 +1831,7 @@ function App() {
           email: payload.credential.email,
           teacherName: payload.credential.teacherName,
           teacherCode: payload.credential.teacherCode,
+          photoData: payload.credential.photoData,
         },
       ]);
       setTeacherRegistration({
@@ -1798,6 +1843,8 @@ function App() {
       });
       setTeacherName("");
       setInviteEmail("");
+      setTeacherPhotoData("");
+      if (teacherPhotoInputRef.current) teacherPhotoInputRef.current.value = "";
       setToast("Teacher ID and permanent password are ready. The teacher can now be assigned to classes and duties.");
     } catch (requestError) {
       setTeacherRegistrationError(requestError.message || "Could not register this teacher.");
@@ -2339,6 +2386,31 @@ function App() {
     }
   }
 
+  async function prepareTeacherPhotoFile(event) {
+    const file = event.target.files?.[0];
+    setTeacherRegistrationError("");
+    if (!file) return;
+    try {
+      setTeacherPhotoData(await prepareProfilePhotoImage(file));
+    } catch (requestError) {
+      setTeacherRegistrationError(requestError.message || "Could not prepare that teacher photo.");
+      event.target.value = "";
+    }
+  }
+
+  async function prepareStudentPhotoFile(event) {
+    const file = event.target.files?.[0];
+    setStudentError("");
+    if (!file) return;
+    try {
+      const photoData = await prepareProfilePhotoImage(file);
+      setStudentForm((previous) => ({ ...previous, photoData }));
+    } catch (requestError) {
+      setStudentError(requestError.message || "Could not prepare that student photo.");
+      event.target.value = "";
+    }
+  }
+
   async function saveSchoolLogoUpload(event) {
     event.preventDefault();
     if (!school || !schoolLogoFileData || role !== "admin") return;
@@ -2425,11 +2497,14 @@ function App() {
       classId: schoolClasses[0]?.id || "",
       guardianEmail: "",
       guardianPhone: "",
+      photoData: "",
     });
+    if (studentPhotoInputRef.current) studentPhotoInputRef.current.value = "";
   }
 
   function editStudent(student) {
     setEditingStudentId(student.id);
+    if (studentPhotoInputRef.current) studentPhotoInputRef.current.value = "";
     setStudentForm({
       firstName: student.firstName,
       lastName: student.lastName,
@@ -2437,6 +2512,7 @@ function App() {
       classId: student.classId,
       guardianEmail: student.guardianEmail || "",
       guardianPhone: student.guardianPhone || "",
+      photoData: student.photoData || "",
     });
     document.getElementById("studentForm")?.scrollIntoView({ behavior: "smooth", block: "start" });
   }
@@ -3471,6 +3547,9 @@ function App() {
                 <input className="text-input" id="teacherName" autoComplete="name" required minLength={2} maxLength={120} value={teacherName} onChange={(event) => setTeacherName(event.target.value)} placeholder="e.g. Ada Okafor" />
                 <label className="field-label" htmlFor="inviteEmail">Teacher email</label>
                 <input className="text-input" id="inviteEmail" type="email" autoComplete="email" required maxLength={254} value={inviteEmail} onChange={(event) => setInviteEmail(event.target.value)} placeholder="teacher@yourschool.edu" />
+                <label className="field-label" htmlFor="teacherPhoto">Teacher photo <small>Optional · PNG, JPEG, or WebP</small></label>
+                <input ref={teacherPhotoInputRef} className="text-input" id="teacherPhoto" type="file" accept="image/png,image/jpeg,image/webp" onChange={prepareTeacherPhotoFile} />
+                {teacherPhotoData && <img className="profile-photo-preview" src={teacherPhotoData} alt="Teacher photo preview" />}
                 <p className="field-hint">Registering an existing teacher email keeps their ID and issues a new permanent password.</p>
                 {teacherRegistrationError && <p className="form-error" role="alert">{teacherRegistrationError}</p>}
                 <button className="button button-primary" type="submit" disabled={inviting}>{inviting ? "Registering…" : "Register teacher"}</button>
@@ -3489,7 +3568,7 @@ function App() {
             </section>
             {teacherRoster.length > 0 && <section className="panel teacher-roster-panel">
               <div className="panel-heading"><div><h2>Teacher profiles</h2><p>Profiles are ready for class and duty assignments as soon as you register them.</p></div></div>
-              <div className="table-scroll"><table><thead><tr><th>TEACHER</th><th>STAFF CODE</th><th>EMAIL</th></tr></thead><tbody>{teacherRoster.map((teacher) => <tr key={teacher.userId}><td>{teacher.teacherName || "Teacher"}</td><td><strong>{teacher.teacherCode || "—"}</strong></td><td>{teacher.email}</td></tr>)}</tbody></table></div>
+              <div className="table-scroll"><table><thead><tr><th>TEACHER</th><th>STAFF CODE</th><th>EMAIL</th></tr></thead><tbody>{teacherRoster.map((teacher) => <tr key={teacher.userId}><td><span className="person-name-cell">{teacher.photoData ? <img className="person-photo" src={teacher.photoData} alt="" loading="lazy" decoding="async" /> : <span className="person-photo-fallback">{teacher.teacherName?.[0]?.toUpperCase() || "T"}</span>}<strong>{teacher.teacherName || "Teacher"}</strong></span></td><td><strong>{teacher.teacherCode || "—"}</strong></td><td>{teacher.email}</td></tr>)}</tbody></table></div>
             </section>}
             <section className="panel teacher-assignment-panel">
               <div className="panel-heading">
@@ -3556,6 +3635,8 @@ function App() {
               {loadingClasses ? <LoadingMessage>Loading classes…</LoadingMessage> : classError ? <p className="form-error" role="alert">{classError}</p> : schoolClasses.length === 0 ? <p className="empty-search">Create a class first. <button className="inline-action" type="button" onClick={() => setPage("classes")}>Go to Classes & subjects →</button></p> : <form className="student-create-form" onSubmit={saveStudent}>
                 <label><span>First name</span><input className="text-input" required maxLength={80} autoComplete="given-name" value={studentForm.firstName} onChange={(event) => setStudentForm((previous) => ({ ...previous, firstName: event.target.value }))} /></label>
                 <label><span>Last name</span><input className="text-input" required maxLength={80} autoComplete="family-name" value={studentForm.lastName} onChange={(event) => setStudentForm((previous) => ({ ...previous, lastName: event.target.value }))} /></label>
+                <label><span>Student photo <small>Optional · PNG, JPEG, or WebP</small></span><input ref={studentPhotoInputRef} className="text-input" type="file" accept="image/png,image/jpeg,image/webp" onChange={prepareStudentPhotoFile} /></label>
+                {studentForm.photoData && <img className="profile-photo-preview" src={studentForm.photoData} alt={`${studentForm.firstName || "Student"} photo preview`} />}
                 <label><span>Admission number</span><input className="text-input" required maxLength={32} value={studentForm.admissionNumber} onChange={(event) => setStudentForm((previous) => ({ ...previous, admissionNumber: event.target.value }))} placeholder="e.g. AST/2026/001" /></label>
                 <label><span>Class</span><select className="text-input" required value={studentForm.classId} onChange={(event) => setStudentForm((previous) => ({ ...previous, classId: event.target.value }))}><option value="">Select a class</option>{schoolClasses.map((schoolClass) => <option key={schoolClass.id} value={schoolClass.id}>{schoolClass.grade} {schoolClass.section} · {schoolClass.academicYear}</option>)}</select></label>
                 <label><span>Parent / guardian email <small>Optional</small></span><input className="text-input" type="email" maxLength={254} autoComplete="email" value={studentForm.guardianEmail} onChange={(event) => setStudentForm((previous) => ({ ...previous, guardianEmail: event.target.value }))} /></label>
@@ -3600,7 +3681,7 @@ function App() {
                 </div>
               </div>
               <div className="table-scroll"><table><thead><tr><th>STUDENT</th><th>ADMISSION NO.</th><th>CLASS</th><th>GUARDIAN CONTACT</th><th>STATUS</th><th>STUDENT PORTAL</th><th>PARENT PORTAL</th><th>ACTIONS</th></tr></thead><tbody>
-                {studentRows.map((student) => <tr key={student.id}><td><strong>{student.firstName} {student.lastName}</strong></td><td>{student.admissionNumber}</td><td>{student.grade} {student.section}</td><td>{student.guardianEmail || student.guardianPhone || "—"}</td><td><span className={`status-pill ${student.isActive ? "approved" : "draft"}`}><i />{student.isActive ? "Active" : "Archived"}</span></td><td>{student.isPortalLinked ? <span className="student-portal-linked" title={student.portalEmail || "Portal account linked"}>Linked{student.portalEmail ? ` · ${student.portalEmail}` : ""}</span> : <button className="quiet-action" type="button" onClick={() => inviteStudent(student)} disabled={linkingStudentId === student.id}>{linkingStudentId === student.id ? "Creating…" : "Invite"}</button>}</td><td>{student.isParentPortalLinked ? <span className="student-portal-linked">Linked</span> : student.parentInvitationPending ? <span className="field-hint">Invited</span> : <button className="quiet-action" type="button" onClick={() => inviteParent(student)} disabled={!student.isActive || !student.guardianEmail || linkingStudentId === student.id}>{linkingStudentId === student.id ? "Creating…" : student.guardianEmail ? "Invite guardian" : "Add guardian email"}</button>}</td><td><div className="student-row-actions"><button className="quiet-action" type="button" onClick={() => editStudent(student)}>Edit</button><button className="quiet-action" type="button" onClick={() => toggleStudentStatus(student)}>{student.isActive ? "Archive" : "Reactivate"}</button></div></td></tr>)}
+                {studentRows.map((student) => <tr key={student.id}><td><span className="person-name-cell">{student.photoData ? <img className="person-photo" src={student.photoData} alt="" loading="lazy" decoding="async" /> : <span className="person-photo-fallback">{student.firstName?.[0]?.toUpperCase() || "S"}</span>}<strong>{student.firstName} {student.lastName}</strong></span></td><td>{student.admissionNumber}</td><td>{student.grade} {student.section}</td><td>{student.guardianEmail || student.guardianPhone || "—"}</td><td><span className={`status-pill ${student.isActive ? "approved" : "draft"}`}><i />{student.isActive ? "Active" : "Archived"}</span></td><td>{student.isPortalLinked ? <span className="student-portal-linked" title={student.portalEmail || "Portal account linked"}>Linked{student.portalEmail ? ` · ${student.portalEmail}` : ""}</span> : <button className="quiet-action" type="button" onClick={() => inviteStudent(student)} disabled={linkingStudentId === student.id}>{linkingStudentId === student.id ? "Creating…" : "Invite"}</button>}</td><td>{student.isParentPortalLinked ? <span className="student-portal-linked">Linked</span> : student.parentInvitationPending ? <span className="field-hint">Invited</span> : <button className="quiet-action" type="button" onClick={() => inviteParent(student)} disabled={!student.isActive || !student.guardianEmail || linkingStudentId === student.id}>{linkingStudentId === student.id ? "Creating…" : student.guardianEmail ? "Invite guardian" : "Add guardian email"}</button>}</td><td><div className="student-row-actions"><button className="quiet-action" type="button" onClick={() => editStudent(student)}>Edit</button><button className="quiet-action" type="button" onClick={() => toggleStudentStatus(student)}>{student.isActive ? "Archive" : "Reactivate"}</button></div></td></tr>)}
               </tbody></table>
                 {loadingStudents && <LoadingMessage>Loading student records…</LoadingMessage>}
                 {!loadingStudents && studentRows.length === 0 && <div className="empty-search">No students found. Add your first student above or adjust the filters.</div>}

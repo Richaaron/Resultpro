@@ -75,6 +75,7 @@ import {
 import {
   normalizeAcademicSessionInput,
   normalizeAcademicTermDates,
+  normalizeProfilePhotoData,
   normalizeSchoolInput,
   normalizeSchoolLogoData,
   normalizeSignatureData,
@@ -1302,8 +1303,13 @@ app.get("/api/schools/:schoolId/students", requireAuth, async (request, response
 app.post("/api/schools/:schoolId/students", requireAuth, async (request, response) => {
   const { schoolId } = request.params;
   const student = normalizeStudentInput(request.body);
-  if (!isUuid(schoolId) || !student) {
-    return response.status(400).json({ error: "Enter the student's name, admission number, and a valid class." });
+  const photo = normalizeProfilePhotoInput(request.body);
+  if (!isUuid(schoolId) || !student || !photo.valid) {
+    return response.status(400).json({
+      error: !photo.valid
+        ? "Choose a profile photo that can be optimized to 128 by 128 pixels and 16 KB."
+        : "Enter the student's name, admission number, and a valid class.",
+    });
   }
 
   try {
@@ -1312,7 +1318,7 @@ app.post("/api/schools/:schoolId/students", requireAuth, async (request, respons
     if (membershipRole !== "admin") {
       return response.status(403).json({ error: "Only a school administrator can enrol students." });
     }
-    const created = await createSchoolStudent(schoolId, student);
+    const created = await createSchoolStudent(schoolId, { ...student, photoData: photo.photoData });
     if (!created) return response.status(400).json({ error: "Choose a class in this school." });
     return response.status(201).json({ student: created });
   } catch (error) {
@@ -1359,8 +1365,13 @@ app.post("/api/schools/:schoolId/students/import", requireAuth, async (request, 
 app.put("/api/schools/:schoolId/students/:studentId", requireAuth, async (request, response) => {
   const { schoolId, studentId } = request.params;
   const student = normalizeStudentInput(request.body);
-  if (!isUuid(schoolId) || !isUuid(studentId) || !student) {
-    return response.status(400).json({ error: "Enter the student's name, admission number, and a valid class." });
+  const photo = normalizeProfilePhotoInput(request.body);
+  if (!isUuid(schoolId) || !isUuid(studentId) || !student || !photo.valid) {
+    return response.status(400).json({
+      error: !photo.valid
+        ? "Choose a profile photo that can be optimized to 128 by 128 pixels and 16 KB."
+        : "Enter the student's name, admission number, and a valid class.",
+    });
   }
 
   try {
@@ -1369,7 +1380,7 @@ app.put("/api/schools/:schoolId/students/:studentId", requireAuth, async (reques
     if (membershipRole !== "admin") {
       return response.status(403).json({ error: "Only a school administrator can update student records." });
     }
-    const updated = await updateSchoolStudent(schoolId, studentId, student);
+    const updated = await updateSchoolStudent(schoolId, studentId, { ...student, photoData: photo.photoData });
     if (!updated) return response.status(404).json({ error: "Student or class not found in this school." });
     return response.json({ student: updated });
   } catch (error) {
@@ -1446,8 +1457,13 @@ app.post("/api/schools/:schoolId/teacher-credentials", requireAuth, async (reque
   response.set("Cache-Control", "no-store");
   const { schoolId } = request.params;
   const teacher = normalizeTeacherRegistrationInput(request.body);
-  if (!isUuid(schoolId) || !teacher) {
-    return response.status(400).json({ error: "Enter the teacher’s full name and a valid email address." });
+  const photo = normalizeProfilePhotoInput(request.body);
+  if (!isUuid(schoolId) || !teacher || !photo.valid) {
+    return response.status(400).json({
+      error: !photo.valid
+        ? "Choose a profile photo that can be optimized to 128 by 128 pixels and 16 KB."
+        : "Enter the teacher’s full name and a valid email address.",
+    });
   }
 
   try {
@@ -1462,6 +1478,7 @@ app.post("/api/schools/:schoolId/teacher-credentials", requireAuth, async (reque
       email: teacher.email,
       teacherName: teacher.teacherName,
       userId: request.auth.userId,
+      photoData: photo.photoData,
     });
     if (!credential) {
       return response.status(409).json({
@@ -1483,6 +1500,7 @@ app.post("/api/schools/:schoolId/teacher-credentials", requireAuth, async (reque
         teacherName: credential.teacherName,
         teacherCode: credential.teacherCode,
         teacherPassword: credential.setupPassword,
+        photoData: credential.photoData,
       },
       adminNotification,
     });
@@ -1573,6 +1591,13 @@ app.post("/api/invitations/accept", requireAuth, async (request, response) => {
     return handleDatabaseError(error, response);
   }
 });
+
+function normalizeProfilePhotoInput(body) {
+  const value = body && typeof body === "object" ? body.photoData : undefined;
+  if (value === undefined || value === null || value === "") return { valid: true, photoData: null };
+  const photoData = normalizeProfilePhotoData(value);
+  return { valid: Boolean(photoData), photoData };
+}
 
 function handleDatabaseError(error, response) {
   if (error.code === "23505") {
