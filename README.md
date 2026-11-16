@@ -133,7 +133,7 @@ Administrators can also import students from the student register using the down
 
 ## Curriculum subjects
 
-School administrators can choose and save subjects by Primary 1–6, JSS 1–3, and SSS 1–3 under **Classes & subjects**. Saved subjects are scoped to the selected school; teachers can view them but cannot edit them. The catalogue is a starting point, not a claim that every optional subject applies to every school. Confirm current grade-specific subjects with the official NERDC curriculum pages and the relevant state education authority:
+During school profile creation, administrators select the educational levels they offer and choose subjects by grade. The selected levels and subjects are saved together with the school profile; administrators can refine the setup later under **Classes & subjects**. Saved subjects are scoped to the selected school; teachers can view them but cannot edit them. The catalogue is a starting point, not a claim that every optional subject applies to every school. Confirm current grade-specific subjects with the official NERDC curriculum pages and the relevant state education authority:
 
 - [Revised Basic Education Curriculum](https://nerdc.gov.ng/content_manager/new_curriculum_home.html)
 - [Revised Senior Secondary Education Curriculum](https://nerdc.gov.ng/content_manager/new_senior_curriculum_home.html)

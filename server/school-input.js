@@ -1,3 +1,10 @@
+import {
+  curriculumByGrade,
+  curriculumLevels,
+  normalizeEducationalLevelSelection,
+  normalizeSubjectSelection,
+} from "../shared/curriculum.js";
+
 export function normalizeSchoolInput(body = {}) {
   const school = {
     name: typeof body.name === "string" ? body.name.trim() : "",
@@ -28,6 +35,37 @@ export function normalizeSchoolInput(body = {}) {
   }
 
   return school;
+}
+
+export function normalizeSchoolCurriculumInput(body = {}) {
+  if (!body || typeof body !== "object" || Array.isArray(body)) return null;
+
+  const levelCodes = normalizeEducationalLevelSelection(body.levelCodes);
+  const submittedSubjects = body.subjectsByGrade;
+  if (!levelCodes || !submittedSubjects || typeof submittedSubjects !== "object" || Array.isArray(submittedSubjects)) {
+    return null;
+  }
+
+  const knownGrades = new Set(Object.keys(curriculumByGrade));
+  if (Object.keys(submittedSubjects).some((grade) => !knownGrades.has(grade))) return null;
+
+  const selectedGrades = curriculumLevels
+    .filter((level) => levelCodes.includes(level.code))
+    .flatMap((level) => level.grades);
+  const subjectsByGrade = {};
+  let hasSelectedSubject = false;
+
+  for (const grade of selectedGrades) {
+    const subjects = Object.hasOwn(submittedSubjects, grade)
+      ? normalizeSubjectSelection(grade, submittedSubjects[grade])
+      : [];
+    if (!subjects) return null;
+    subjectsByGrade[grade] = subjects;
+    if (subjects.length > 0) hasSelectedSubject = true;
+  }
+
+  if (!hasSelectedSubject) return null;
+  return { levelCodes, subjectsByGrade };
 }
 
 export function normalizeAcademicSessionInput(body = {}) {

@@ -6,6 +6,7 @@ import {
   createSchoolSlug,
   normalizeProfilePhotoData,
   normalizeSchoolLogoData,
+  normalizeSchoolCurriculumInput,
   normalizeSignatureData,
   normalizeTeacherRegistrationInput,
 } from "./school-input.js";
@@ -40,6 +41,42 @@ test("rejects incomplete or invalid teacher registration details", () => {
     { teacherName: "Ada Teacher", email: `${"a".repeat(250)}@example.com` },
   ]) {
     assert.equal(normalizeTeacherRegistrationInput(input), null);
+  }
+});
+
+test("normalizes school levels and grade-specific subject selections", () => {
+  assert.deepEqual(
+    normalizeSchoolCurriculumInput({
+      levelCodes: ["primary"],
+      subjectsByGrade: {
+        "Primary 1": ["Mathematics", "English Studies"],
+        "Primary 2": [],
+      },
+    }),
+    {
+      levelCodes: ["primary"],
+      subjectsByGrade: {
+        "Primary 1": ["Mathematics", "English Studies"],
+        "Primary 2": [],
+        "Primary 3": [],
+        "Primary 4": [],
+        "Primary 5": [],
+        "Primary 6": [],
+      },
+    },
+  );
+});
+
+test("rejects school curriculum setup without valid levels and grade subjects", () => {
+  for (const input of [
+    { levelCodes: [], subjectsByGrade: { "Primary 1": ["Mathematics"] } },
+    { levelCodes: ["primary"], subjectsByGrade: { "Primary 1": [] } },
+    { levelCodes: ["primary"], subjectsByGrade: { "JSS 1": ["Mathematics"] } },
+    { levelCodes: ["primary"], subjectsByGrade: { "Primary 1": ["Physics"] } },
+    { levelCodes: ["primary"], subjectsByGrade: { "Primary 1": ["Mathematics", "Mathematics"] } },
+    { levelCodes: ["primary"], subjectsByGrade: { Unknown: ["Mathematics"] } },
+  ]) {
+    assert.equal(normalizeSchoolCurriculumInput(input), null);
   }
 });
 

@@ -8,6 +8,7 @@ import { authClient, pendingSchoolNameKey } from "./auth.js";
 import {
   curriculumByGrade,
   curriculumGrades,
+  curriculumLevels,
   normalizeEducationalLevelSelection,
 } from "../shared/curriculum.js";
 import {
@@ -426,6 +427,9 @@ function App() {
   const [modalOpen, setModalOpen] = useState(false);
   const [explainerOpen, setExplainerOpen] = useState(false);
   const [step, setStep] = useState(1);
+  const [setupLevelCodes, setSetupLevelCodes] = useState([]);
+  const [setupSelectedGrade, setSetupSelectedGrade] = useState("");
+  const [setupSubjectsByGrade, setSetupSubjectsByGrade] = useState({});
   const [toast, setToast] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -614,6 +618,13 @@ function App() {
     : [];
   const activeEducationalLevels = educationalLevels.filter((level) => level.active);
   const activeGradeOptions = activeEducationalLevels.flatMap((level) => level.grades);
+  const setupGradeOptions = curriculumLevels
+    .filter((level) => setupLevelCodes.includes(level.code))
+    .flatMap((level) => level.grades);
+  const setupSelectedSubjectCount = setupGradeOptions.reduce(
+    (count, grade) => count + (setupSubjectsByGrade[grade]?.length || 0),
+    0,
+  );
   const savedEducationalLevelCodes = activeEducationalLevels.map((level) => level.code).sort();
   const normalizedEducationalLevelDraft = normalizeEducationalLevelSelection(draftEducationalLevelCodes);
   const educationalLevelsChanged = JSON.stringify([...draftEducationalLevelCodes].sort())
@@ -914,7 +925,7 @@ function App() {
           const pendingSchoolName = window.sessionStorage.getItem(pendingSchoolNameKey)?.trim();
           if (pendingSchoolName) {
             setForm((previous) => ({ ...previous, name: pendingSchoolName }));
-            setStep(1);
+            resetSchoolSetup();
             setModalOpen(true);
           }
         }
@@ -1637,9 +1648,16 @@ function App() {
     };
   }, []);
 
-  function showSetup() {
+  function resetSchoolSetup() {
     setError("");
     setStep(1);
+    setSetupLevelCodes([]);
+    setSetupSelectedGrade("");
+    setSetupSubjectsByGrade({});
+  }
+
+  function showSetup() {
+    resetSchoolSetup();
     setModalOpen(true);
   }
 
@@ -1790,13 +1808,20 @@ function App() {
 
   async function createSchool(event) {
     event.preventDefault();
+    if (step !== 3) return;
     setSaving(true);
     setError("");
     const createdFromPlatform = page === "platform";
     try {
       const payload = await apiRequest("/api/schools", {
         method: "POST",
-        body: JSON.stringify(form),
+        body: JSON.stringify({
+          ...form,
+          levelCodes: setupLevelCodes,
+          subjectsByGrade: Object.fromEntries(
+            setupGradeOptions.map((grade) => [grade, setupSubjectsByGrade[grade] || []]),
+          ),
+        }),
       });
       setSchool(payload.school);
       setSchools((previous) => [payload.school, ...previous]);
@@ -1806,6 +1831,9 @@ function App() {
       setModalOpen(false);
       setToast(`School profile created for ${payload.school.name}.`);
       setForm({ name: "", schoolType: "", country: "", email: "", accessMode: "invite" });
+      setSetupLevelCodes([]);
+      setSetupSelectedGrade("");
+      setSetupSubjectsByGrade({});
     } catch (requestError) {
       setError(requestError.message || "The API could not be reached. Please try again.");
     } finally {
@@ -2764,7 +2792,7 @@ function App() {
     clearTeacherSession();
     if (schoolName) {
       setForm((previous) => ({ ...previous, name: schoolName }));
-      setStep(1);
+      resetSchoolSetup();
       setModalOpen(true);
     }
     setAuthNotice("");
@@ -2897,6 +2925,41 @@ function App() {
 
   function updateForm(field, value) {
     setForm((previous) => ({ ...previous, [field]: value }));
+  }
+
+  function toggleSetupLevel(code) {
+    const nextLevelCodes = setupLevelCodes.includes(code)
+      ? setupLevelCodes.filter((levelCode) => levelCode !== code)
+      : [...setupLevelCodes, code];
+    const nextGrades = curriculumLevels
+      .filter((level) => nextLevelCodes.includes(level.code))
+      .flatMap((level) => level.grades);
+    setSetupLevelCodes(nextLevelCodes);
+    setSetupSelectedGrade((current) => nextGrades.includes(current) ? current : nextGrades[0] || "");
+    setError("");
+  }
+
+  function toggleSetupSubject(subject) {
+    setSetupSubjectsByGrade((previous) => {
+      const currentSubjects = previous[setupSelectedGrade] || [];
+      const nextSubjects = currentSubjects.includes(subject)
+        ? currentSubjects.filter((item) => item !== subject)
+        : [...currentSubjects, subject];
+      return { ...previous, [setupSelectedGrade]: nextSubjects };
+    });
+  }
+
+  function continueToPortalAccess() {
+    if (!setupLevelCodes.length) {
+      setError("Choose at least one educational level.");
+      return;
+    }
+    if (!setupSelectedSubjectCount) {
+      setError("Choose at least one subject for a grade.");
+      return;
+    }
+    setError("");
+    setStep(3);
   }
 
   function openDemo() {
@@ -3871,7 +3934,102 @@ function App() {
         </div>
       </main>
 
-      {modalOpen && <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setModalOpen(false); }}><section className="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle"><button className="modal-close" type="button" onClick={() => setModalOpen(false)} aria-label="Close setup">×</button><div className="modal-kicker"><AsterLogoMark className="mini-brand" /> LET’S MAKE THIS YOURS</div><h2 id="modalTitle">Tell us about your school</h2><p className="modal-intro">A few details help us set up the right home for your school community.</p><div className="step-indicator"><span className={`step ${step === 1 ? "active" : ""}`}>01</span><i /><span className={`step ${step === 2 ? "active" : ""}`}>02</span><span className="step-caption">{step === 1 ? "School basics" : "Portal access"}</span></div><form onSubmit={createSchool} noValidate>{step === 1 ? <div className="form-step"><label className="field-label" htmlFor="schoolName">School name</label><input className="text-input" id="schoolName" required maxLength={120} value={form.name} onChange={(event) => updateForm("name", event.target.value)} placeholder="e.g. Harborview Academy" /><div className="field-row"><div><label className="field-label" htmlFor="schoolType">School type</label><select className="text-input" id="schoolType" required value={form.schoolType} onChange={(event) => updateForm("schoolType", event.target.value)}><option value="">Select school type</option>{schoolTypes.map((type) => <option key={type}>{type}</option>)}</select></div><div><label className="field-label" htmlFor="schoolCountry">Country</label><input className="text-input" id="schoolCountry" required maxLength={80} value={form.country} onChange={(event) => updateForm("country", event.target.value)} placeholder="e.g. Nigeria" /></div></div><label className="field-label" htmlFor="schoolEmail">School email</label><input className="text-input" id="schoolEmail" required type="email" value={form.email} onChange={(event) => updateForm("email", event.target.value)} placeholder="hello@yourschool.edu" /><button className="button button-primary modal-continue" type="button" onClick={() => { const fields = [...document.querySelectorAll("#schoolName, #schoolType, #schoolCountry, #schoolEmail")]; const invalid = fields.find((field) => !field.checkValidity()); if (invalid) invalid.reportValidity(); else { setError(""); setStep(2); } }}>Continue →</button></div> : <div className="form-step"><label className="field-label">How should your community access the school?</label><p className="field-hint">Choose how your school community will join. You can update this later.</p>{accessOptions.map(([value, title, description]) => <label className="access-option" key={value}><input type="radio" name="accessMode" checked={form.accessMode === value} onChange={() => updateForm("accessMode", value)} /><span className="access-option-icon">{value === "invite" ? "✉" : value === "school-code" ? "⌗" : "◎"}</span><span><strong>{title}</strong><small>{description}</small></span><span className="radio-mark" /></label>)}{error && <p className="form-error" role="alert">{error}</p>}<div className="form-row-actions"><button className="button button-secondary" type="button" onClick={() => { setError(""); setStep(1); }}>← Back</button><button className="button button-primary" type="submit" disabled={saving}>{saving ? "Creating…" : "Create school profile →"}</button></div><p className="privacy-note">School profiles are saved to the local database.</p></div>}</form></section></div>}
+      {modalOpen && <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setModalOpen(false); }}>
+        <section className="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+          <button className="modal-close" type="button" onClick={() => setModalOpen(false)} aria-label="Close setup">×</button>
+          <div className="modal-kicker"><AsterLogoMark className="mini-brand" /> LET’S MAKE THIS YOURS</div>
+          <h2 id="modalTitle">Tell us about your school</h2>
+          <p className="modal-intro">A few details help us set up the right home for your school community.</p>
+          <div className="step-indicator" aria-label={`Step ${step} of 3`}>
+            <span className={`step ${step >= 1 ? "active" : ""}`}>01</span><i />
+            <span className={`step ${step >= 2 ? "active" : ""}`}>02</span><i />
+            <span className={`step ${step >= 3 ? "active" : ""}`}>03</span>
+            <span className="step-caption">{step === 1 ? "School basics" : step === 2 ? "Levels & subjects" : "Portal access"}</span>
+          </div>
+          <form onSubmit={createSchool} noValidate>
+            {step === 1 && <div className="form-step">
+              <label className="field-label" htmlFor="schoolName">School name</label>
+              <input className="text-input" id="schoolName" required maxLength={120} value={form.name} onChange={(event) => updateForm("name", event.target.value)} placeholder="e.g. Harborview Academy" />
+              <div className="field-row">
+                <div>
+                  <label className="field-label" htmlFor="schoolType">School type</label>
+                  <select className="text-input" id="schoolType" required value={form.schoolType} onChange={(event) => updateForm("schoolType", event.target.value)}>
+                    <option value="">Select school type</option>
+                    {schoolTypes.map((type) => <option key={type}>{type}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="field-label" htmlFor="schoolCountry">Country</label>
+                  <input className="text-input" id="schoolCountry" required maxLength={80} value={form.country} onChange={(event) => updateForm("country", event.target.value)} placeholder="e.g. Nigeria" />
+                </div>
+              </div>
+              <label className="field-label" htmlFor="schoolEmail">School email</label>
+              <input className="text-input" id="schoolEmail" required type="email" value={form.email} onChange={(event) => updateForm("email", event.target.value)} placeholder="hello@yourschool.edu" />
+              <button className="button button-primary modal-continue" type="button" onClick={() => {
+                const fields = [...document.querySelectorAll("#schoolName, #schoolType, #schoolCountry, #schoolEmail")];
+                const invalid = fields.find((field) => !field.checkValidity());
+                if (invalid) invalid.reportValidity();
+                else {
+                  setError("");
+                  setStep(2);
+                }
+              }}>Continue to levels & subjects →</button>
+            </div>}
+            {step === 2 && <div className="form-step">
+              <label className="field-label">Which educational levels does your school offer?</label>
+              <p className="field-hint">Select your levels, then choose subjects separately for each grade.</p>
+              <div className="educational-level-options">
+                {curriculumLevels.map((level) => {
+                  const checked = setupLevelCodes.includes(level.code);
+                  return <label className={`educational-level-option ${checked ? "selected" : ""}`} key={level.code}>
+                    <input type="checkbox" checked={checked} onChange={() => toggleSetupLevel(level.code)} />
+                    <span className="curriculum-check" aria-hidden="true">{checked ? "✓" : ""}</span>
+                    <span className="educational-level-copy"><strong>{level.label}</strong><small>{level.grades[0]} – {level.grades[level.grades.length - 1]}</small></span>
+                  </label>;
+                })}
+              </div>
+              {setupGradeOptions.length > 0 && <>
+                <label className="field-label" htmlFor="setupGrade">Select a grade to choose its subjects</label>
+                <select className="text-input" id="setupGrade" value={setupSelectedGrade} onChange={(event) => setSetupSelectedGrade(event.target.value)}>
+                  {setupGradeOptions.map((grade) => <option key={grade}>{grade}</option>)}
+                </select>
+                <div className="curriculum-grid" aria-label={`${setupSelectedGrade} subjects`}>
+                  {(curriculumByGrade[setupSelectedGrade] || []).map((subject) => {
+                    const checked = (setupSubjectsByGrade[setupSelectedGrade] || []).includes(subject);
+                    return <label className={`curriculum-subject ${checked ? "selected" : ""}`} key={subject}>
+                      <input type="checkbox" checked={checked} onChange={() => toggleSetupSubject(subject)} />
+                      <span className="curriculum-check" aria-hidden="true">{checked ? "✓" : ""}</span>
+                      <span>{subject}</span>
+                    </label>;
+                  })}
+                </div>
+                <p className="field-hint">{setupSelectedSubjectCount} subject{setupSelectedSubjectCount === 1 ? "" : "s"} selected across your grades. You can refine this later.</p>
+              </>}
+              {error && <p className="form-error" role="alert">{error}</p>}
+              <div className="form-row-actions">
+                <button className="button button-secondary" type="button" onClick={() => { setError(""); setStep(1); }}>← Back</button>
+                <button className="button button-primary" type="button" onClick={continueToPortalAccess}>Continue to portal access →</button>
+              </div>
+            </div>}
+            {step === 3 && <div className="form-step">
+              <label className="field-label">How should your community access the school?</label>
+              <p className="field-hint">Choose how your school community will join. You can update this later.</p>
+              {accessOptions.map(([value, title, description]) => <label className="access-option" key={value}>
+                <input type="radio" name="accessMode" checked={form.accessMode === value} onChange={() => updateForm("accessMode", value)} />
+                <span className="access-option-icon">{value === "invite" ? "✉" : value === "school-code" ? "⌗" : "◎"}</span>
+                <span><strong>{title}</strong><small>{description}</small></span>
+                <span className="radio-mark" />
+              </label>)}
+              {error && <p className="form-error" role="alert">{error}</p>}
+              <div className="form-row-actions">
+                <button className="button button-secondary" type="button" onClick={() => { setError(""); setStep(2); }}>← Back</button>
+                <button className="button button-primary" type="submit" disabled={saving}>{saving ? "Creating…" : "Create school profile →"}</button>
+              </div>
+              <p className="privacy-note">Your school profile, levels, and subjects are saved together.</p>
+            </div>}
+          </form>
+        </section>
+      </div>}
       {toast && <div className="toast show" role="status">{toast}</div>}
       <ExplainerVideo open={explainerOpen} onClose={() => setExplainerOpen(false)} />
     </div>

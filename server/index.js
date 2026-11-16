@@ -76,6 +76,7 @@ import {
   normalizeAcademicSessionInput,
   normalizeAcademicTermDates,
   normalizeProfilePhotoData,
+  normalizeSchoolCurriculumInput,
   normalizeSchoolInput,
   normalizeSchoolLogoData,
   normalizeSignatureData,
@@ -281,12 +282,15 @@ app.get("/api/schools", requireAuth, async (request, response) => {
 
 app.post("/api/schools", requireAuth, async (request, response) => {
   const normalized = normalizeSchoolInput(request.body);
-  if (!normalized) {
-    return response.status(400).json({ error: "Enter a valid school name, type, country, email, and access option." });
+  const curriculum = normalizeSchoolCurriculumInput(request.body);
+  if (!normalized || !curriculum) {
+    return response.status(400).json({
+      error: "Enter valid school details, choose at least one educational level, and select at least one subject for a grade.",
+    });
   }
 
   try {
-    const school = await createSchool(normalized, request.auth.userId);
+    const school = await createSchool({ ...normalized, ...curriculum }, request.auth.userId);
     return response.status(201).json({ school });
   } catch (error) {
     return handleDatabaseError(error, response);

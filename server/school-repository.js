@@ -910,6 +910,14 @@ export async function createSchool(school, userId) {
   const sql = await getReadyDatabase();
   const id = randomUUID();
   const slug = createSchoolSlug(school.name, id);
+  const selectedLevelCodes = new Set(school.levelCodes);
+  const levelRows = curriculumLevels.map((level) => ({
+    level_code: level.code,
+    label: level.label,
+    active: selectedLevelCodes.has(level.code),
+  }));
+  const subjectRows = Object.entries(school.subjectsByGrade)
+    .flatMap(([grade, subjects]) => subjects.map((subject_name) => ({ grade, subject_name })));
   const [[created]] = await sql.transaction([
     sql`
       INSERT INTO schools (id, name, school_type, country, email, access_mode, slug)
@@ -928,6 +936,18 @@ export async function createSchool(school, userId) {
     sql`
       INSERT INTO school_members (school_id, user_id, role, email)
       VALUES (${id}, ${userId}, 'admin', ${school.email})
+    `,
+    sql`
+      INSERT INTO school_educational_levels (school_id, level_code, label, active)
+      SELECT ${id}, item.level_code, item.label, item.active
+      FROM jsonb_to_recordset(${JSON.stringify(levelRows)}::jsonb)
+        AS item(level_code TEXT, label TEXT, active BOOLEAN)
+    `,
+    sql`
+      INSERT INTO school_subjects (school_id, grade, subject_name)
+      SELECT ${id}, item.grade, item.subject_name
+      FROM jsonb_to_recordset(${JSON.stringify(subjectRows)}::jsonb)
+        AS item(grade TEXT, subject_name TEXT)
     `,
   ]);
   return { ...created, role: "admin", portalUrl: `/school/${slug}` };
