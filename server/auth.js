@@ -1,4 +1,5 @@
 import { createRemoteJWKSet, jwtVerify } from "jose";
+import { getTeacherSession } from "./school-repository.js";
 
 const invalidTokenCodes = new Set([
   "ERR_JOSE_ALG_NOT_ALLOWED",
@@ -15,17 +16,37 @@ let keySetUrl;
 let keySet;
 
 export async function requireAuth(request, response, next) {
+  const authorization = request.get("Authorization") || "";
+  const match = /^Bearer ([^\s]+)$/i.exec(authorization);
+  if (!match) {
+    return response.status(401).json({ error: "Sign in to continue." });
+  }
+
+  if (match[1].startsWith("staff_")) {
+    try {
+      const session = await getTeacherSession(match[1]);
+      if (!session || typeof session.userId !== "string" || typeof session.email !== "string") {
+        return response.status(401).json({ error: "Your teacher session is invalid or expired. Please sign in again." });
+      }
+      request.auth = {
+        userId: session.userId,
+        email: session.email.trim().toLowerCase(),
+        name: session.teacherName || "Teacher",
+        authType: "teacher-session",
+        sessionToken: match[1],
+      };
+      return next();
+    } catch (error) {
+      console.error("Teacher session verification is unavailable:", error?.code || error?.name);
+      return response.status(503).json({ error: "We couldn’t verify your teacher session. Please try again." });
+    }
+  }
+
   const baseUrl = process.env.NEON_AUTH_BASE_URL;
   if (!baseUrl) {
     return response.status(503).json({
       error: "Authentication is not configured on the API.",
     });
-  }
-
-  const authorization = request.get("Authorization") || "";
-  const match = /^Bearer ([^\s]+)$/i.exec(authorization);
-  if (!match) {
-    return response.status(401).json({ error: "Sign in to continue." });
   }
 
   let authUrl;
@@ -71,6 +92,7 @@ export async function requireAuth(request, response, next) {
   request.auth = {
     userId: payload.sub,
     email: payload.email.trim().toLowerCase(),
+    authType: "neon",
   };
   return next();
 }

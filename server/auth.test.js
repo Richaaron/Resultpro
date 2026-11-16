@@ -84,7 +84,11 @@ test("verifies the token and exposes only its signed identity", async () => {
   await requireAuth(request, response, () => { nextCalled = true; });
 
   assert.equal(nextCalled, true);
-  assert.deepEqual(request.auth, { userId: "user-123", email: "member@example.test" });
+  assert.deepEqual(request.auth, {
+    userId: "user-123",
+    email: "member@example.test",
+    authType: "neon",
+  });
 });
 
 test("rejects an otherwise valid token until the email is verified", async () => {

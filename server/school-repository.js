@@ -228,10 +228,11 @@ async function getReadyDatabase() {
             teacher_code VARCHAR(24) NOT NULL,
             email VARCHAR(254) NOT NULL,
             teacher_name VARCHAR(120) NOT NULL,
+            user_id TEXT,
             password_salt CHAR(32),
             password_hash CHAR(128),
             created_by TEXT NOT NULL,
-            expires_at TIMESTAMPTZ NOT NULL,
+            expires_at TIMESTAMPTZ,
             failed_attempts INTEGER NOT NULL DEFAULT 0,
             locked_until TIMESTAMPTZ,
             setup_verified_at TIMESTAMPTZ,
@@ -243,8 +244,83 @@ async function getReadyDatabase() {
           )
         `,
         database.sql`
+          ALTER TABLE school_teacher_setup_credentials
+          ADD COLUMN IF NOT EXISTS user_id TEXT
+        `,
+        database.sql`
+          ALTER TABLE school_teacher_setup_credentials
+          ALTER COLUMN expires_at DROP NOT NULL
+        `,
+        database.sql`
           CREATE UNIQUE INDEX IF NOT EXISTS school_teacher_setup_credentials_code_idx
           ON school_teacher_setup_credentials (teacher_code)
+        `,
+        database.sql`
+          CREATE TABLE IF NOT EXISTS school_teacher_sessions (
+            token_hash CHAR(64) PRIMARY KEY,
+            school_id UUID NOT NULL,
+            user_id TEXT NOT NULL,
+            expires_at TIMESTAMPTZ NOT NULL,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            last_used_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            revoked_at TIMESTAMPTZ,
+            FOREIGN KEY (school_id, user_id)
+              REFERENCES school_members(school_id, user_id) ON DELETE CASCADE
+          )
+        `,
+        database.sql`
+          CREATE INDEX IF NOT EXISTS school_teacher_sessions_user_idx
+          ON school_teacher_sessions (school_id, user_id, expires_at)
+          WHERE revoked_at IS NULL
+        `,
+        database.sql`
+          INSERT INTO school_members (school_id, user_id, role, email, display_name, teacher_code)
+          SELECT c.school_id, 'staff:' || c.teacher_code, 'teacher',
+                 c.email, c.teacher_name, c.teacher_code
+          FROM school_teacher_setup_credentials c
+          WHERE c.user_id IS NULL
+            AND c.activated_at IS NULL
+            AND c.password_hash IS NOT NULL
+            AND NOT EXISTS (
+              SELECT 1 FROM school_members m
+              WHERE m.school_id = c.school_id
+                AND (m.teacher_code = c.teacher_code OR LOWER(m.email) = LOWER(c.email))
+            )
+          ON CONFLICT (school_id, user_id) DO NOTHING
+        `,
+        database.sql`
+          UPDATE school_members m
+          SET teacher_code = c.teacher_code, display_name = c.teacher_name
+          FROM school_teacher_setup_credentials c
+          WHERE m.school_id = c.school_id
+            AND LOWER(m.email) = LOWER(c.email)
+            AND m.role = 'teacher'
+            AND c.user_id IS NULL
+            AND c.activated_at IS NULL
+            AND c.password_hash IS NOT NULL
+            AND NOT EXISTS (
+              SELECT 1 FROM school_members other
+              WHERE other.school_id = m.school_id
+                AND other.teacher_code = c.teacher_code
+                AND other.user_id <> m.user_id
+            )
+        `,
+        database.sql`
+          UPDATE school_teacher_setup_credentials c
+          SET user_id = m.user_id,
+              activated_at = COALESCE(c.activated_at, NOW()),
+              expires_at = NULL,
+              setup_verified_at = NULL
+          FROM school_members m
+          WHERE m.school_id = c.school_id
+            AND m.teacher_code = c.teacher_code
+            AND m.role = 'teacher'
+            AND c.user_id IS NULL
+        `,
+        database.sql`
+          UPDATE school_teacher_setup_credentials
+          SET activated_at = NOW(), expires_at = NULL, setup_verified_at = NULL
+          WHERE activated_at IS NULL AND password_hash IS NOT NULL AND user_id IS NOT NULL
         `,
         database.sql`
           CREATE TABLE IF NOT EXISTS school_subjects (
@@ -2334,7 +2410,7 @@ export async function listSchoolTeachers(schoolId) {
   `;
 }
 
-export async function createTeacherSetupCredential({ schoolId, email, teacherName, userId }) {
+export async function createTeacherCredentials({ schoolId, email, teacherName, userId }) {
   const sql = await getReadyDatabase();
   const [school] = await sql`
     SELECT name AS "schoolName"
@@ -2344,64 +2420,112 @@ export async function createTeacherSetupCredential({ schoolId, email, teacherNam
   if (!school) return null;
 
   const [existingMember] = await sql`
-    SELECT 1
+    SELECT user_id AS "userId", role, teacher_code AS "teacherCode"
     FROM school_members
     WHERE school_id = ${schoolId} AND LOWER(email) = LOWER(${email})
   `;
-  if (existingMember) return null;
+  if (existingMember && existingMember.role !== "teacher") return null;
 
   const setupPassword = randomBytes(18).toString("base64url");
   const passwordSalt = randomBytes(16).toString("hex");
   const passwordHash = scryptSync(setupPassword, passwordSalt, 64).toString("hex");
   const [existingCredential] = await sql`
-    SELECT teacher_code AS "teacherCode", credential_version AS "credentialVersion"
+    SELECT teacher_code AS "teacherCode", user_id AS "userId",
+           credential_version AS "credentialVersion"
     FROM school_teacher_setup_credentials
     WHERE school_id = ${schoolId}
       AND LOWER(email) = LOWER(${email})
-      AND activated_at IS NULL
   `;
 
-  let credential;
-  if (existingCredential) {
-    [credential] = await sql`
-      UPDATE school_teacher_setup_credentials
-      SET teacher_name = ${teacherName},
-          password_salt = ${passwordSalt},
-          password_hash = ${passwordHash},
-          created_by = ${userId},
-          expires_at = NOW() + INTERVAL '30 days',
+  let teacherCode = existingCredential?.teacherCode || existingMember?.teacherCode || "";
+  const memberUserId = existingMember?.userId || existingCredential?.userId || `staff:${randomUUID()}`;
+  if (teacherCode && !existingCredential) {
+    const [codeInUse] = await sql`
+      SELECT EXISTS (
+        SELECT 1 FROM school_teacher_setup_credentials
+        WHERE teacher_code = ${teacherCode}
+        UNION ALL
+        SELECT 1 FROM school_members
+        WHERE teacher_code = ${teacherCode}
+          AND NOT (school_id = ${schoolId} AND user_id = ${memberUserId})
+        UNION ALL
+        SELECT 1 FROM school_invitations WHERE teacher_code = ${teacherCode}
+      ) AS used
+    `;
+    if (codeInUse?.used) teacherCode = "";
+  }
+
+  if (!teacherCode) {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const candidate = `TCH-${randomBytes(8).toString("hex").toUpperCase()}`;
+      const [codeInUse] = await sql`
+        SELECT EXISTS (
+          SELECT 1 FROM school_teacher_setup_credentials WHERE teacher_code = ${candidate}
+          UNION ALL
+          SELECT 1 FROM school_members WHERE teacher_code = ${candidate}
+          UNION ALL
+          SELECT 1 FROM school_invitations WHERE teacher_code = ${candidate}
+        ) AS used
+      `;
+      if (!codeInUse?.used) {
+        teacherCode = candidate;
+        break;
+      }
+    }
+  }
+  if (!teacherCode) return null;
+
+  const expectedVersion = existingCredential?.credentialVersion ?? -1;
+  const [credential] = await sql`
+    WITH saved_credential AS (
+      INSERT INTO school_teacher_setup_credentials
+        (school_id, teacher_code, email, teacher_name, user_id, password_salt,
+         password_hash, created_by, expires_at, activated_at, failed_attempts,
+         locked_until, setup_verified_at, credential_version)
+      VALUES (
+        ${schoolId}, ${teacherCode}, ${email}, ${teacherName}, ${memberUserId},
+        ${passwordSalt}, ${passwordHash}, ${userId}, NULL, NOW(), 0, NULL, NULL, 0
+      )
+      ON CONFLICT (school_id, email) DO UPDATE
+      SET teacher_code = EXCLUDED.teacher_code,
+          teacher_name = EXCLUDED.teacher_name,
+          user_id = EXCLUDED.user_id,
+          password_salt = EXCLUDED.password_salt,
+          password_hash = EXCLUDED.password_hash,
+          created_by = EXCLUDED.created_by,
+          expires_at = NULL,
+          activated_at = NOW(),
           failed_attempts = 0,
           locked_until = NULL,
           setup_verified_at = NULL,
-          credential_version = credential_version + 1,
+          credential_version = school_teacher_setup_credentials.credential_version + 1,
           created_at = NOW()
-      WHERE school_id = ${schoolId}
-        AND teacher_code = ${existingCredential.teacherCode}
-        AND credential_version = ${existingCredential.credentialVersion}
-        AND activated_at IS NULL
-      RETURNING teacher_code AS "teacherCode", email, teacher_name AS "teacherName"
-    `;
-  } else {
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      const teacherCode = `TCH-${randomBytes(8).toString("hex").toUpperCase()}`;
-      [credential] = await sql`
-        INSERT INTO school_teacher_setup_credentials
-          (school_id, teacher_code, email, teacher_name, password_salt,
-           password_hash, created_by, expires_at)
-        SELECT
-          ${schoolId}, ${teacherCode}, ${email}, ${teacherName}, ${passwordSalt},
-          ${passwordHash}, ${userId}, NOW() + INTERVAL '30 days'
-        WHERE NOT EXISTS (
-          SELECT 1 FROM school_members WHERE teacher_code = ${teacherCode}
-          UNION ALL
-          SELECT 1 FROM school_invitations WHERE teacher_code = ${teacherCode}
-        )
-        ON CONFLICT DO NOTHING
-        RETURNING teacher_code AS "teacherCode", email, teacher_name AS "teacherName"
-      `;
-      if (credential) break;
-    }
-  }
+      WHERE school_teacher_setup_credentials.credential_version = ${expectedVersion}
+      RETURNING school_id, teacher_code, email, teacher_name, user_id
+    ),
+    saved_member AS (
+      INSERT INTO school_members (school_id, user_id, role, email, display_name, teacher_code)
+      SELECT school_id, user_id, 'teacher', email, teacher_name, teacher_code
+      FROM saved_credential
+      ON CONFLICT (school_id, user_id) DO UPDATE
+      SET role = 'teacher', email = EXCLUDED.email,
+          display_name = EXCLUDED.display_name, teacher_code = EXCLUDED.teacher_code
+      RETURNING school_id, user_id, email, display_name, teacher_code
+    ),
+    revoked_sessions AS (
+      UPDATE school_teacher_sessions s
+      SET revoked_at = NOW()
+      FROM saved_member m
+      WHERE s.school_id = m.school_id
+        AND s.user_id = m.user_id
+        AND s.revoked_at IS NULL
+      RETURNING s.token_hash
+    )
+    SELECT c.teacher_code AS "teacherCode", c.email,
+           c.teacher_name AS "teacherName", c.user_id AS "userId"
+    FROM saved_credential c
+    JOIN saved_member m ON m.school_id = c.school_id AND m.user_id = c.user_id
+  `;
   if (!credential) return null;
 
   await sql`
@@ -2416,8 +2540,19 @@ export async function createTeacherSetupCredential({ schoolId, email, teacherNam
   return { ...credential, ...school, setupPassword };
 }
 
-export async function verifyTeacherSetupCredential(teacherCode, setupPassword) {
+export async function authenticateTeacherCredentials(teacherCode, password) {
   const sql = await getReadyDatabase();
+  const [storedCredential] = await sql`
+    SELECT school_id AS "schoolId", email,
+           password_hash AS "passwordHash", credential_version AS "credentialVersion"
+    FROM school_teacher_setup_credentials
+    WHERE teacher_code = ${teacherCode}
+  `;
+  if (!storedCredential || typeof storedCredential.passwordHash !== "string") {
+    const teacher = await getTeacherLoginDetails(teacherCode);
+    return teacher?.email ? { legacyEmail: teacher.email } : null;
+  }
+
   const [credential] = await sql`
     UPDATE school_teacher_setup_credentials
     SET failed_attempts = CASE
@@ -2429,62 +2564,91 @@ export async function verifyTeacherSetupCredential(teacherCode, setupPassword) {
           ELSE locked_until
         END
     WHERE teacher_code = ${teacherCode}
-      AND activated_at IS NULL
-      AND expires_at > NOW()
+      AND credential_version = ${storedCredential.credentialVersion}
+      AND activated_at IS NOT NULL
       AND (locked_until IS NULL OR locked_until <= NOW())
       AND failed_attempts < 10
     RETURNING school_id AS "schoolId", email,
               teacher_name AS "teacherName", password_salt AS "passwordSalt",
               password_hash AS "passwordHash",
-              credential_version AS "credentialVersion"
+              credential_version AS "credentialVersion",
+              user_id AS "userId"
   `;
   if (!credential || typeof credential.passwordHash !== "string"
     || typeof credential.passwordSalt !== "string") return null;
 
   const storedHash = Buffer.from(credential.passwordHash, "hex");
   if (storedHash.length !== 64) return null;
-  const suppliedHash = scryptSync(setupPassword, credential.passwordSalt, storedHash.length);
+  const suppliedHash = scryptSync(password, credential.passwordSalt, storedHash.length);
   if (storedHash.length !== suppliedHash.length || !timingSafeEqual(storedHash, suppliedHash)) return null;
   const [verified] = await sql`
     UPDATE school_teacher_setup_credentials
-    SET failed_attempts = 0, locked_until = NULL, setup_verified_at = NOW()
+    SET failed_attempts = 0, locked_until = NULL
     WHERE school_id = ${credential.schoolId}
       AND teacher_code = ${teacherCode}
       AND credential_version = ${credential.credentialVersion}
-      AND activated_at IS NULL
-    RETURNING teacher_code
+      AND activated_at IS NOT NULL
+    RETURNING user_id AS "userId"
   `;
-  if (!verified) return null;
-  return { email: credential.email, teacherName: credential.teacherName };
+  if (!verified?.userId) return null;
+
+  const token = `staff_${randomBytes(32).toString("base64url")}`;
+  const tokenHash = createHash("sha256").update(token).digest("hex");
+  const [session] = await sql`
+    INSERT INTO school_teacher_sessions (token_hash, school_id, user_id, expires_at)
+    SELECT ${tokenHash}, m.school_id, m.user_id, NOW() + INTERVAL '7 days'
+    FROM school_members m
+    JOIN school_teacher_setup_credentials c
+      ON c.school_id = m.school_id AND c.teacher_code = m.teacher_code
+    WHERE m.school_id = ${credential.schoolId}
+      AND m.user_id = ${verified.userId}
+      AND m.role = 'teacher'
+      AND c.teacher_code = ${teacherCode}
+      AND c.credential_version = ${credential.credentialVersion}
+      AND c.password_hash = ${credential.passwordHash}
+      AND c.activated_at IS NOT NULL
+    RETURNING expires_at AS "expiresAt"
+  `;
+  if (!session) return null;
+  return {
+    token,
+    user: {
+      id: verified.userId,
+      email: credential.email,
+      name: credential.teacherName,
+      emailVerified: true,
+    },
+  };
 }
 
-export async function completeTeacherSetupCredential({ teacherCode, email, userId }) {
+export async function getTeacherSession(token) {
   const sql = await getReadyDatabase();
-  const [membership] = await sql`
-    WITH claimed AS (
-      UPDATE school_teacher_setup_credentials c
-      SET activated_at = NOW(), password_salt = NULL, password_hash = NULL,
-          setup_verified_at = NULL
-      WHERE c.teacher_code = ${teacherCode}
-        AND LOWER(c.email) = LOWER(${email})
-        AND c.activated_at IS NULL
-        AND c.expires_at > NOW()
-        AND c.setup_verified_at > NOW() - INTERVAL '2 hours'
-        AND NOT EXISTS (
-          SELECT 1 FROM school_members m
-          WHERE m.school_id = c.school_id
-            AND (m.user_id = ${userId} OR LOWER(m.email) = LOWER(c.email))
-        )
-      RETURNING c.school_id, c.email, c.teacher_name, c.teacher_code
-    )
-    INSERT INTO school_members
-      (school_id, user_id, role, email, display_name, teacher_code)
-    SELECT school_id, ${userId}, 'teacher', email, teacher_name, teacher_code
-    FROM claimed
-    RETURNING school_id AS "schoolId", user_id AS "userId",
-              email, display_name AS "teacherName", teacher_code AS "teacherCode"
+  const tokenHash = createHash("sha256").update(token).digest("hex");
+  const [session] = await sql`
+    UPDATE school_teacher_sessions s
+    SET last_used_at = NOW()
+    FROM school_members m
+    WHERE s.token_hash = ${tokenHash}
+      AND s.school_id = m.school_id
+      AND s.user_id = m.user_id
+      AND m.role = 'teacher'
+      AND s.revoked_at IS NULL
+      AND s.expires_at > NOW()
+    RETURNING m.user_id AS "userId", m.email, m.display_name AS "teacherName"
   `;
-  return membership ?? null;
+  return session ?? null;
+}
+
+export async function revokeTeacherSession(token) {
+  const sql = await getReadyDatabase();
+  const tokenHash = createHash("sha256").update(token).digest("hex");
+  const [revoked] = await sql`
+    UPDATE school_teacher_sessions
+    SET revoked_at = NOW()
+    WHERE token_hash = ${tokenHash} AND revoked_at IS NULL
+    RETURNING token_hash
+  `;
+  return Boolean(revoked);
 }
 
 export async function getTeacherLoginDetails(teacherCode) {

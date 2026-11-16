@@ -85,18 +85,13 @@ function AuthIllustration() {
   );
 }
 
-export default function AuthScreen({ authClient, notice, initialEmail = "", initialMode = "sign-in", verificationRequired = false, onAuthenticated, onWatchVideo, onDemo, resolveTeacherLogin, lookupTeacherSetupCredential, completeTeacherSetup, resetToken = "" }) {
+export default function AuthScreen({ authClient, notice, initialEmail = "", initialMode = "sign-in", verificationRequired = false, onAuthenticated, onTeacherAuthenticated, onLoginTeacher, onWatchVideo, onDemo, resetToken = "" }) {
   const [mode, setMode] = useState(initialMode);
-  const [teacherSetupMode, setTeacherSetupMode] = useState(false);
   const [recovery, setRecovery] = useState(resetToken ? "reset" : "");
   const [name, setName] = useState("");
   const [schoolName, setSchoolName] = useState("");
   const [pendingSchoolSetup, setPendingSchoolSetup] = useState(false);
   const [pendingWelcomeEmail, setPendingWelcomeEmail] = useState("");
-  const [teacherCode, setTeacherCode] = useState("");
-  const [teacherSetupPassword, setTeacherSetupPassword] = useState("");
-  const [pendingTeacherCode, setPendingTeacherCode] = useState("");
-  const [pendingTeacherEmail, setPendingTeacherEmail] = useState("");
   const [email, setEmail] = useState(initialEmail);
   const [password, setPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
@@ -110,82 +105,38 @@ export default function AuthScreen({ authClient, notice, initialEmail = "", init
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const hasInvitation = new URLSearchParams(window.location.hash.slice(1)).has("invite");
-  const showDemoEntry = Boolean(onDemo && !hasInvitation && !verifyingEmail && !recovery && !teacherSetupMode);
-
-  async function getLoginEmail(identifier) {
-    const teacherCode = identifier.trim().toUpperCase();
-    if (!teacherCode.startsWith("TCH-")) return identifier.trim();
-    if (!/^TCH-[A-F0-9]{16}$/.test(teacherCode)) throw new Error("Enter a valid teacher ID.");
-    if (!resolveTeacherLogin) throw new Error("Teacher ID sign-in is unavailable. Use your account email instead.");
-    return resolveTeacherLogin(teacherCode);
-  }
-
-  async function activateTeacherAccount(event) {
-    event.preventDefault();
-    setPending(true);
-    setError("");
-    setMessage("");
-    try {
-      if (!lookupTeacherSetupCredential || !completeTeacherSetup) {
-        throw new Error("Teacher account setup is unavailable. Please contact your school administrator.");
-      }
-      const normalizedCode = teacherCode.trim().toUpperCase();
-      const teacher = await lookupTeacherSetupCredential(normalizedCode, teacherSetupPassword);
-      const result = await authClient.signUp.email({
-        name: teacher.teacherName,
-        email: teacher.email,
-        password: teacherSetupPassword,
-      });
-      if (result.error) throw new Error(result.error.message || "Could not create the teacher account.");
-
-      setPendingTeacherCode(normalizedCode);
-      setPendingTeacherEmail(teacher.email);
-      setEmail(teacher.email);
-      setName(teacher.teacherName);
-      setPassword(teacherSetupPassword);
-      setTeacherSetupMode(false);
-      if (result.data?.user?.emailVerified !== true) {
-        setVerifyingEmail(true);
-        setMessage(`Enter the verification code sent to ${teacher.email}. Your generated password will remain your sign-in password.`);
-        return;
-      }
-      await completeTeacherSetup(normalizedCode);
-      setPendingTeacherCode("");
-      await onAuthenticated({ newAccount: true, signInData: result.data });
-    } catch (requestError) {
-      setError(requestError.message || "Could not set up the teacher account. Check the ID and generated password.");
-    } finally {
-      setPending(false);
-    }
-  }
-
-  async function linkExistingTeacherAccount() {
-    setPending(true);
-    setError("");
-    setMessage("");
-    try {
-      if (!lookupTeacherSetupCredential) {
-        throw new Error("Teacher account setup is unavailable. Please contact your school administrator.");
-      }
-      const normalizedCode = teacherCode.trim().toUpperCase();
-      const teacher = await lookupTeacherSetupCredential(normalizedCode, teacherSetupPassword);
-      setPendingTeacherCode(normalizedCode);
-      setPendingTeacherEmail(teacher.email);
-      setEmail(teacher.email);
-      setPassword("");
-      setTeacherSetupPassword("");
-      setTeacherSetupMode(false);
-      setMode("sign-in");
-      setMessage(`Teacher credentials verified. Sign in to your existing Aster account for ${teacher.email} to link your teacher profile.`);
-    } catch (requestError) {
-      setError(requestError.message || "Could not verify the teacher credentials.");
-    } finally {
-      setPending(false);
-    }
-  }
+  const showDemoEntry = Boolean(onDemo && !hasInvitation && !verifyingEmail && !recovery);
 
   async function submit(event) {
     event.preventDefault();
+    const teacherCode = email.trim().toUpperCase();
+    if (mode === "sign-in" && teacherCode.startsWith("TCH-")) {
+      setPending(true);
+      setError("");
+      setMessage("");
+      try {
+        if (!onLoginTeacher) throw new Error("Teacher sign-in is unavailable. Please contact your school administrator.");
+        const result = await onLoginTeacher(teacherCode, password);
+        if (result?.token && result?.user) {
+          await onTeacherAuthenticated(result);
+          return;
+        }
+        if (result?.legacyEmail) {
+          if (!authClient) throw new Error("This older teacher account needs email sign-in, but authentication is not configured.");
+          const legacyResult = await authClient.signIn.email({ email: result.legacyEmail, password });
+          if (legacyResult.error) throw new Error(legacyResult.error.message || "Authentication failed.");
+          await onAuthenticated({ signInData: legacyResult.data });
+          return;
+        }
+        throw new Error("That teacher ID or password is not correct.");
+      } catch (requestError) {
+        setError(requestError.message || "We couldn’t sign you in. Check your teacher ID and password.");
+      } finally {
+        setPending(false);
+      }
+      return;
+    }
+
     const registeringAccount = mode === "sign-up" && !hasInvitation;
     const schoolNameForSetup = schoolName.trim();
     if (registeringAccount && schoolNameForSetup && schoolNameForSetup.length < 2) {
@@ -204,24 +155,16 @@ export default function AuthScreen({ authClient, notice, initialEmail = "", init
     setError("");
     setMessage("");
     try {
+      if (!authClient) {
+        throw new Error("Email sign-in and school registration are unavailable because Neon Auth is not configured.");
+      }
       let schoolNameSaved = true;
-      const loginEmail = mode === "sign-up"
-        ? email.trim()
-        : pendingTeacherCode && email.trim().toLowerCase() === pendingTeacherEmail.toLowerCase()
-          ? pendingTeacherEmail
-          : await getLoginEmail(email);
+      const loginEmail = email.trim();
       const result = mode === "sign-up"
         ? await authClient.signUp.email({ name: name.trim(), email: loginEmail, password })
         : await authClient.signIn.email({ email: loginEmail, password });
       if (result.error) throw new Error(result.error.message || "Authentication failed.");
 
-      const finishingTeacherSetup = Boolean(
-        pendingTeacherCode && loginEmail.toLowerCase() === pendingTeacherEmail.toLowerCase(),
-      );
-      if (finishingTeacherSetup) {
-        await completeTeacherSetup(pendingTeacherCode);
-        setPendingTeacherCode("");
-      }
       if (registeringAccount) setPendingSchoolSetup(Boolean(schoolNameForSetup));
       if (registeringAccount) setPendingWelcomeEmail(email.trim().toLowerCase());
       if (schoolNameForSetup) {
@@ -240,7 +183,7 @@ export default function AuthScreen({ authClient, notice, initialEmail = "", init
       const newAccount = registeringAccount || pendingWelcomeEmail === email.trim().toLowerCase();
       await onAuthenticated({
         schoolName: registeringAccount || pendingSchoolSetup ? schoolNameForSetup : "",
-        newAccount: newAccount || finishingTeacherSetup,
+        newAccount,
         signInData: result.data,
       });
     } catch (requestError) {
@@ -260,14 +203,9 @@ export default function AuthScreen({ authClient, notice, initialEmail = "", init
       if (result.error) throw new Error(result.error.message || "That verification code could not be accepted.");
       const session = await authClient.getSession();
       if (session.data?.session?.user?.emailVerified) {
-        const completedTeacherSetup = Boolean(pendingTeacherCode);
-        if (pendingTeacherCode) {
-          await completeTeacherSetup(pendingTeacherCode);
-          setPendingTeacherCode("");
-        }
         await onAuthenticated({
           schoolName: pendingSchoolSetup && !hasInvitation ? schoolName.trim() : "",
-          newAccount: completedTeacherSetup || pendingWelcomeEmail === email.trim().toLowerCase(),
+          newAccount: pendingWelcomeEmail === email.trim().toLowerCase(),
           signInData: session.data?.session,
         });
       } else {
@@ -307,9 +245,12 @@ export default function AuthScreen({ authClient, notice, initialEmail = "", init
     setError("");
     setMessage("");
     try {
-      const resetEmail = await getLoginEmail(email);
+      if (/^TCH-/i.test(email.trim())) {
+        throw new Error("Teacher passwords are managed by the school administrator. Ask them to reissue your staff password.");
+      }
+      if (!authClient) throw new Error("Password reset is unavailable because Neon Auth is not configured.");
       const result = await authClient.requestPasswordReset({
-        email: resetEmail,
+        email: email.trim(),
         redirectTo: window.location.origin,
       });
       if (result.error) throw new Error(result.error.message || "Could not send the reset link.");
@@ -347,20 +288,6 @@ export default function AuthScreen({ authClient, notice, initialEmail = "", init
     }
   }
 
-  if (!authClient) {
-    return (
-      <main className="auth-shell">
-        <AuthIllustration />
-        <section className="auth-card tilt-3d">
-          <a className="brand auth-brand" href="/" aria-label="Aster home"><AsterLogoMark /><span className="brand-name">aster<span>.</span></span></a>
-          <h1>Authentication setup needed</h1>
-          <p className="auth-description">Set VITE_NEON_AUTH_URL to your Neon Auth Base URL to continue.</p>
-          {showDemoEntry && <AuthDemoPrompt onDemo={onDemo} />}
-        </section>
-      </main>
-    );
-  }
-
   return (
     <main className="auth-shell">
       <AuthIllustration />
@@ -368,22 +295,21 @@ export default function AuthScreen({ authClient, notice, initialEmail = "", init
         <a className="brand auth-brand" href="/" aria-label="Aster home"><AsterLogoMark /><span className="brand-name">aster<span>.</span></span></a>
         {hasInvitation && <p className="auth-invitation">You’ve been invited to a school. Use the email address that received the invitation.</p>}
         <p className="auth-kicker">YOUR SCHOOL, IN FOCUS</p>
-        <h1>{verifyingEmail ? "Verify your email" : teacherSetupMode ? "Set up your teacher account" : recovery === "reset" ? "Choose a new password" : recovery === "request" ? "Reset your password" : mode === "sign-up" ? "Create your Aster account" : "Welcome back"}</h1>
+        <h1>{verifyingEmail ? "Verify your email" : recovery === "reset" ? "Choose a new password" : recovery === "request" ? "Reset your password" : mode === "sign-up" ? "Create your Aster account" : "Welcome back"}</h1>
         <p className="auth-description">
           {verifyingEmail
             ? `Enter the verification code sent to ${email}.`
-            : teacherSetupMode
-              ? "Enter the teacher ID and generated password provided by your school administrator."
-              : recovery === "reset"
+            : recovery === "reset"
               ? "Set a new password for your Aster account to regain access."
               : recovery === "request"
-                ? "Enter your account email or teacher ID. We’ll send a reset link to the address on file."
+                ? "For a teacher ID, ask the school administrator to reissue your permanent password. Aster accounts can request an email reset link."
                 : mode === "sign-up"
                   ? hasInvitation
                     ? "Create your account with the email that received your school invitation, then activate your access with a private password."
                     : "Create your account with your email and a private password; school setup is optional. After email verification, we’ll send your account reference and sign-in instructions."
-                  : "Sign in with your email or teacher ID and password. New teachers first create an account with their generated credentials and verify their email."}
+                  : "Sign in with your email, or use the permanent teacher ID and password assigned by your school administrator."}
         </p>
+        {!authClient && <p className="auth-message" role="status">Email sign-in and school registration are unavailable. Teachers can still sign in with their assigned ID and password.</p>}
         {notice && <p className="auth-message" role="status">{notice}</p>}
         {verifyingEmail ? (
           <form className="auth-form" onSubmit={verifyEmail}>
@@ -418,29 +344,13 @@ export default function AuthScreen({ authClient, notice, initialEmail = "", init
             <button className="button button-primary auth-submit" type="submit" disabled={pending}>{pending ? "Sending…" : "Send reset link"}</button>
             <button className="auth-text-button" type="button" onClick={() => { setRecovery(""); setError(""); setMessage(""); }}>Back to sign in</button>
           </form>
-        ) : teacherSetupMode ? (
-          <form className="auth-form" onSubmit={activateTeacherAccount}>
-            <label className="field-label" htmlFor="teacherSetupId">Teacher ID</label>
-            <input className="text-input" id="teacherSetupId" autoComplete="username" required value={teacherCode} onChange={(event) => setTeacherCode(event.target.value)} placeholder="TCH-…" />
-            <label className="field-label" htmlFor="teacherSetupPassword">Generated password</label>
-            <div className="password-field">
-              <input className="text-input" id="teacherSetupPassword" type={showPassword ? "text" : "password"} autoComplete="new-password" minLength={8} required value={teacherSetupPassword} onChange={(event) => setTeacherSetupPassword(event.target.value)} />
-              <button className="password-toggle" type="button" onClick={() => setShowPassword((revealed) => !revealed)} aria-label={showPassword ? "Hide password" : "Show password"} aria-pressed={showPassword} title={showPassword ? "Hide password" : "Show password"}>
-                <PasswordEye revealed={showPassword} />
-              </button>
-            </div>
-            <p className="field-hint">For a new account, this becomes the teacher’s sign-in password. If you already have an Aster account, use it to verify setup, then sign in with your existing password. Verify the registered email to activate the teacher profile.</p>
-            <button className="button button-primary auth-submit" type="submit" disabled={pending}>{pending ? "Setting up…" : "Create teacher account"}</button>
-            <button className="auth-text-button" type="button" onClick={linkExistingTeacherAccount} disabled={pending}>Already have an Aster account? Sign in to link</button>
-            <button className="auth-text-button" type="button" onClick={() => { setTeacherSetupMode(false); setError(""); setMessage(""); }}>Back to sign in</button>
-          </form>
         ) : (
           <form className="auth-form" onSubmit={submit}>
-            {mode === "sign-up" && !hasInvitation && <>
+            {mode === "sign-up" && authClient && !hasInvitation && <>
               <label className="field-label" htmlFor="authSchoolName">School name (optional)</label>
               <input className="text-input" id="authSchoolName" autoComplete="organization" minLength={2} maxLength={120} value={schoolName} onChange={(event) => setSchoolName(event.target.value)} placeholder="e.g. Harborview Academy" />
             </>}
-            {mode === "sign-up" && <>
+            {mode === "sign-up" && authClient && <>
               <label className="field-label" htmlFor="authName">Your name</label>
               <input className="text-input" id="authName" autoComplete="name" required maxLength={120} value={name} onChange={(event) => setName(event.target.value)} />
             </>}
@@ -457,16 +367,13 @@ export default function AuthScreen({ authClient, notice, initialEmail = "", init
             {mode === "sign-in" && (
               <button className="auth-text-button" type="button" onClick={() => { setRecovery("request"); setError(""); setMessage(""); }}>Forgot your password?</button>
             )}
-            {mode === "sign-in" && (
-              <button className="auth-text-button" type="button" onClick={() => { setTeacherSetupMode(true); setError(""); setMessage(""); }}>First-time teacher? Set up with your ID and password</button>
-            )}
-            <button className="auth-text-button" type="button" onClick={() => { setMode(mode === "sign-up" ? "sign-in" : "sign-up"); setError(""); setMessage(""); }}>{mode === "sign-up" ? "Already have an account? Sign in" : "New to Aster? Create an account"}</button>
+            {authClient && <button className="auth-text-button" type="button" onClick={() => { setMode(mode === "sign-up" ? "sign-in" : "sign-up"); setError(""); setMessage(""); }}>{mode === "sign-up" ? "Already have an account? Sign in" : "New to Aster? Create an account"}</button>}
           </form>
         )}
         {showDemoEntry && <AuthDemoPrompt onDemo={onDemo} />}
         {message && <p className="auth-message" role="status">{message}</p>}
         {error && <p className="form-error" role="alert">{error}</p>}
-        <p className="privacy-note">Your school data is private to your verified account.</p>
+        <p className="privacy-note">Your school data is private to your authorized school account.</p>
         {onWatchVideo && (
           <button className="auth-text-button auth-video-button" type="button" onClick={onWatchVideo}>
             <span aria-hidden="true">▶</span> Watch how Aster works

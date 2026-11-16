@@ -4,9 +4,9 @@ import {
   acceptInvitation,
   claimAccountWelcomeEmail,
   countSchoolStudents,
-  completeTeacherSetupCredential,
   createInvitation,
-  createTeacherSetupCredential,
+  createTeacherCredentials,
+  authenticateTeacherCredentials,
   createSchoolAssessment,
   createSchool,
   createSchoolClass,
@@ -21,8 +21,7 @@ import {
   getSchoolClassAttendanceReport,
   getSchoolGradingSettings,
   getSchoolRole,
-  getTeacherLoginDetails,
-  verifyTeacherSetupCredential,
+  revokeTeacherSession,
   finishAccountWelcomeEmail,
   listSchoolAcademicCalendar,
   createSchoolAcademicSession,
@@ -135,74 +134,50 @@ app.post("/api/auth/teacher-login", async (request, response) => {
   const teacherCode = typeof request.body?.teacherCode === "string"
     ? request.body.teacherCode.trim().toUpperCase()
     : "";
-  if (!/^TCH-[A-F0-9]{16}$/.test(teacherCode)) {
-    return response.status(400).json({ error: "Enter a valid teacher ID." });
+  const password = typeof request.body?.password === "string" ? request.body.password : "";
+  if (!/^TCH-[A-F0-9]{16}$/.test(teacherCode) || password.length < 8 || password.length > 128) {
+    return response.status(400).json({ error: "Enter the teacher ID and password exactly as provided." });
   }
 
   try {
-    const teacher = await getTeacherLoginDetails(teacherCode);
-    if (teacher?.activationRequired) {
-      return response.status(409).json({
-        error: "This teacher ID needs activation first. Ask your school administrator to resend the invitation, then set your password.",
-      });
-    }
-    if (!teacher?.email) {
-      return response.status(401).json({ error: "We couldn’t find an active teacher account for that ID." });
-    }
-    return response.json({ email: teacher.email });
+    const login = await authenticateTeacherCredentials(teacherCode, password);
+    if (!login) return response.status(401).json({ error: "That teacher ID or password is not correct." });
+    return response.json(login);
   } catch (error) {
     return handleDatabaseError(error, response);
   }
 });
 
-app.post("/api/auth/teacher-setup", async (request, response) => {
+app.get("/api/auth/session", requireAuth, (request, response) => {
   response.set("Cache-Control", "no-store");
-  const teacherCode = typeof request.body?.teacherCode === "string"
-    ? request.body.teacherCode.trim().toUpperCase()
-    : "";
-  const setupPassword = typeof request.body?.setupPassword === "string"
-    ? request.body.setupPassword
-    : "";
-  if (!/^TCH-[A-F0-9]{16}$/.test(teacherCode) || setupPassword.length < 8 || setupPassword.length > 128) {
-    return response.status(400).json({ error: "Enter the teacher ID and generated password exactly as provided." });
-  }
-
-  try {
-    const teacher = await verifyTeacherSetupCredential(teacherCode, setupPassword);
-    if (!teacher) return response.status(401).json({ error: "That teacher ID or generated password is not valid or has expired." });
-    return response.json({ teacher });
-  } catch (error) {
-    return handleDatabaseError(error, response);
-  }
-});
-
-app.post("/api/auth/teacher-setup/complete", requireAuth, async (request, response) => {
-  response.set("Cache-Control", "no-store");
-  const teacherCode = typeof request.body?.teacherCode === "string"
-    ? request.body.teacherCode.trim().toUpperCase()
-    : "";
-  if (!/^TCH-[A-F0-9]{16}$/.test(teacherCode)) {
-    return response.status(400).json({ error: "Enter a valid teacher ID." });
-  }
-
-  try {
-    const membership = await completeTeacherSetupCredential({
-      teacherCode,
+  return response.json({
+    user: {
+      id: request.auth.userId,
       email: request.auth.email,
-      userId: request.auth.userId,
-    });
-    if (!membership) {
-      return response.status(409).json({
-        error: "The verified account does not match an active teacher setup credential, or it has already been used.",
-      });
-    }
-    return response.json({ membership });
+      name: request.auth.name || request.auth.email.split("@")[0],
+      emailVerified: true,
+    },
+    authType: request.auth.authType,
+  });
+});
+
+app.post("/api/auth/teacher-logout", requireAuth, async (request, response) => {
+  response.set("Cache-Control", "no-store");
+  if (request.auth.authType !== "teacher-session") {
+    return response.status(400).json({ error: "This is not a teacher session." });
+  }
+  try {
+    await revokeTeacherSession(request.auth.sessionToken);
+    return response.status(204).end();
   } catch (error) {
     return handleDatabaseError(error, response);
   }
 });
 
 app.post("/api/account/welcome-email", requireAuth, async (request, response) => {
+  if (request.auth.authType !== "neon") {
+    return response.status(403).json({ error: "Account welcome emails are available only for Aster accounts." });
+  }
   try {
     const claim = await claimAccountWelcomeEmail(request.auth.userId);
     if (!claim.claimed) {
@@ -228,7 +203,8 @@ app.post("/api/account/welcome-email", requireAuth, async (request, response) =>
 app.get("/api/platform/access", requireAuth, (request, response) => {
   response.set("Cache-Control", "no-store");
   const configuredEmails = process.env.PLATFORM_ADMIN_EMAILS || "";
-  const isPlatformAdmin = isPlatformAdminEmail(request.auth.email, configuredEmails);
+  const isPlatformAdmin = request.auth.authType === "neon"
+    && isPlatformAdminEmail(request.auth.email, configuredEmails);
   if (!isPlatformAdmin) {
     const allowlistConfigured = configuredEmails.split(",").some((email) => email.trim());
     console.warn("[platform-access] denied", { allowlistConfigured });
@@ -237,7 +213,7 @@ app.get("/api/platform/access", requireAuth, (request, response) => {
 });
 
 app.get("/api/platform/overview", requireAuth, async (request, response) => {
-  if (!isPlatformAdminEmail(request.auth.email)) {
+  if (request.auth.authType !== "neon" || !isPlatformAdminEmail(request.auth.email)) {
     return response.status(403).json({ error: "Platform administrator access is required." });
   }
   const directoryQuery = normalizePlatformSchoolDirectoryQuery(request.query);
@@ -254,7 +230,7 @@ app.get("/api/platform/overview", requireAuth, async (request, response) => {
 });
 
 app.put("/api/platform/schools/:schoolId/billing", requireAuth, async (request, response) => {
-  if (!isPlatformAdminEmail(request.auth.email)) {
+  if (request.auth.authType !== "neon" || !isPlatformAdminEmail(request.auth.email)) {
     return response.status(403).json({ error: "Platform administrator access is required." });
   }
   const { schoolId } = request.params;
@@ -274,7 +250,7 @@ app.put("/api/platform/schools/:schoolId/billing", requireAuth, async (request, 
 });
 
 app.patch("/api/platform/schools/:schoolId/status", requireAuth, async (request, response) => {
-  if (!isPlatformAdminEmail(request.auth.email)) {
+  if (request.auth.authType !== "neon" || !isPlatformAdminEmail(request.auth.email)) {
     return response.status(403).json({ error: "Platform administrator access is required." });
   }
   const { schoolId } = request.params;
@@ -1481,7 +1457,7 @@ app.post("/api/schools/:schoolId/teacher-credentials", requireAuth, async (reque
       return response.status(403).json({ error: "Only a school administrator can create teacher credentials." });
     }
 
-    const credential = await createTeacherSetupCredential({
+    const credential = await createTeacherCredentials({
       schoolId,
       email: teacher.email,
       teacherName: teacher.teacherName,
@@ -1489,7 +1465,7 @@ app.post("/api/schools/:schoolId/teacher-credentials", requireAuth, async (reque
     });
     if (!credential) {
       return response.status(409).json({
-        error: "This email already belongs to an active teacher or a credential could not be created.",
+        error: "This email belongs to another school role, or the teacher credentials could not be updated.",
       });
     }
 
@@ -1498,6 +1474,7 @@ app.post("/api/schools/:schoolId/teacher-credentials", requireAuth, async (reque
       teacherEmail: credential.email,
       teacherName: credential.teacherName,
       teacherCode: credential.teacherCode,
+      teacherPassword: credential.setupPassword,
       schoolName: credential.schoolName,
     });
     return response.status(201).json({

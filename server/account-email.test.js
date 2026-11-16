@@ -31,13 +31,14 @@ test("emails new users their sign-in ID and password setup guidance without disc
   assert.doesNotMatch(payload.text, /temporary password|password: \S+/i);
 });
 
-test("notifies the school admin with the teacher code but never emails the generated password", async () => {
+test("emails the teacher credentials to the school admin without adding a sign-in link", async () => {
   let payload;
   const result = await sendTeacherRegistrationEmail({
     adminEmail: "admin@example.com",
     teacherEmail: "teacher@example.com",
     teacherName: "Ada Okafor",
     teacherCode: "TCH-12345678",
+    teacherPassword: "generated-secret-123",
     schoolName: "Harborview Academy",
   }, {
     ...configuration,
@@ -50,11 +51,13 @@ test("notifies the school admin with the teacher code but never emails the gener
   assert.equal(result.status, "sent");
   assert.deepEqual(payload.to, ["admin@example.com"]);
   assert.match(payload.text, /Teacher ID: TCH-12345678/);
+  assert.match(payload.text, /Teacher password: generated-secret-123/);
   assert.match(payload.text, /Teacher sign-in email: teacher@example\.com/);
-  assert.match(payload.text, /password is shown once in Aster/);
   assert.match(payload.text, /private channel/);
+  assert.match(payload.text, /no account signup or email activation is required/);
   assert.doesNotMatch(payload.text, /https?:\/\//i);
   assert.doesNotMatch(payload.html, /href=/i);
+  assert.match(payload.html, /Teacher password: <strong>generated-secret-123<\/strong>/);
 });
 
 test("reports missing email configuration without making a provider request", async () => {
@@ -64,6 +67,7 @@ test("reports missing email configuration without making a provider request", as
     teacherEmail: "teacher@example.com",
     teacherName: "Ada Okafor",
     teacherCode: "TCH-12345678",
+    teacherPassword: "generated-secret-123",
     schoolName: "Harborview Academy",
   }, {
     ...configuration,

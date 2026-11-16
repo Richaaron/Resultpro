@@ -74,16 +74,18 @@ export async function sendTeacherRegistrationEmail({
   teacherEmail,
   teacherName,
   teacherCode,
+  teacherPassword,
   schoolName,
 }, options = {}) {
   const safeTeacherEmail = escapeHtml(teacherEmail);
   const safeTeacherName = escapeHtml(teacherName);
   const safeTeacherCode = escapeHtml(teacherCode);
+  const safeTeacherPassword = escapeHtml(teacherPassword);
   const safeSchoolName = escapeHtml(schoolName);
   return sendEmail({
     to: adminEmail,
     subject: `Teacher registered for ${schoolName}`,
-    text: `${teacherName} has been registered as a teacher for ${schoolName}.\n\nTeacher ID: ${teacherCode}\nTeacher sign-in email: ${teacherEmail}\n\nThe generated password is shown once in Aster and is not included in this email. Share the ID and password with the teacher through a private channel. They use these credentials to create a new account or link an existing account, then verify the registered email.`,
-    html: `<p><strong>${safeTeacherName}</strong> has been registered as a teacher for <strong>${safeSchoolName}</strong>.</p><p>Teacher ID: <strong>${safeTeacherCode}</strong><br>Teacher sign-in email: <strong>${safeTeacherEmail}</strong></p><p>The generated password is shown once in Aster and is not included in this email. Share the ID and password with the teacher through a private channel. They use these credentials to create a new account or link an existing account, then verify the registered email.</p>`,
+    text: `${teacherName} has been registered as a teacher for ${schoolName}.\n\nTeacher ID: ${teacherCode}\nTeacher password: ${teacherPassword}\nTeacher sign-in email: ${teacherEmail}\n\nThe teacher profile is ready for assignments. Share these credentials with the teacher through a private channel. They can sign in directly; no account signup or email activation is required.`,
+    html: `<p><strong>${safeTeacherName}</strong> has been registered as a teacher for <strong>${safeSchoolName}</strong>.</p><p>Teacher ID: <strong>${safeTeacherCode}</strong><br>Teacher password: <strong>${safeTeacherPassword}</strong><br>Teacher sign-in email: <strong>${safeTeacherEmail}</strong></p><p>The teacher profile is ready for assignments. Share these credentials with the teacher through a private channel. They can sign in directly; no account signup or email activation is required.</p>`,
   }, options);
 }

@@ -63,6 +63,7 @@ const portalData = {
 
 const schoolTypes = ["Primary school", "Secondary school", "All-through school", "College / sixth form"];
 const SESSION_RESTORE_TIMEOUT_MS = 12000;
+const teacherSessionStorageKey = "aster.teacher-session";
 const currentAcademicYear = (() => {
   const now = new Date();
   const startYear = now.getMonth() >= 8 ? now.getFullYear() : now.getFullYear() - 1;
@@ -104,6 +105,27 @@ const accessOptions = [
 
 const API_BASE_URL = (import.meta.env.VITE_API_URL || "").replace(/\/+$/, "");
 const apiUrl = (path) => `${API_BASE_URL}${path}`;
+function getStoredTeacherSession() {
+  try {
+    const stored = JSON.parse(window.sessionStorage.getItem(teacherSessionStorageKey) || "null");
+    return typeof stored?.token === "string" && stored.token.startsWith("staff_") ? stored : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveTeacherSession(session) {
+  window.sessionStorage.setItem(teacherSessionStorageKey, JSON.stringify(session));
+}
+
+function clearTeacherSession() {
+  try {
+    window.sessionStorage.removeItem(teacherSessionStorageKey);
+  } catch {
+    return;
+  }
+}
+
 const schoolSlugFromPath = () => window.location.pathname.match(/^\/school\/([a-z0-9-]+)\/?$/i)?.[1] || "";
 const copyGradingSettings = (settings) => ({
   ...settings,
@@ -121,22 +143,34 @@ function formatClassPosition(position) {
 }
 
 async function apiRequest(path, options = {}) {
-  if (!authClient) throw new Error("Authentication is not configured.");
-  const sessionResult = await authClient.getSession();
-  let token = sessionResult.data?.session?.token;
+  const teacherSession = getStoredTeacherSession();
+  let token = teacherSession?.token;
+  let sessionError = null;
   if (!token) {
-    const tokenResult = await authClient.token();
-    if (tokenResult.error) throw new Error(tokenResult.error.message || "Could not retrieve an authentication token.");
-    token = tokenResult.data?.token;
+    if (!authClient) throw new Error("Authentication is not configured.");
+    const sessionResult = await authClient.getSession();
+    sessionError = sessionResult.error;
+    token = sessionResult.data?.session?.token;
+    if (!token) {
+      const tokenResult = await authClient.token();
+      if (tokenResult.error) throw new Error(tokenResult.error.message || "Could not retrieve an authentication token.");
+      token = tokenResult.data?.token;
+    }
   }
-  if (!token) throw new Error(sessionResult.error?.message || "Your session expired. Please sign in again.");
+  if (!token) throw new Error(sessionError?.message || "Your session expired. Please sign in again.");
   const headers = new Headers(options.headers);
   headers.set("Authorization", `Bearer ${token}`);
   if (options.body && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
   const response = await fetch(apiUrl(path), { ...options, headers });
   if (response.status === 204) return null;
   const payload = await response.json();
-  if (!response.ok) throw new Error(payload.error || "The request could not be completed.");
+  if (!response.ok) {
+    if (response.status === 401 && teacherSession) {
+      clearTeacherSession();
+      window.dispatchEvent(new Event("aster:teacher-session-expired"));
+    }
+    throw new Error(payload.error || "The request could not be completed.");
+  }
   return payload;
 }
 
@@ -699,6 +733,18 @@ function App() {
     || JSON.stringify(normalizedGradingDraft) !== JSON.stringify(gradingSettings);
 
   useEffect(() => {
+    function handleTeacherSessionExpired() {
+      setSession(null);
+      setSchools([]);
+      setSchool(null);
+      setSchoolRouteError(false);
+      setAuthNotice("Your teacher session expired. Sign in again with your teacher ID and password.");
+    }
+    window.addEventListener("aster:teacher-session-expired", handleTeacherSessionExpired);
+    return () => window.removeEventListener("aster:teacher-session-expired", handleTeacherSessionExpired);
+  }, []);
+
+  useEffect(() => {
     let active = true;
     if (!school?.id || !["profile", "results"].includes(page)) {
       setSchoolLogoData(null);
@@ -728,24 +774,44 @@ function App() {
 
   useEffect(() => {
     let active = true;
-    let timeoutId;
-    if (!authClient) {
-      setSessionLoading(false);
-      setAuthNotice("Neon Auth is not configured. Set VITE_NEON_AUTH_URL to your Auth Base URL.");
-      return () => { active = false; };
+    let timeoutId = null;
+    async function restoreSavedSession() {
+      const teacherSession = getStoredTeacherSession();
+      if (teacherSession?.token) {
+        const response = await fetch(apiUrl("/api/auth/session"), {
+          headers: { Authorization: `Bearer ${teacherSession.token}` },
+        });
+        const payload = await response.json();
+        if (response.ok && payload?.user?.id && payload?.user?.email) {
+          if (active) {
+            setSession({
+              token: teacherSession.token,
+              user: { ...payload.user, emailVerified: true },
+              authType: "teacher-session",
+            });
+          }
+          return;
+        }
+        if (response.status === 401) clearTeacherSession();
+        else throw new Error(payload.error || "Could not restore the teacher session.");
+      }
+
+      if (!authClient) {
+        setAuthNotice("Neon Auth is not configured. Teacher ID/password sign-in remains available.");
+        return;
+      }
+      const result = await authClient.getSession();
+      if (result.error) throw new Error(result.error.message || "Could not restore your session.");
+      if (active) setSession(result.data?.session || null);
     }
-    const sessionRequest = Promise.resolve().then(() => authClient.getSession());
+
     const timeoutRequest = new Promise((_, reject) => {
       timeoutId = window.setTimeout(
         () => reject(new Error("Session restoration timed out. Please sign in again.")),
         SESSION_RESTORE_TIMEOUT_MS,
       );
     });
-    Promise.race([sessionRequest, timeoutRequest])
-      .then(({ data, error: sessionError }) => {
-        if (sessionError) throw new Error(sessionError.message || "Could not restore your session.");
-        if (active) setSession(data?.session || null);
-      })
+    Promise.race([Promise.resolve().then(restoreSavedSession), timeoutRequest])
       .catch((sessionError) => {
         if (active) setAuthNotice(sessionError.message || "Could not restore your session.");
       })
@@ -755,7 +821,7 @@ function App() {
       });
     return () => {
       active = false;
-      window.clearTimeout(timeoutId);
+      if (timeoutId) window.clearTimeout(timeoutId);
     };
   }, []);
 
@@ -1714,6 +1780,15 @@ function App() {
         method: "POST",
         body: JSON.stringify({ email: inviteEmail, teacherName }),
       });
+      setTeacherRoster((previous) => [
+        ...previous.filter((teacher) => teacher.userId !== payload.credential.userId),
+        {
+          userId: payload.credential.userId,
+          email: payload.credential.email,
+          teacherName: payload.credential.teacherName,
+          teacherCode: payload.credential.teacherCode,
+        },
+      ]);
       setTeacherRegistration({
         ...payload.credential,
         adminNotification: payload.adminNotification || {
@@ -1723,7 +1798,7 @@ function App() {
       });
       setTeacherName("");
       setInviteEmail("");
-      setToast("Teacher ID and generated password are ready. Share them through a private channel.");
+      setToast("Teacher ID and permanent password are ready. The teacher can now be assigned to classes and duties.");
     } catch (requestError) {
       setTeacherRegistrationError(requestError.message || "Could not register this teacher.");
     } finally {
@@ -2566,39 +2641,31 @@ function App() {
     }
   }
 
-  async function resolveTeacherLogin(teacherCode) {
+  async function loginTeacher(teacherCode, password) {
     const response = await fetch(apiUrl("/api/auth/teacher-login"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ teacherCode }),
+      body: JSON.stringify({ teacherCode, password }),
     });
     const payload = await response.json();
-    if (!response.ok) throw new Error(payload.error || "Could not resolve this teacher ID.");
-    if (typeof payload.email !== "string") throw new Error("The teacher login could not be resolved.");
-    return payload.email;
-  }
-
-  async function lookupTeacherSetupCredential(teacherCode, setupPassword) {
-    const response = await fetch(apiUrl("/api/auth/teacher-setup"), {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ teacherCode, setupPassword }),
-    });
-    const payload = await response.json();
-    if (!response.ok) throw new Error(payload.error || "Could not verify the teacher credentials.");
-    if (!payload.teacher?.email || !payload.teacher?.teacherName) {
-      throw new Error("The teacher credentials could not be verified.");
+    if (!response.ok) throw new Error(payload.error || "Could not sign in with those teacher credentials.");
+    if (!payload?.token && typeof payload?.legacyEmail !== "string") {
+      throw new Error("The teacher login response was incomplete.");
     }
-    return payload.teacher;
+    return payload;
   }
 
-  async function completeTeacherSetup(teacherCode) {
-    const payload = await apiRequest("/api/auth/teacher-setup/complete", {
-      method: "POST",
-      body: JSON.stringify({ teacherCode }),
+  async function restoreTeacherSession({ token, user }) {
+    if (typeof token !== "string" || !token.startsWith("staff_") || !user?.id || !user?.email) {
+      throw new Error("The teacher session could not be restored.");
+    }
+    const teacherSession = { token, user: { ...user, emailVerified: true } };
+    saveTeacherSession(teacherSession);
+    setAuthNotice("");
+    setSession({
+      ...teacherSession,
+      authType: "teacher-session",
     });
-    if (!payload?.membership) throw new Error("The teacher account could not be activated.");
-    return payload.membership;
   }
 
   async function restoreSession({ schoolName = "", signInData = null, newAccount = false } = {}) {
@@ -2618,6 +2685,7 @@ function App() {
       }
     }
     if (!session?.user) throw new Error("Sign in to continue.");
+    clearTeacherSession();
     if (schoolName) {
       setForm((previous) => ({ ...previous, name: schoolName }));
       setStep(1);
@@ -2636,6 +2704,21 @@ function App() {
   }
 
   async function signOut() {
+    if (session?.authType === "teacher-session") {
+      try {
+        await apiRequest("/api/auth/teacher-logout", { method: "POST" });
+      } catch (requestError) {
+        setToast(requestError.message || "The teacher session could not be revoked.");
+      } finally {
+        clearTeacherSession();
+        setSession(null);
+        setSchools([]);
+        setSchool(null);
+        setSchoolRouteError(false);
+        setAuthNotice("");
+      }
+      return;
+    }
     try {
       const result = await authClient.signOut();
       if (result.error) throw new Error(result.error.message || "Could not sign out.");
@@ -2772,9 +2855,8 @@ function App() {
           initialEmail={session?.user?.email}
           verificationRequired={Boolean(session?.user && !session.user.emailVerified)}
           onAuthenticated={restoreSession}
-          resolveTeacherLogin={resolveTeacherLogin}
-          lookupTeacherSetupCredential={lookupTeacherSetupCredential}
-          completeTeacherSetup={completeTeacherSetup}
+          onTeacherAuthenticated={restoreTeacherSession}
+          onLoginTeacher={loginTeacher}
           onDemo={openDemo}
           onWatchVideo={() => setExplainerOpen(true)}
           resetToken={resetToken}
@@ -3383,12 +3465,13 @@ function App() {
 
           {page === "teachers" && role === "admin" && <section className="teacher-workspace">
             <section className="panel teacher-registration-panel">
-              <div className="panel-heading"><div><h2>Register a teacher</h2><p>Add the teacher’s name and email. Aster generates a teacher ID and password for you to share privately. The teacher uses those credentials to create a new account or link an existing one, then verifies the registered email—there is no invitation link.</p></div></div>
+              <div className="panel-heading"><div><h2>Register a teacher</h2><p>Add the teacher’s name and email. Aster creates the teacher profile immediately, emails the permanent ID and password to the administrator, and displays the credentials once. The teacher can sign in directly without creating an account or activating an email link.</p></div></div>
               <form className="invite-form" onSubmit={registerTeacher}>
                 <label className="field-label" htmlFor="teacherName">Teacher’s full name</label>
                 <input className="text-input" id="teacherName" autoComplete="name" required minLength={2} maxLength={120} value={teacherName} onChange={(event) => setTeacherName(event.target.value)} placeholder="e.g. Ada Okafor" />
                 <label className="field-label" htmlFor="inviteEmail">Teacher email</label>
                 <input className="text-input" id="inviteEmail" type="email" autoComplete="email" required maxLength={254} value={inviteEmail} onChange={(event) => setInviteEmail(event.target.value)} placeholder="teacher@yourschool.edu" />
+                <p className="field-hint">Registering an existing teacher email keeps their ID and issues a new permanent password.</p>
                 {teacherRegistrationError && <p className="form-error" role="alert">{teacherRegistrationError}</p>}
                 <button className="button button-primary" type="submit" disabled={inviting}>{inviting ? "Registering…" : "Register teacher"}</button>
               </form>
@@ -3400,12 +3483,12 @@ function App() {
                 <input className="text-input" id="teacherCode" readOnly value={teacherRegistration.teacherCode} />
                 <label className="field-label" htmlFor="teacherPassword">Generated password</label>
                 <input className="text-input" id="teacherPassword" readOnly value={teacherRegistration.teacherPassword} />
-                <p className="field-hint">This password is shown only once. It becomes the sign-in password for a new account; teachers with an existing Aster account use it to verify setup, then sign in with their existing password. Email delivery never includes it. Share it through a private channel. Unused credentials expire in 30 days; register the same email again to generate a fresh password.</p>
+                <p className="field-hint">The permanent password is emailed to the school administrator and shown here once. Share the credentials with the teacher through a private channel. If the teacher forgets the password, register the same email again to reissue it while keeping the teacher ID.</p>
                 <div className="form-row-actions"><button className="button button-secondary" type="button" onClick={copyTeacherCredentials}>Copy credentials</button><button className="quiet-action" type="button" onClick={() => setTeacherRegistration(null)}>Hide credentials</button></div>
               </div>}
             </section>
             {teacherRoster.length > 0 && <section className="panel teacher-roster-panel">
-              <div className="panel-heading"><div><h2>Active teacher accounts</h2><p>Teachers appear here after creating their account with the generated credentials and verifying their email.</p></div></div>
+              <div className="panel-heading"><div><h2>Teacher profiles</h2><p>Profiles are ready for class and duty assignments as soon as you register them.</p></div></div>
               <div className="table-scroll"><table><thead><tr><th>TEACHER</th><th>STAFF CODE</th><th>EMAIL</th></tr></thead><tbody>{teacherRoster.map((teacher) => <tr key={teacher.userId}><td>{teacher.teacherName || "Teacher"}</td><td><strong>{teacher.teacherCode || "—"}</strong></td><td>{teacher.email}</td></tr>)}</tbody></table></div>
             </section>}
             <section className="panel teacher-assignment-panel">
@@ -3414,7 +3497,7 @@ function App() {
                 <button className="button button-secondary button-small" type="button" onClick={() => document.getElementById("teacherName")?.focus()}>Register a teacher</button>
               </div>
               {assignmentError && <p className="form-error" role="alert">{assignmentError}</p>}
-              {loadingAssignments ? <LoadingMessage>Loading teacher assignments…</LoadingMessage> : teacherRoster.length === 0 ? <p className="empty-search">No teachers have set up their accounts yet. Register a teacher above and share their ID and password privately before assigning classes.</p> : <>
+              {loadingAssignments ? <LoadingMessage>Loading teacher assignments…</LoadingMessage> : teacherRoster.length === 0 ? <p className="empty-search">No teacher profiles yet. Register a teacher above to assign classes and duties.</p> : <>
                 <form className="assignment-form" onSubmit={assignTeacher}>
                   <label><span>Class</span><select className="text-input" required value={assignmentClassId} onChange={(event) => {
                     const classId = event.target.value;
@@ -3440,7 +3523,7 @@ function App() {
                 : schoolClasses.length === 0
                   ? <p className="empty-search">Create a class before assigning a form master. <button className="inline-action" type="button" onClick={() => setPage("classes")}>Go to Classes & subjects →</button></p>
                   : teacherRoster.length === 0
-                    ? <p className="empty-search">Register and activate a teacher before assigning a form master.</p>
+                    ? <p className="empty-search">Register a teacher before assigning a form master.</p>
                     : <div className="form-master-list">{schoolClasses.map((classItem) => {
                       const assignment = formMasterAssignments.find((item) => item.classId === classItem.id);
                       const selectedTeacherId = formMasterSelections[classItem.id] ?? assignment?.teacherUserId ?? "";
