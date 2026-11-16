@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   normalizeAcademicSessionInput,
+  normalizeAcademicRolloverInput,
   normalizeAcademicTermDates,
   createSchoolSlug,
   normalizeProfilePhotoData,
@@ -87,6 +88,33 @@ test("normalizes sequential academic sessions", () => {
   });
   assert.equal(normalizeAcademicSessionInput({ academicYear: "2026/2028" }), null);
   assert.equal(normalizeAcademicSessionInput({ academicYear: "2026/2027", isCurrent: "true" }), null);
+});
+
+test("normalizes a consecutive-year student rollover and per-student overrides", () => {
+  const studentId = "123e4567-e89b-42d3-a456-426614174000";
+  assert.deepEqual(normalizeAcademicRolloverInput({
+    sourceAcademicYear: "2025/2026",
+    targetAcademicYear: "2026/2027",
+    exceptions: [{ studentId, action: "repeat" }],
+  }), {
+    sourceAcademicYear: "2025/2026",
+    targetAcademicYear: "2026/2027",
+    exceptions: [{ studentId, action: "repeat" }],
+  });
+  assert.equal(normalizeAcademicRolloverInput({
+    sourceAcademicYear: "2024/2025",
+    targetAcademicYear: "2026/2027",
+  }), null);
+  assert.equal(normalizeAcademicRolloverInput({
+    sourceAcademicYear: "2025/2026",
+    targetAcademicYear: "2026/2027",
+    exceptions: [{ studentId, action: "unknown" }],
+  }), null);
+  assert.equal(normalizeAcademicRolloverInput({
+    sourceAcademicYear: "2025/2026",
+    targetAcademicYear: "2026/2027",
+    exceptions: [{ studentId, action: "repeat" }, { studentId, action: "graduate" }],
+  }), null);
 });
 
 test("normalizes complete, ordered academic term date ranges", () => {

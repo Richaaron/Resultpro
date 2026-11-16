@@ -3,6 +3,7 @@ import { test } from "node:test";
 import {
   curriculumByGrade,
   curriculumGrades,
+  getNextGradeForSchool,
   normalizeEducationalLevelSelection,
   normalizeSubjectSelection,
 } from "./curriculum.js";
@@ -31,6 +32,14 @@ test("provides subject options for every primary, junior, and senior grade", () 
     assert.ok(subjects.length > 0);
     assert.equal(new Set(subjects).size, subjects.length);
   }
+});
+
+test("advances students only into the next grade of an enabled school level", () => {
+  assert.equal(getNextGradeForSchool("Primary 5", ["primary"]), "Primary 6");
+  assert.equal(getNextGradeForSchool("Primary 6", ["primary", "juniorSecondary"]), "JSS 1");
+  assert.equal(getNextGradeForSchool("Primary 6", ["primary", "seniorSecondary"]), null);
+  assert.equal(getNextGradeForSchool("SSS 3", ["seniorSecondary"]), null);
+  assert.equal(getNextGradeForSchool("Unknown", ["primary"]), null);
 });
 
 test("accepts a unique selection from the selected grade catalogue", () => {

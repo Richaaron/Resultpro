@@ -347,6 +347,21 @@ select.text-input { color: #58645a; }
 .grade-picker .text-input { height: 35px; }
 .educational-levels-settings { margin-top: 20px; padding: 16px; border: 1px solid #e8ebe6; border-radius: 9px; background: #fbfcfa; }
 .academic-calendar-panel { display: grid; gap: 14px; }
+.academic-rollover-panel { display: grid; gap: 14px; }
+.academic-rollover-controls { display: grid; grid-template-columns: minmax(160px, 1fr) 24px minmax(160px, 1fr) auto; align-items: end; gap: 11px; }
+.academic-rollover-controls label { display: grid; gap: 6px; color: #637065; font-size: 9px; font-weight: 600; }
+.academic-rollover-arrow { align-self: center; padding-top: 16px; color: #7d897f; text-align: center; }
+.academic-rollover-preview { display: grid; gap: 12px; }
+.academic-rollover-summary { display: flex; flex-wrap: wrap; gap: 8px; }
+.academic-rollover-summary span { display: flex; align-items: baseline; gap: 5px; padding: 8px 10px; border: 1px solid #e1e9e1; border-radius: 7px; color: #68756a; font-size: 9px; }
+.academic-rollover-summary strong { color: #426d4b; font-size: 13px; }
+.academic-rollover-roster-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; color: #7e887f; font-size: 9px; }
+.academic-rollover-roster-heading .search-box { max-width: 290px; }
+.academic-rollover-table .text-input { min-width: 205px; }
+.academic-rollover-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; color: #7e887f; font-size: 9px; }
+.academic-rollover-footer > div { display: flex; align-items: center; gap: 8px; }
+.academic-rollover-complete { display: grid; gap: 5px; padding: 13px; border: 1px solid #dfe9df; border-radius: 8px; background: #f5f9f4; color: #47664c; font-size: 10px; }
+.academic-rollover-complete span { color: #78867a; font-size: 9px; }
 .academic-calendar-error { display: flex; align-items: center; flex-wrap: wrap; gap: 9px; color: #a63e35; font-size: 10px; }
 .academic-session-create-form { display: grid; grid-template-columns: minmax(180px, 1fr) auto auto; align-items: end; gap: 12px; }
 .academic-session-create-form > label:first-child, .academic-current-term-control { display: grid; gap: 6px; color: #637065; font-size: 9px; font-weight: 600; }
@@ -703,7 +718,11 @@ select.text-input { color: #58645a; }
   .student-report-signatures { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 700px) {
-  .academic-session-create-form, .academic-term-grid { grid-template-columns: 1fr; }
+  .academic-session-create-form, .academic-term-grid, .academic-rollover-controls { grid-template-columns: 1fr; }
+  .academic-rollover-arrow { display: none; }
+  .academic-rollover-roster-heading, .academic-rollover-footer { align-items: stretch; flex-direction: column; }
+  .academic-rollover-roster-heading .search-box { max-width: none; }
+  .academic-rollover-footer > div { justify-content: space-between; }
   .academic-session-current-choice { padding: 0; }
   .academic-session-create-form > .button { width: 100%; }
   .academic-session-heading, .academic-term-footer { align-items: stretch; flex-direction: column; }
@@ -1227,6 +1246,11 @@ select.text-input option { background: #101d16; color: #edf5ef; }
 .educational-levels-settings { border-color: #293f31; background: #14231a; }
 .academic-session-create-form > label:first-child, .academic-session-current-choice, .academic-current-term-control,
 .academic-term-row label { color: #d4e1d7; }
+.academic-rollover-controls label, .academic-rollover-arrow, .academic-rollover-footer { color: #b4c4b7; }
+.academic-rollover-summary span { border-color: #2c4233; color: #b4c4b7; }
+.academic-rollover-summary strong { color: #a8e1ae; }
+.academic-rollover-complete { border-color: #2e5236; background: #14281a; color: #c1e6c6; }
+.academic-rollover-complete span { color: #b4c4b7; }
 .academic-calendar-error { color: #ff9a91; }
 .academic-session-card, .academic-term-row { border-color: #2c4233; background: #101d16; }
 .academic-session-heading h3, .academic-term-row legend { color: #d7edda; }

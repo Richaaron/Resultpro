@@ -465,6 +465,15 @@ function App() {
   const [academicCalendarError, setAcademicCalendarError] = useState("");
   const [academicCalendarSaving, setAcademicCalendarSaving] = useState("");
   const [academicCalendarRefresh, setAcademicCalendarRefresh] = useState(0);
+  const [rolloverSourceYear, setRolloverSourceYear] = useState("");
+  const [rolloverTargetYear, setRolloverTargetYear] = useState("");
+  const [rolloverPreview, setRolloverPreview] = useState(null);
+  const [rolloverActions, setRolloverActions] = useState({});
+  const [rolloverSearch, setRolloverSearch] = useState("");
+  const [rolloverPage, setRolloverPage] = useState(1);
+  const [rolloverPreviewLoading, setRolloverPreviewLoading] = useState(false);
+  const [rolloverApplying, setRolloverApplying] = useState(false);
+  const [rolloverError, setRolloverError] = useState("");
   const [newAcademicYear, setNewAcademicYear] = useState(currentAcademicYear);
   const [newAcademicSessionIsCurrent, setNewAcademicSessionIsCurrent] = useState(false);
   const [academicTermDrafts, setAcademicTermDrafts] = useState({});
@@ -637,6 +646,41 @@ function App() {
     : [];
   const currentAcademicSession = academicCalendarForCurrentSchool.find((item) => item.isCurrent) || null;
   const currentAcademicTerm = currentAcademicSession?.terms.find((item) => item.isCurrent)?.term || "";
+  const academicRolloverPreview = rolloverPreview?.schoolId === school?.id ? rolloverPreview : null;
+  const academicRolloverStudents = academicRolloverPreview?.students || [];
+  const plannedRolloverStudents = academicRolloverStudents.map((student) => ({
+    ...student,
+    action: rolloverActions[student.id] || student.defaultAction,
+  }));
+  const rolloverCounts = plannedRolloverStudents.reduce((counts, student) => {
+    if (student.action === "promote") counts.promoted += 1;
+    else if (student.action === "repeat") counts.repeated += 1;
+    else counts.graduated += 1;
+    return counts;
+  }, { promoted: 0, repeated: 0, graduated: 0 });
+  const rolloverClassesToCreate = new Set(plannedRolloverStudents.flatMap((student) => {
+    if (student.action === "graduate") return [];
+    const grade = student.action === "promote" ? student.promotionGrade : student.grade;
+    const classExists = student.action === "promote" ? student.promotionClassExists : student.repeatClassExists;
+    return classExists ? [] : [`${grade}\u0000${student.section}`];
+  })).size;
+  const rolloverSearchTerm = rolloverSearch.trim().toLowerCase();
+  const filteredRolloverStudents = plannedRolloverStudents.filter((student) => (
+    !rolloverSearchTerm
+    || `${student.firstName} ${student.lastName} ${student.admissionNumber} ${student.grade} ${student.section}`
+      .toLowerCase().includes(rolloverSearchTerm)
+  ));
+  const rolloverPageCount = Math.max(1, Math.ceil(filteredRolloverStudents.length / 50));
+  const visibleRolloverStudents = filteredRolloverStudents.slice((rolloverPage - 1) * 50, rolloverPage * 50);
+  const rolloverPlanIsReady = plannedRolloverStudents.length > 0
+    && plannedRolloverStudents.every((student) => (
+      student.action === "graduate"
+      || (student.action === "promote" && student.promotionReady)
+      || (student.action === "repeat" && student.repeatReady)
+    ));
+  const rolloverTargetOptions = academicCalendarForCurrentSchool.filter((session) => (
+    session.academicYear.slice(0, 4) === rolloverSourceYear.slice(5)
+  ));
   const schoolLogoForCurrentSchool = schoolLogoSchoolId === school?.id ? schoolLogoData : null;
   const dashboardErrorForCurrentSchool = dashboardError && dashboardError.schoolId === school?.id
     ? dashboardError.message
@@ -1123,6 +1167,61 @@ function App() {
       });
     return () => { active = false; };
   }, [school?.id, role, academicCalendarRefresh]);
+
+  useEffect(() => {
+    setRolloverSourceYear("");
+    setRolloverTargetYear("");
+    setRolloverPreview(null);
+    setRolloverActions({});
+    setRolloverSearch("");
+    setRolloverPage(1);
+    setRolloverError("");
+  }, [school?.id]);
+
+  useEffect(() => {
+    if (!academicCalendarForCurrentSchool.length) return;
+    const sessions = academicCalendarForCurrentSchool;
+    const current = sessions.find((session) => session.isCurrent);
+    let defaultSource = "";
+    let defaultTarget = "";
+    if (current) {
+      const currentStart = Number(current.academicYear.slice(0, 4));
+      const previousYear = `${currentStart - 1}/${currentStart}`;
+      const nextYear = `${current.academicYear.slice(5)}/${Number(current.academicYear.slice(5)) + 1}`;
+      if (sessions.some((session) => session.academicYear === previousYear)) {
+        defaultSource = previousYear;
+        defaultTarget = current.academicYear;
+      } else {
+        defaultSource = current.academicYear;
+        if (sessions.some((session) => session.academicYear === nextYear)) defaultTarget = nextYear;
+      }
+    } else {
+      const sourceSession = sessions.find((session) => (
+        sessions.some((target) => target.academicYear.slice(0, 4) === session.academicYear.slice(5))
+      ));
+      if (sourceSession) {
+        defaultSource = sourceSession.academicYear;
+        defaultTarget = `${sourceSession.academicYear.slice(5)}/${Number(sourceSession.academicYear.slice(5)) + 1}`;
+      }
+    }
+
+    setRolloverSourceYear((previous) => (
+      sessions.some((session) => session.academicYear === previous) ? previous : defaultSource
+    ));
+    setRolloverTargetYear((previous) => {
+      const validTargets = sessions.filter((session) => (
+        session.academicYear.slice(0, 4) === rolloverSourceYear.slice(5)
+      ));
+      if (validTargets.some((session) => session.academicYear === previous)) return previous;
+      const sourceYear = sessions.some((session) => session.academicYear === rolloverSourceYear)
+        ? rolloverSourceYear
+        : defaultSource;
+      const expectedTarget = sourceYear ? `${sourceYear.slice(5)}/${Number(sourceYear.slice(5)) + 1}` : "";
+      return sessions.some((session) => session.academicYear === expectedTarget)
+        ? expectedTarget
+        : defaultTarget;
+    });
+  }, [academicCalendarForCurrentSchool, rolloverSourceYear]);
 
   useEffect(() => {
     if (!currentAcademicTerm) return;
@@ -2105,6 +2204,82 @@ function App() {
       setAcademicCalendarError(requestError.message || "Could not save term dates.");
     } finally {
       setAcademicCalendarSaving("");
+    }
+  }
+
+  function changeRolloverSourceYear(academicYear) {
+    const sourceEndYear = Number(academicYear.slice(5));
+    const targetAcademicYear = `${sourceEndYear}/${sourceEndYear + 1}`;
+    setRolloverSourceYear(academicYear);
+    setRolloverTargetYear(academicCalendarForCurrentSchool.some((session) => (
+      session.academicYear === targetAcademicYear
+    )) ? targetAcademicYear : "");
+    setRolloverPreview(null);
+    setRolloverActions({});
+    setRolloverError("");
+  }
+
+  async function previewAcademicRollover() {
+    if (!school || !rolloverSourceYear || !rolloverTargetYear) return;
+    setRolloverPreviewLoading(true);
+    setRolloverError("");
+    try {
+      const query = new URLSearchParams({
+        sourceAcademicYear: rolloverSourceYear,
+        targetAcademicYear: rolloverTargetYear,
+      });
+      const { preview } = await apiRequest(
+        `/api/schools/${school.id}/academic-calendar/rollover-preview?${query}`,
+      );
+      if (!Array.isArray(preview?.students)) throw new Error("The rollover preview could not be verified.");
+      setRolloverPreview({ ...preview, schoolId: school.id });
+      setRolloverActions({});
+      setRolloverPage(1);
+      setRolloverSearch("");
+    } catch (requestError) {
+      setRolloverError(requestError.message || "Could not preview the year-end rollover.");
+    } finally {
+      setRolloverPreviewLoading(false);
+    }
+  }
+
+  async function applyAcademicRollover() {
+    if (!school || !academicRolloverPreview || !rolloverPlanIsReady) return;
+    const confirmed = window.confirm(
+      `Apply the ${academicRolloverPreview.sourceAcademicYear} → ${academicRolloverPreview.targetAcademicYear} rollover?\n\n`
+      + `${rolloverCounts.promoted} students will be promoted, ${rolloverCounts.repeated} will repeat, `
+      + `and ${rolloverCounts.graduated} will be archived as completing this school level. `
+      + "Published results and the previous classes will be preserved. This action cannot be run twice for the same target session.",
+    );
+    if (!confirmed) return;
+
+    setRolloverApplying(true);
+    setRolloverError("");
+    try {
+      const exceptions = plannedRolloverStudents
+        .filter((student) => student.action !== student.defaultAction)
+        .map(({ id, action }) => ({ studentId: id, action }));
+      const { rollover } = await apiRequest(`/api/schools/${school.id}/academic-calendar/rollover`, {
+        method: "POST",
+        body: JSON.stringify({
+          sourceAcademicYear: academicRolloverPreview.sourceAcademicYear,
+          targetAcademicYear: academicRolloverPreview.targetAcademicYear,
+          exceptions,
+        }),
+      });
+      setRolloverPreview(null);
+      setRolloverActions({});
+      setStudentPage(1);
+      setStudentRefresh((previous) => previous + 1);
+      setClassRefresh((previous) => previous + 1);
+      setToast(
+        `Year-end rollover complete: ${rollover.promotedCount} promoted, `
+        + `${rollover.repeatedCount} repeated, ${rollover.graduatedCount} archived.`,
+      );
+    } catch (requestError) {
+      setRolloverError(requestError.message || "Could not apply the year-end rollover.");
+    } finally {
+      setRolloverApplying(false);
     }
   }
 
@@ -3161,6 +3336,129 @@ function App() {
                   </article>;
                 })}</div>}
             </>}
+          </section>}
+
+          {page === "calendar" && role === "admin" && <section className="panel academic-rollover-panel">
+            <div className="panel-heading">
+              <div><h2>Year-end student rollover</h2><p>Preview student placements, promote eligible students, and preserve the previous year’s records.</p></div>
+            </div>
+            <div className="academic-rollover-controls">
+              <label><span>From session</span>
+                <select
+                  className="text-input"
+                  value={rolloverSourceYear}
+                  onChange={(event) => changeRolloverSourceYear(event.target.value)}
+                  disabled={rolloverPreviewLoading || rolloverApplying || !academicCalendarForCurrentSchool.length}
+                >
+                  <option value="">Select a source session</option>
+                  {academicCalendarForCurrentSchool.map((session) => <option key={session.academicYear}>{session.academicYear}</option>)}
+                </select>
+              </label>
+              <span className="academic-rollover-arrow" aria-hidden="true">→</span>
+              <label><span>To session</span>
+                <select
+                  className="text-input"
+                  value={rolloverTargetYear}
+                  onChange={(event) => {
+                    setRolloverTargetYear(event.target.value);
+                    setRolloverPreview(null);
+                    setRolloverActions({});
+                    setRolloverError("");
+                  }}
+                  disabled={rolloverPreviewLoading || rolloverApplying || !rolloverSourceYear}
+                >
+                  <option value="">{rolloverTargetOptions.length ? "Select the next session" : "Add the next session first"}</option>
+                  {rolloverTargetOptions.map((session) => <option key={session.academicYear}>{session.academicYear}</option>)}
+                </select>
+              </label>
+              <button
+                className="button button-secondary"
+                type="button"
+                onClick={previewAcademicRollover}
+                disabled={!rolloverSourceYear || !rolloverTargetYear || rolloverPreviewLoading || rolloverApplying}
+              >
+                {rolloverPreviewLoading ? "Preparing preview…" : "Preview rollover"}
+              </button>
+            </div>
+            <p className="field-hint">The target session must be created first. Missing destination classes are created with the grade’s saved subjects. This does not change which session is marked current.</p>
+            {rolloverError && <p className="form-error" role="alert">{rolloverError}</p>}
+            {academicRolloverPreview && <div className="academic-rollover-preview">
+              {academicRolloverPreview.alreadyRolledOver
+                ? <div className="academic-rollover-complete" role="status">
+                  <strong>This target session has already been rolled over.</strong>
+                  <span>{academicRolloverPreview.rollover.promotedCount} promoted · {academicRolloverPreview.rollover.repeatedCount} repeated · {academicRolloverPreview.rollover.graduatedCount} archived</span>
+                </div>
+                : <>
+                  <div className="academic-rollover-summary" aria-label="Rollover placement summary">
+                    <span><strong>{rolloverCounts.promoted}</strong> promote</span>
+                    <span><strong>{rolloverCounts.repeated}</strong> repeat</span>
+                    <span><strong>{rolloverCounts.graduated}</strong> complete level</span>
+                    <span><strong>{rolloverClassesToCreate}</strong> classes to create</span>
+                    <span><strong>{academicRolloverStudents.length}</strong> active students</span>
+                  </div>
+                  {academicRolloverStudents.length === 0
+                    ? <p className="empty-search">There are no active students in the selected source session.</p>
+                    : <>
+                      {!rolloverPlanIsReady && <p className="form-error" role="alert">Some selected destinations have no saved subjects. Set up those grades under Classes & subjects, or change the affected student’s placement.</p>}
+                      <div className="academic-rollover-roster-heading">
+                        <label className="search-box"><span>⌕</span>
+                          <input
+                            type="search"
+                            value={rolloverSearch}
+                            onChange={(event) => { setRolloverSearch(event.target.value); setRolloverPage(1); }}
+                            placeholder="Find a student"
+                            aria-label="Search rollover students"
+                          />
+                        </label>
+                        <span>Showing {filteredRolloverStudents.length.toLocaleString("en-NG")} of {academicRolloverStudents.length.toLocaleString("en-NG")}</span>
+                      </div>
+                      <div className="table-scroll academic-rollover-table">
+                        <table>
+                          <thead><tr><th>STUDENT</th><th>ADMISSION NO.</th><th>CURRENT CLASS</th><th>NEW-YEAR PLACEMENT</th></tr></thead>
+                          <tbody>
+                            {visibleRolloverStudents.map((student) => <tr key={student.id}>
+                              <td><strong>{student.firstName} {student.lastName}</strong></td>
+                              <td>{student.admissionNumber}</td>
+                              <td>{student.grade} {student.section}</td>
+                              <td>
+                                <select
+                                  className="text-input"
+                                  value={student.action}
+                                  aria-label={`New-year placement for ${student.firstName} ${student.lastName}`}
+                                  onChange={(event) => setRolloverActions((previous) => ({ ...previous, [student.id]: event.target.value }))}
+                                  disabled={rolloverApplying}
+                                >
+                                  <option value="promote" disabled={!student.promotionGrade || !student.promotionReady}>
+                                    {student.promotionGrade ? `Promote to ${student.promotionGrade} ${student.section}` : "No next level"}
+                                  </option>
+                                  <option value="repeat" disabled={!student.repeatReady}>Repeat {student.grade} {student.section}</option>
+                                  <option value="graduate">Complete level and archive</option>
+                                </select>
+                              </td>
+                            </tr>)}
+                          </tbody>
+                        </table>
+                        {filteredRolloverStudents.length === 0 && <p className="empty-search">No students match this search.</p>}
+                      </div>
+                      <div className="academic-rollover-footer">
+                        <span>Previous classes and published result history are preserved. Archived students retain access to their existing portal history.</span>
+                        <div>
+                          <button className="button button-secondary button-small" type="button" disabled={rolloverPage <= 1} onClick={() => setRolloverPage((previous) => previous - 1)}>Previous</button>
+                          <span>Page {rolloverPage} of {rolloverPageCount}</span>
+                          <button className="button button-secondary button-small" type="button" disabled={rolloverPage >= rolloverPageCount} onClick={() => setRolloverPage((previous) => previous + 1)}>Next</button>
+                        </div>
+                      </div>
+                      <button
+                        className="button button-primary"
+                        type="button"
+                        onClick={applyAcademicRollover}
+                        disabled={!rolloverPlanIsReady || rolloverApplying || rolloverPreviewLoading}
+                      >
+                        {rolloverApplying ? "Applying rollover…" : `Apply rollover to ${academicRolloverPreview.targetAcademicYear}`}
+                      </button>
+                    </>}
+                </>}
+            </div>}
           </section>}
 
           {page === "profile" && role === "admin" && <section className="panel school-logo-panel">

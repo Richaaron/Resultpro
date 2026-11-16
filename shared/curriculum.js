@@ -10,6 +10,17 @@ export const curriculumLevels = [
   { code: "seniorSecondary", label: "Senior secondary school", grades: curriculumGrades.seniorSecondary },
 ];
 
+export function getNextGradeForSchool(grade, enabledLevelCodes) {
+  const grades = curriculumLevels.flatMap((level) => level.grades);
+  const gradeIndex = grades.indexOf(grade);
+  if (gradeIndex < 0) return null;
+  const nextGrade = grades[gradeIndex + 1];
+  if (!nextGrade) return null;
+
+  const nextLevel = curriculumLevels.find((level) => level.grades.includes(nextGrade));
+  return nextLevel && enabledLevelCodes.includes(nextLevel.code) ? nextGrade : null;
+}
+
 export function normalizeEducationalLevelSelection(levelCodes) {
   const allowedCodes = new Set(curriculumLevels.map((level) => level.code));
   if (!Array.isArray(levelCodes) || levelCodes.length < 1 || levelCodes.length > allowedCodes.size) {

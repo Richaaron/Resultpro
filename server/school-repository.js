@@ -6,7 +6,7 @@ import {
   calculatePointsPercentage,
   defaultGradingSettings,
 } from "../shared/school-data.js";
-import { curriculumLevels } from "../shared/curriculum.js";
+import { curriculumLevels, getNextGradeForSchool } from "../shared/curriculum.js";
 
 let initializedDatabaseUrl;
 let initializePromise;
@@ -394,6 +394,29 @@ async function getReadyDatabase() {
           CREATE UNIQUE INDEX IF NOT EXISTS school_academic_terms_current_idx
           ON school_academic_terms (school_id, academic_year)
           WHERE is_current
+        `,
+        database.sql`
+          CREATE TABLE IF NOT EXISTS school_academic_rollovers (
+            id UUID PRIMARY KEY,
+            school_id UUID NOT NULL REFERENCES schools(id) ON DELETE CASCADE,
+            source_academic_year VARCHAR(9) NOT NULL,
+            target_academic_year VARCHAR(9) NOT NULL,
+            promoted_count INTEGER NOT NULL CHECK (promoted_count >= 0),
+            repeated_count INTEGER NOT NULL CHECK (repeated_count >= 0),
+            graduated_count INTEGER NOT NULL CHECK (graduated_count >= 0),
+            rolled_by TEXT NOT NULL,
+            rolled_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            UNIQUE (school_id, target_academic_year),
+            CONSTRAINT school_academic_rollovers_source_fk
+              FOREIGN KEY (school_id, source_academic_year)
+              REFERENCES school_academic_sessions(school_id, academic_year) ON DELETE RESTRICT,
+            CONSTRAINT school_academic_rollovers_target_fk
+              FOREIGN KEY (school_id, target_academic_year)
+              REFERENCES school_academic_sessions(school_id, academic_year) ON DELETE RESTRICT,
+            CONSTRAINT school_academic_rollovers_admin_fk
+              FOREIGN KEY (school_id, rolled_by)
+              REFERENCES school_members(school_id, user_id) ON DELETE RESTRICT
+          )
         `,
         database.sql`
           CREATE TABLE IF NOT EXISTS school_class_subjects (
@@ -1636,6 +1659,334 @@ export async function saveSchoolAcademicTermDates(schoolId, academicYear, terms)
     DO UPDATE SET start_date = EXCLUDED.start_date, end_date = EXCLUDED.end_date
   `));
   return listSchoolAcademicCalendar(schoolId);
+}
+
+export async function getSchoolAcademicRolloverPreview(schoolId, sourceAcademicYear, targetAcademicYear) {
+  const sql = await getReadyDatabase();
+  const [sessions, existingRollover] = await Promise.all([
+    sql`
+      SELECT academic_year AS "academicYear"
+      FROM school_academic_sessions
+      WHERE school_id = ${schoolId}
+        AND academic_year IN (${sourceAcademicYear}, ${targetAcademicYear})
+    `,
+    sql`
+      SELECT source_academic_year AS "sourceAcademicYear",
+             target_academic_year AS "targetAcademicYear",
+             promoted_count AS "promotedCount",
+             repeated_count AS "repeatedCount",
+             graduated_count AS "graduatedCount",
+             rolled_at AS "rolledAt"
+      FROM school_academic_rollovers
+      WHERE school_id = ${schoolId} AND target_academic_year = ${targetAcademicYear}
+    `,
+  ]);
+  if (!sessions.some((session) => session.academicYear === sourceAcademicYear)
+    || !sessions.some((session) => session.academicYear === targetAcademicYear)) {
+    return { error: "session" };
+  }
+  if (existingRollover[0]) {
+    return {
+      sourceAcademicYear,
+      targetAcademicYear,
+      alreadyRolledOver: true,
+      rollover: existingRollover[0],
+      students: [],
+    };
+  }
+
+  const [levels, students, targetClasses, subjectCounts] = await Promise.all([
+    getSchoolEducationalLevels(schoolId),
+    sql`
+      SELECT st.id, st.class_id AS "sourceClassId",
+             st.admission_number AS "admissionNumber",
+             st.first_name AS "firstName", st.last_name AS "lastName",
+             c.grade, c.section
+      FROM school_students st
+      JOIN school_classes c ON c.school_id = st.school_id AND c.id = st.class_id
+      WHERE st.school_id = ${schoolId}
+        AND c.academic_year = ${sourceAcademicYear}
+        AND st.is_active
+      ORDER BY c.grade, c.section, st.last_name, st.first_name, st.admission_number
+    `,
+    sql`
+      SELECT c.id, c.grade, c.section, COUNT(DISTINCT cs.subject_name)::int AS "subjectCount"
+      FROM school_classes c
+      LEFT JOIN school_class_subjects cs ON cs.class_id = c.id
+      WHERE c.school_id = ${schoolId} AND c.academic_year = ${targetAcademicYear}
+      GROUP BY c.id
+    `,
+    sql`
+      SELECT grade, COUNT(*)::int AS "subjectCount"
+      FROM school_subjects
+      WHERE school_id = ${schoolId}
+      GROUP BY grade
+    `,
+  ]);
+  const enabledLevelCodes = levels.filter((level) => level.active).map((level) => level.code);
+  const targetClassesByKey = new Map(targetClasses.map((schoolClass) => [
+    `${schoolClass.grade}\u0000${schoolClass.section}`,
+    schoolClass,
+  ]));
+  const subjectCountByGrade = new Map(subjectCounts.map(({ grade, subjectCount }) => [grade, subjectCount]));
+  const getDestinationReady = (grade, section) => {
+    const targetClass = targetClassesByKey.get(`${grade}\u0000${section}`);
+    return targetClass ? targetClass.subjectCount > 0 : (subjectCountByGrade.get(grade) || 0) > 0;
+  };
+  const destinationClassExists = (grade, section) => targetClassesByKey.has(`${grade}\u0000${section}`);
+  const plannedStudents = students.map((student) => {
+    const promotionGrade = getNextGradeForSchool(student.grade, enabledLevelCodes);
+    return {
+      ...student,
+      defaultAction: promotionGrade ? "promote" : "graduate",
+      promotionGrade,
+      promotionReady: promotionGrade ? getDestinationReady(promotionGrade, student.section) : false,
+      promotionClassExists: promotionGrade ? destinationClassExists(promotionGrade, student.section) : false,
+      repeatReady: getDestinationReady(student.grade, student.section),
+      repeatClassExists: destinationClassExists(student.grade, student.section),
+    };
+  });
+
+  return {
+    sourceAcademicYear,
+    targetAcademicYear,
+    alreadyRolledOver: false,
+    students: plannedStudents,
+  };
+}
+
+export async function applySchoolAcademicRollover(schoolId, userId, rollover) {
+  const preview = await getSchoolAcademicRolloverPreview(
+    schoolId,
+    rollover.sourceAcademicYear,
+    rollover.targetAcademicYear,
+  );
+  if (preview.error) return preview;
+  if (preview.alreadyRolledOver) return { error: "already" };
+  if (!preview.students.length) return { error: "no_students" };
+
+  const studentsById = new Map(preview.students.map((student) => [student.id, student]));
+  const exceptionsById = new Map(rollover.exceptions.map(({ studentId, action }) => [studentId, action]));
+  if ([...exceptionsById.keys()].some((studentId) => !studentsById.has(studentId))) {
+    return { error: "stale" };
+  }
+
+  const plannedStudents = preview.students.map((student) => {
+    const action = exceptionsById.get(student.id) || student.defaultAction;
+    if (action === "promote" && !student.promotionGrade) return { error: "placement" };
+    if (action === "promote" && !student.promotionReady) return { error: "subjects" };
+    if (action === "repeat" && !student.repeatReady) return { error: "subjects" };
+    const targetGrade = action === "promote" ? student.promotionGrade
+      : action === "repeat" ? student.grade
+        : null;
+    const targetClassExists = action === "promote"
+      ? student.promotionClassExists
+      : action === "repeat" ? student.repeatClassExists : false;
+    return {
+      student_id: student.id,
+      source_class_id: student.sourceClassId,
+      action,
+      target_grade: targetGrade,
+      target_section: targetGrade ? student.section : null,
+      target_class_exists: targetClassExists,
+    };
+  });
+  const planningError = plannedStudents.find((student) => student.error);
+  if (planningError) return { error: planningError.error };
+
+  const classRowsByKey = new Map();
+  for (const student of plannedStudents) {
+    if (student.action === "graduate") continue;
+    const key = `${student.target_grade}\u0000${student.target_section}`;
+    if (classRowsByKey.has(key)) continue;
+    if (!student.target_class_exists) {
+      classRowsByKey.set(key, {
+        id: randomUUID(),
+        grade: student.target_grade,
+        section: student.target_section,
+      });
+    }
+  }
+
+  const sql = await getReadyDatabase();
+  const rolloverId = randomUUID();
+  const counts = plannedStudents.reduce((result, student) => {
+    if (student.action === "promote") result.promotedCount += 1;
+    else if (student.action === "repeat") result.repeatedCount += 1;
+    else result.graduatedCount += 1;
+    return result;
+  }, { promotedCount: 0, repeatedCount: 0, graduatedCount: 0 });
+  const sourceRosterJson = JSON.stringify(plannedStudents.map(({ student_id, source_class_id }) => ({
+    student_id,
+    source_class_id,
+  })));
+  const plannedStudentsJson = JSON.stringify(plannedStudents);
+  const classRowsJson = JSON.stringify([...classRowsByKey.values()]);
+
+  try {
+    const results = await sql.transaction([
+      sql`
+        SELECT id FROM school_classes
+        WHERE school_id = ${schoolId}
+          AND academic_year IN (${rollover.sourceAcademicYear}, ${rollover.targetAcademicYear})
+        FOR UPDATE
+      `,
+      sql`
+        SELECT grade, subject_name
+        FROM school_subjects
+        WHERE school_id = ${schoolId}
+        FOR KEY SHARE
+      `,
+      sql`
+        WITH planned AS MATERIALIZED (
+          SELECT * FROM jsonb_to_recordset(${sourceRosterJson}::jsonb)
+            AS item(student_id UUID, source_class_id UUID)
+        ),
+        current_roster AS MATERIALIZED (
+          SELECT st.id, st.class_id
+          FROM school_students st
+          JOIN school_classes c ON c.school_id = st.school_id AND c.id = st.class_id
+          WHERE st.school_id = ${schoolId}
+            AND c.academic_year = ${rollover.sourceAcademicYear}
+            AND st.is_active
+          FOR UPDATE OF st
+        ),
+        roster_matches AS (
+          SELECT
+            (SELECT COUNT(*) FROM current_roster) = (SELECT COUNT(*) FROM planned)
+            AND NOT EXISTS (
+              SELECT 1 FROM planned p
+              LEFT JOIN current_roster roster_row
+                ON roster_row.id = p.student_id AND roster_row.class_id = p.source_class_id
+              WHERE roster_row.id IS NULL
+            ) AS matches
+        )
+        INSERT INTO school_academic_rollovers
+          (id, school_id, source_academic_year, target_academic_year,
+           promoted_count, repeated_count, graduated_count, rolled_by)
+        SELECT ${rolloverId}, ${schoolId}, ${rollover.sourceAcademicYear},
+               ${rollover.targetAcademicYear}, ${counts.promotedCount},
+               ${counts.repeatedCount}, ${counts.graduatedCount}, ${userId}
+        FROM roster_matches
+        WHERE matches
+          AND NOT EXISTS (
+            SELECT 1
+            FROM jsonb_to_recordset(${plannedStudentsJson}::jsonb)
+              AS item(action TEXT, target_grade TEXT, target_section TEXT)
+            WHERE item.action <> 'graduate'
+              AND NOT EXISTS (
+                SELECT 1
+                FROM school_classes c
+                WHERE c.school_id = ${schoolId}
+                  AND c.academic_year = ${rollover.targetAcademicYear}
+                  AND c.grade = item.target_grade
+                  AND c.section = item.target_section
+                  AND EXISTS (
+                    SELECT 1 FROM school_class_subjects cs WHERE cs.class_id = c.id
+                  )
+              )
+              AND (
+                EXISTS (
+                  SELECT 1 FROM school_classes c
+                  WHERE c.school_id = ${schoolId}
+                    AND c.academic_year = ${rollover.targetAcademicYear}
+                    AND c.grade = item.target_grade
+                    AND c.section = item.target_section
+                )
+                OR NOT EXISTS (
+                  SELECT 1 FROM school_subjects subjects
+                  WHERE subjects.school_id = ${schoolId}
+                    AND subjects.grade = item.target_grade
+                )
+              )
+          )
+        ON CONFLICT (school_id, target_academic_year) DO NOTHING
+        RETURNING id
+      `,
+      sql`
+        INSERT INTO school_classes (id, school_id, grade, section, academic_year)
+        SELECT item.id, ${schoolId}, item.grade, item.section, ${rollover.targetAcademicYear}
+        FROM jsonb_to_recordset(${classRowsJson}::jsonb)
+          AS item(id UUID, grade TEXT, section TEXT)
+        WHERE EXISTS (
+          SELECT 1 FROM school_academic_rollovers WHERE id = ${rolloverId}
+        )
+        ON CONFLICT (school_id, grade, section, academic_year) DO NOTHING
+      `,
+      sql`
+        WITH requested_classes AS MATERIALIZED (
+          SELECT item.grade, item.section
+          FROM jsonb_to_recordset(${classRowsJson}::jsonb)
+            AS item(id UUID, grade TEXT, section TEXT)
+        )
+        INSERT INTO school_class_subjects (class_id, subject_name)
+        SELECT target.id, subjects.subject_name
+        FROM requested_classes requested
+        JOIN school_classes target
+          ON target.school_id = ${schoolId}
+          AND target.academic_year = ${rollover.targetAcademicYear}
+          AND target.grade = requested.grade
+          AND target.section = requested.section
+        JOIN school_subjects subjects
+          ON subjects.school_id = ${schoolId} AND subjects.grade = target.grade
+        WHERE EXISTS (
+          SELECT 1 FROM school_academic_rollovers WHERE id = ${rolloverId}
+        )
+          AND NOT EXISTS (
+            SELECT 1 FROM school_class_subjects existing WHERE existing.class_id = target.id
+          )
+        ON CONFLICT (class_id, subject_name) DO NOTHING
+      `,
+      sql`
+        WITH planned AS MATERIALIZED (
+          SELECT * FROM jsonb_to_recordset(${plannedStudentsJson}::jsonb)
+            AS item(student_id UUID, source_class_id UUID, action TEXT,
+                    target_grade TEXT, target_section TEXT)
+        ),
+        moved_students AS (
+          UPDATE school_students st
+          SET class_id = CASE WHEN item.action = 'graduate' THEN st.class_id ELSE target.id END,
+              is_active = item.action <> 'graduate'
+          FROM planned item
+          LEFT JOIN school_classes target
+            ON target.school_id = ${schoolId}
+            AND target.academic_year = ${rollover.targetAcademicYear}
+            AND target.grade = item.target_grade
+            AND target.section = item.target_section
+          WHERE st.school_id = ${schoolId}
+            AND st.id = item.student_id
+            AND st.class_id = item.source_class_id
+            AND st.is_active
+            AND EXISTS (
+              SELECT 1 FROM school_academic_rollovers WHERE id = ${rolloverId}
+            )
+            AND (item.action = 'graduate' OR target.id IS NOT NULL)
+          RETURNING st.id
+        )
+        SELECT COUNT(*)::int
+          / CASE WHEN COUNT(*)::int = ${plannedStudents.length} THEN 1 ELSE 0 END
+          AS "updatedCount"
+        FROM moved_students
+      `,
+    ]);
+    const [result] = results[5];
+    return {
+      sourceAcademicYear: rollover.sourceAcademicYear,
+      targetAcademicYear: rollover.targetAcademicYear,
+      ...counts,
+      updatedCount: result.updatedCount,
+    };
+  } catch (error) {
+    if (error.code === "23505" || error.message?.includes("division by zero")) {
+      const [existingRollover] = await sql`
+        SELECT 1 FROM school_academic_rollovers
+        WHERE school_id = ${schoolId} AND target_academic_year = ${rollover.targetAcademicYear}
+      `;
+      if (existingRollover) return { error: "already" };
+      if (error.message?.includes("division by zero")) return { error: "stale" };
+    }
+    throw error;
+  }
 }
 
 export async function listSchoolClasses(schoolId, academicYear, teacherUserId = null) {

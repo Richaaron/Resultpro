@@ -77,6 +77,38 @@ export function normalizeAcademicSessionInput(body = {}) {
   return { academicYear, isCurrent: body.isCurrent === true };
 }
 
+export function normalizeAcademicRolloverInput(body = {}) {
+  if (!body || typeof body !== "object" || Array.isArray(body)) return null;
+  const source = normalizeAcademicSessionInput({ academicYear: body.sourceAcademicYear });
+  const target = normalizeAcademicSessionInput({ academicYear: body.targetAcademicYear });
+  if (!source || !target) return null;
+
+  const sourceEndYear = Number(source.academicYear.slice(5));
+  const targetStartYear = Number(target.academicYear.slice(0, 4));
+  if (sourceEndYear !== targetStartYear) return null;
+
+  const exceptions = body.exceptions ?? [];
+  if (!Array.isArray(exceptions) || exceptions.length > 10_000) return null;
+  const studentIds = new Set();
+  const normalizedExceptions = [];
+  for (const exception of exceptions) {
+    const studentId = typeof exception?.studentId === "string" ? exception.studentId.toLowerCase() : "";
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(studentId)
+      || studentIds.has(studentId)
+      || !["promote", "repeat", "graduate"].includes(exception.action)) {
+      return null;
+    }
+    studentIds.add(studentId);
+    normalizedExceptions.push({ studentId, action: exception.action });
+  }
+
+  return {
+    sourceAcademicYear: source.academicYear,
+    targetAcademicYear: target.academicYear,
+    exceptions: normalizedExceptions,
+  };
+}
+
 export function normalizeAcademicTermDates(value) {
   const termNames = ["Term 1", "Term 2", "Term 3"];
   if (!Array.isArray(value) || value.length !== termNames.length) return null;

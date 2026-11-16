@@ -28,6 +28,8 @@ import {
   setCurrentSchoolAcademicSession,
   setCurrentSchoolAcademicTerm,
   saveSchoolAcademicTermDates,
+  getSchoolAcademicRolloverPreview,
+  applySchoolAcademicRollover,
   getSchoolLogo,
   getSchoolMemberSignature,
   getSchoolPrincipalUser,
@@ -74,6 +76,7 @@ import {
 } from "./school-repository.js";
 import {
   normalizeAcademicSessionInput,
+  normalizeAcademicRolloverInput,
   normalizeAcademicTermDates,
   normalizeProfilePhotoData,
   normalizeSchoolCurriculumInput,
@@ -437,6 +440,36 @@ app.get("/api/schools/:schoolId/academic-calendar", requireAuth, async (request,
   }
 });
 
+app.get("/api/schools/:schoolId/academic-calendar/rollover-preview", requireAuth, async (request, response) => {
+  const { schoolId } = request.params;
+  const rollover = normalizeAcademicRolloverInput({
+    sourceAcademicYear: request.query.sourceAcademicYear,
+    targetAcademicYear: request.query.targetAcademicYear,
+  });
+  if (!isUuid(schoolId) || !rollover) {
+    return response.status(400).json({ error: "Select consecutive source and target academic sessions." });
+  }
+
+  try {
+    const membershipRole = await getSchoolRole(schoolId, request.auth.userId);
+    if (!membershipRole) return response.status(404).json({ error: "School not found." });
+    if (membershipRole !== "admin") {
+      return response.status(403).json({ error: "Only a school administrator can preview a year-end rollover." });
+    }
+    const preview = await getSchoolAcademicRolloverPreview(
+      schoolId,
+      rollover.sourceAcademicYear,
+      rollover.targetAcademicYear,
+    );
+    if (preview.error === "session") {
+      return response.status(404).json({ error: "Add both academic sessions before previewing the rollover." });
+    }
+    return response.json({ preview });
+  } catch (error) {
+    return handleDatabaseError(error, response);
+  }
+});
+
 app.post("/api/schools/:schoolId/academic-calendar/sessions", requireAuth, async (request, response) => {
   const { schoolId } = request.params;
   const session = normalizeAcademicSessionInput(request.body);
@@ -459,6 +492,46 @@ app.post("/api/schools/:schoolId/academic-calendar/sessions", requireAuth, async
     if (error.code === "23505") {
       return response.status(409).json({ error: "Another session update conflicted. Refresh the academic calendar and try again." });
     }
+    return handleDatabaseError(error, response);
+  }
+});
+
+app.post("/api/schools/:schoolId/academic-calendar/rollover", requireAuth, async (request, response) => {
+  const { schoolId } = request.params;
+  const rollover = normalizeAcademicRolloverInput(request.body);
+  if (!isUuid(schoolId) || !rollover) {
+    return response.status(400).json({ error: "Choose consecutive academic sessions and valid student placement adjustments." });
+  }
+
+  try {
+    const membershipRole = await getSchoolRole(schoolId, request.auth.userId);
+    if (!membershipRole) return response.status(404).json({ error: "School not found." });
+    if (membershipRole !== "admin") {
+      return response.status(403).json({ error: "Only a school administrator can apply a year-end rollover." });
+    }
+    const result = await applySchoolAcademicRollover(schoolId, request.auth.userId, rollover);
+    if (result.error === "session") {
+      return response.status(404).json({ error: "Add both academic sessions before applying the rollover." });
+    }
+    if (result.error === "already") {
+      return response.status(409).json({ error: "This target academic session has already been rolled over." });
+    }
+    if (result.error === "no_students") {
+      return response.status(400).json({ error: "There are no active students in the selected source session." });
+    }
+    if (result.error === "placement") {
+      return response.status(400).json({ error: "A student cannot be promoted because this school does not offer a next grade for them." });
+    }
+    if (result.error === "subjects") {
+      return response.status(409).json({
+        error: "Set up at least one subject for each destination grade, or change the affected student placements, then preview again.",
+      });
+    }
+    if (result.error === "stale") {
+      return response.status(409).json({ error: "The active student roster changed. Refresh the preview before applying the rollover." });
+    }
+    return response.json({ rollover: result });
+  } catch (error) {
     return handleDatabaseError(error, response);
   }
 });
